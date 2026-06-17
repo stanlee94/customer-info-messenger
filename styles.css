@@ -1,0 +1,435 @@
+#cim-purchase-panel {
+  margin: 12px 16px;
+  padding: 12px;
+  border: 1px solid #dadde1;
+  border-radius: 8px;
+  background: #f0f2f5;
+  font-size: 13px;
+  font-family: inherit;
+  color: #050505;
+}
+
+#cim-purchase-panel .cim-row {
+  color: #65676b;
+  margin-bottom: 4px;
+  word-break: break-all;
+}
+
+#cim-purchase-panel .cim-psid {
+  margin-bottom: 8px;
+}
+
+#cim-purchase-panel .cim-name-link {
+  color: #1c1e21;
+  text-decoration: none;
+}
+
+#cim-purchase-panel .cim-name-link:hover {
+  text-decoration: underline;
+}
+
+#cim-purchase-panel .cim-psid-link {
+  color: #1c1e21;
+  text-decoration: none;
+}
+
+#cim-purchase-panel .cim-psid-link:hover {
+  text-decoration: underline;
+}
+
+#cim-purchase-panel .cim-unlink {
+  color: #1877f2;
+  text-decoration: none;
+  word-break: keep-all;
+}
+
+#cim-purchase-panel .cim-unlink:hover {
+  text-decoration: underline;
+}
+
+#cim-purchase-panel .cim-body ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+#cim-purchase-panel .cim-body li {
+  margin-bottom: 2px;
+  word-break: break-word;
+}
+
+#cim-purchase-panel .cim-candidates-list {
+  max-height: 135px;
+  overflow-y: auto;
+}
+
+#cim-purchase-panel .cim-candidate {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid #dadde1;
+}
+
+#cim-purchase-panel .cim-candidate:last-child {
+  border-bottom: none;
+}
+
+#cim-purchase-panel .cim-candidate-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: #dadde1;
+}
+
+#cim-purchase-panel .cim-candidate-info {
+  flex: 1;
+  min-width: 0;
+}
+
+#cim-purchase-panel .cim-candidate-name {
+  font-weight: 600;
+}
+
+#cim-purchase-panel .cim-candidate-last-msg {
+  color: #65676b;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#cim-purchase-panel .cim-candidate-meta {
+  display: flex;
+  gap: 12px;
+  color: #65676b;
+  font-size: 12px;
+}
+
+#cim-purchase-panel .cim-candidate-attachment-link {
+  color: #1877f2;
+  text-decoration: none;
+}
+
+#cim-purchase-panel .cim-candidate-attachment-link:hover {
+  text-decoration: underline;
+}
+
+#cim-purchase-panel .cim-candidate-link-btn {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  font-size: 12px;
+  border: none;
+  border-radius: 6px;
+  background: #1877f2;
+  color: #fff;
+  cursor: pointer;
+}
+
+#cim-purchase-panel .cim-candidate-link-btn:hover {
+  background: #166fe5;
+}
+
+#cim-purchase-panel .cim-candidate-search {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+#cim-purchase-panel .cim-search-input {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  font-size: 12px;
+  border: 1px solid #dadde1;
+  border-radius: 6px;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+#cim-purchase-panel .cim-search-btn {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  font-size: 12px;
+  border: none;
+  border-radius: 6px;
+  background: #1877f2;
+  color: #fff;
+  cursor: pointer;
+}
+
+#cim-purchase-panel .cim-search-btn:hover {
+  background: #166fe5;
+}
+
+#cim-purchase-panel .cim-search-btn:disabled {
+  background: #8a8d91;
+  cursor: default;
+}
+
+#cim-purchase-panel .cim-search-status {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #65676b;
+  min-height: 14px;
+}
+
+#cim-purchase-panel .cim-search-status--error {
+  color: #d92626;
+}
+
+#cim-purchase-panel .cim-summary {
+  margin-bottom: 8px;
+}
+
+#cim-purchase-panel .cim-summary-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+}
+
+#cim-purchase-panel .cim-summary-label {
+  color: #65676b;
+}
+
+#cim-purchase-panel .cim-summary-value {
+  font-weight: 600;
+  text-align: right;
+  word-break: break-word;
+  min-width: 0;
+}
+
+#cim-purchase-panel [data-tooltip] {
+  position: relative;
+  cursor: default;
+}
+
+#cim-purchase-panel [data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 4px);
+  right: 0;
+  background: rgba(0, 0, 0, 0.78);
+  color: #fff;
+  padding: 3px 8px;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 400;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  z-index: 9999;
+}
+
+#cim-purchase-panel [data-tooltip]:hover::after {
+  opacity: 1;
+}
+
+#cim-purchase-panel .cim-summary-value--address {
+  font-weight: 400;
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+#cim-purchase-panel .cim-orders-heading {
+  font-weight: 600;
+  margin: 8px 0 4px;
+  padding-top: 8px;
+  border-top: 1px solid #dadde1;
+}
+
+#cim-purchase-panel .cim-orders-heading a {
+  color: inherit;
+  text-decoration: none;
+}
+
+#cim-purchase-panel .cim-orders-heading a:hover {
+  text-decoration: underline;
+}
+
+#cim-purchase-panel .cim-orders-empty {
+  color: #65676b;
+}
+
+#cim-purchase-panel .cim-body .cim-orders-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+#cim-purchase-panel .cim-body .cim-orders-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 3px 0;
+  margin-bottom: 0;
+  border-bottom: 1px solid #dadde1;
+}
+
+#cim-purchase-panel .cim-body .cim-orders-list li:last-child {
+  border-bottom: none;
+}
+
+#cim-purchase-panel .cim-cart-section {
+  margin: 10px 0;
+}
+
+#cim-purchase-panel .cim-cart-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+#cim-purchase-panel .cim-cart-prefix {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 5px 8px;
+  font-size: 11px;
+  font-family: inherit;
+  border: 1px solid #d0d0d0;
+  border-radius: 6px;
+  box-sizing: border-box;
+  color: #333;
+  background: #fff;
+  outline: none;
+  resize: vertical;
+  min-height: 36px;
+  line-height: 1.4;
+}
+
+#cim-purchase-panel .cim-cart-prefix:focus {
+  border-color: #1877f2;
+}
+
+#cim-purchase-panel .cim-cart-prefix::placeholder {
+  color: #aaa;
+  font-style: italic;
+}
+
+#cim-purchase-panel .cim-expired-notice {
+  margin: 0 0 8px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: #fff3cd;
+  color: #856404;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+  border: 1px solid #ffc107;
+}
+
+#cim-purchase-panel .cim-cart-empty {
+  margin: 10px 0;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: #e4e6ea;
+  color: #65676b;
+  font-size: 12px;
+  text-align: center;
+}
+
+#cim-purchase-panel .cim-cart-btn {
+  position: relative;
+  flex: 1;
+  padding: 8px 6px;
+  font-size: 12px;
+  font-weight: 700;
+  font-family: inherit;
+  letter-spacing: 0.3px;
+  border: none;
+  border-radius: 20px;
+  color: #fff;
+  cursor: pointer;
+  text-align: center;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
+  transition: transform 0.1s ease, box-shadow 0.1s ease;
+}
+
+#cim-purchase-panel .cim-cart-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.22);
+}
+
+#cim-purchase-panel .cim-cart-btn:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
+}
+
+#cim-purchase-panel .cim-cart-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+#cim-purchase-panel .cim-cart-btn--both {
+  background: linear-gradient(135deg, #1877f2, #0a5dc2);
+}
+
+#cim-purchase-panel .cim-cart-btn--myr {
+  background: linear-gradient(135deg, #34c759, #1e9e3e);
+}
+
+#cim-purchase-panel .cim-cart-btn--sgd {
+  background: linear-gradient(135deg, #ff9f0a, #d4730a);
+}
+
+#cim-purchase-panel .cim-order-id {
+  color: #1877f2;
+  text-decoration: none;
+}
+
+#cim-purchase-panel .cim-order-id:hover {
+  text-decoration: underline;
+}
+
+#cim-purchase-panel .cim-order-date {
+  color: #65676b;
+  font-size: 11px;
+}
+
+#cim-purchase-panel .cim-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  vertical-align: middle;
+  margin-left: 4px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: #65676b;
+  cursor: pointer;
+}
+
+#cim-purchase-panel .cim-copy-btn:hover {
+  color: #1877f2;
+}
+
+#cim-purchase-panel .cim-copy-tooltip {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-bottom: 4px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #333;
+  color: #fff;
+  font-size: 11px;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+
+#cim-purchase-panel .cim-copy-tooltip--visible {
+  opacity: 1;
+}
+
+#cim-purchase-panel .cim-order-amount {
+  font-weight: 600;
+  flex-shrink: 0;
+}
