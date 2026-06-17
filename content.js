@@ -187,7 +187,8 @@
     const panel = document.createElement('div');
     panel.id = PANEL_ID;
     panel.innerHTML = `
-      <div class="cim-drag-handle">· · · · ·</div>
+      <div class="cim-drag-handle" title="Drag to move"></div>
+      <button class="cim-close-btn" title="Return to sidebar">&#x2715;</button>
       <div class="cim-row cim-uid"></div>
       <div class="cim-row cim-name"></div>
       <div class="cim-row cim-psid"></div>
@@ -218,6 +219,16 @@
   }
 
   function initDrag(panel) {
+    const closeBtn = panel.querySelector('.cim-close-btn');
+    closeBtn.addEventListener('click', () => {
+      const anchor = findContactDetailsAnchor();
+      if (!anchor || !anchor.parentElement) return;
+      panelPosition = null;
+      panel.classList.remove('cim-floating', 'cim-sidebar-visible');
+      panel.style.left = panel.style.top = '';
+      anchor.parentElement.insertBefore(panel, anchor);
+    });
+
     const handle = panel.querySelector('.cim-drag-handle');
     handle.addEventListener('mousedown', (e) => {
       const rect = panel.getBoundingClientRect();
@@ -654,9 +665,11 @@
           lastOrderEl.dataset.tooltip = String(data.lastOrderDate);
         }
         addSummaryRow('Years Active', formatValue(data.yearsActive));
-        addSummaryRow('Rank', formatValue(data.rank));
+        const { row: rankRow } = addSummaryRow('Rank', formatValue(data.rank));
+        rankRow.classList.add('cim-summary-row--full');
 
-        const { valueEl: addrEl } = addSummaryRow('Address', formatValue(data.address), 'cim-summary-value--address');
+        const { row: addrRow, valueEl: addrEl } = addSummaryRow('Address', formatValue(data.address), 'cim-summary-value--address');
+        addrRow.classList.add('cim-summary-row--full');
         if (data.address !== null && data.address !== undefined && data.address !== '') {
           addrEl.textContent = '';
           addrEl.append(String(data.address), buildCopyButton(data.address));
@@ -1126,7 +1139,14 @@
     }
   }
 
+  function syncCloseBtnVisibility() {
+    const panel = document.getElementById(PANEL_ID);
+    if (!panel || !panelPosition) return;
+    panel.classList.toggle('cim-sidebar-visible', !!findContactDetailsAnchor());
+  }
+
   function scheduleCheck() {
+    syncCloseBtnVisibility();
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(check, DEBOUNCE_MS);
   }
