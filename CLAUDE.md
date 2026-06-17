@@ -6,8 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A Manifest V3 Chrome extension that injects a customer-info panel into Meta
 Business Suite's Messenger inbox
-(`https://business.facebook.com/latest/inbox/*`), above the "Contact details"
-section in the right sidebar.
+(`https://business.facebook.com/latest/inbox/*`). By default the panel sits
+above the "Contact details" section in the right sidebar; users can drag it
+anywhere on screen via the handle at the top.
 
 Plain JS/HTML/CSS, no build step, package manager, or test suite — loaded
 directly as an unpacked extension.
@@ -79,15 +80,37 @@ to the current panel even if Facebook swapped it out during the await.
   only. Replace `getUidPsidMap`/`setUidPsidLink`/`removeUidPsidLink` in
   `content.js` with a real backend when one exists.
 
+### Draggable panel
+
+`ensurePanel()` checks the module-level `panelPosition` variable (`null` on
+page load):
+
+- **`null`** — inserts the panel before the "Contact details" anchor in the
+  sidebar (original behaviour).
+- **Set** — appends to `document.body` with `position: fixed` and `.cim-floating`
+  class, restoring the saved `{ x, y }` coordinates.
+
+`initDrag(panel)` wires the `<div class="cim-drag-handle">` at the top of the
+panel. On the first drag the panel is moved to `document.body` and
+`.cim-floating` is added (transition from sidebar → floating). Subsequent drags
+update `panelPosition` on `mouseup`. The variable is module-level, so it
+persists across conversation switches but resets to `null` on page reload
+(returning the panel to the sidebar).
+
 ### Fragile/heuristic areas (DOM-dependent)
 
 - `findContactDetailsAnchor()`: finds a leaf with text exactly "Contact
   details", climbs to an ancestor with siblings.
-- `getCustomerNameFromDom()`: finds a "View profile" leaf, then the first
-  non-empty text leaf nearby.
+- `getCustomerNameFromDom()`: two strategies tried in order:
+  1. **Sidebar** — finds a "View profile" leaf, returns the first non-empty text
+     leaf nearby (original approach).
+  2. **Chat header fallback** — when the sidebar is hidden (narrow window),
+     finds a `div`/`span` with `-webkit-line-clamp` in its inline style and
+     verifies it sits inside a container that also contains "Assigned to " or
+     "Assign this conversation" text. Returns that element's text as the name.
 
-Both rely on Business Suite's obfuscated, class-name-free DOM and may need
-retuning after a Facebook layout change.
+All three rely on Business Suite's obfuscated DOM and may need retuning after
+a Facebook layout change.
 
 ### ManyChat integration assumptions
 

@@ -17,6 +17,7 @@
   let debounceTimer = null;
   let cartSessionValid = false;
   let cartPrefixText = '';
+  let panelPosition = null; // {x, y} px — null means sidebar (default), set after first drag
 
   let sessionState = {
     uid: null,
@@ -56,6 +57,7 @@
   }
 
   function getCustomerNameFromDom() {
+    // Strategy 1: sidebar "View profile" element
     const candidates = document.querySelectorAll('a, span, div');
     for (const el of candidates) {
       if (el.children.length === 0 && el.textContent.trim() === 'View profile') {
@@ -72,6 +74,23 @@
         }
       }
     }
+
+    // Strategy 2: chat header (visible even when sidebar is hidden) — find a
+    // line-clamped leaf inside a container that also has the assignment line.
+    const clamped = document.querySelectorAll('div[style*="-webkit-line-clamp"], span[style*="-webkit-line-clamp"]');
+    for (const el of clamped) {
+      if (el.children.length > 0) continue;
+      const text = el.textContent.trim();
+      if (!text) continue;
+      let container = el.parentElement;
+      for (let depth = 0; depth < 4 && container; depth++) {
+        if (container.textContent.includes('Assigned to ') || container.textContent.includes('Assign this conversation')) {
+          return text;
+        }
+        container = container.parentElement;
+      }
+    }
+
     return null;
   }
 
@@ -166,6 +185,7 @@
     const panel = document.createElement('div');
     panel.id = PANEL_ID;
     panel.innerHTML = `
+      <div class="cim-drag-handle">· · · · ·</div>
       <div class="cim-row cim-uid"></div>
       <div class="cim-row cim-name"></div>
       <div class="cim-row cim-psid"></div>
@@ -178,12 +198,57 @@
     let panel = document.getElementById(PANEL_ID);
     if (panel) return panel;
 
-    const anchor = findContactDetailsAnchor();
-    if (!anchor || !anchor.parentElement) return null;
-
     panel = buildPanel();
-    anchor.parentElement.insertBefore(panel, anchor);
+    initDrag(panel);
+
+    if (panelPosition) {
+      document.body.appendChild(panel);
+      panel.classList.add('cim-floating');
+      panel.style.left = panelPosition.x + 'px';
+      panel.style.top  = panelPosition.y + 'px';
+    } else {
+      const anchor = findContactDetailsAnchor();
+      if (!anchor || !anchor.parentElement) return null;
+      anchor.parentElement.insertBefore(panel, anchor);
+    }
+
     return panel;
+  }
+
+  function initDrag(panel) {
+    const handle = panel.querySelector('.cim-drag-handle');
+    handle.addEventListener('mousedown', (e) => {
+      const rect = panel.getBoundingClientRect();
+
+      if (!panelPosition) {
+        const floatLeft = rect.left;
+        const floatTop  = rect.top;
+        document.body.appendChild(panel);
+        panel.classList.add('cim-floating');
+        panel.style.left = floatLeft + 'px';
+        panel.style.top  = floatTop  + 'px';
+      }
+
+      const offsetX = e.clientX - panel.getBoundingClientRect().left;
+      const offsetY = e.clientY - panel.getBoundingClientRect().top;
+      e.preventDefault();
+
+      function onMove(e) {
+        const newLeft = Math.max(0, Math.min(e.clientX - offsetX, window.innerWidth  - panel.offsetWidth));
+        const newTop  = Math.max(0, Math.min(e.clientY - offsetY, window.innerHeight - panel.offsetHeight));
+        panel.style.left = newLeft + 'px';
+        panel.style.top  = newTop  + 'px';
+      }
+
+      function onUp() {
+        panelPosition = { x: parseFloat(panel.style.left), y: parseFloat(panel.style.top) };
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup',   onUp);
+      }
+
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup',   onUp);
+    });
   }
 
   function renderPsidRow(panel, uid, psid) {
