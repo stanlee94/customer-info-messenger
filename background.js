@@ -60,7 +60,7 @@ function getCartSummary(psid, option) {
     .then((json) => {
       const text = json?.content?.messages?.[0]?.text;
       if (typeof text !== 'string') throw new Error('Unexpected cart API response.');
-      return { ok: true, text, expiredAvailable: json.expiredAvailable === true };
+      return { ok: true, text, expiredAvailable: json.expiredAvailable === true, myrSum: json.myrSum ?? null, sgdSum: json.sgdSum ?? null };
     })
     .catch((err) => ({ ok: false, error: err.message }));
 }

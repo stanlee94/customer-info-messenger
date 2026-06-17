@@ -26,6 +26,8 @@
     view: null,
     cartHasItems: null,
     expiredAvailable: null,
+    myrSum: null,
+    sgdSum: null,
   };
 
   function getUserIdFromUrl() {
@@ -463,7 +465,7 @@
     return btn;
   }
 
-  function buildCartOptionButton(psid, option, label, modifierClass) {
+  function buildCartOptionButton(psid, option, label, modifierClass, subLabel) {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = `cim-cart-btn ${modifierClass}`;
@@ -475,7 +477,14 @@
     const tooltip = document.createElement('span');
     tooltip.className = 'cim-copy-tooltip';
 
-    btn.append(labelEl, tooltip);
+    if (subLabel != null) {
+      const subLabelEl = document.createElement('span');
+      subLabelEl.className = 'cim-cart-btn-sublabel';
+      subLabelEl.textContent = subLabel;
+      btn.append(labelEl, subLabelEl, tooltip);
+    } else {
+      btn.append(labelEl, tooltip);
+    }
 
     let hideTimer = null;
     const showTooltip = (text) => {
@@ -524,14 +533,17 @@
     return el;
   }
 
-  function buildCartSection(psid) {
+  function buildCartSection(psid, prices) {
     const wrapper = document.createElement('div');
     wrapper.className = 'cim-cart-section';
 
     const cartButtons = document.createElement('div');
     cartButtons.className = 'cim-cart-buttons';
     CART_OPTIONS.forEach(({ option, label, modifier }) => {
-      cartButtons.appendChild(buildCartOptionButton(psid, option, label, modifier));
+      let subLabel = null;
+      if (option === '2' && prices?.myrSum != null) subLabel = `RM ${prices.myrSum}`;
+      if (option === '3' && prices?.sgdSum != null) subLabel = `S$ ${prices.sgdSum}`;
+      cartButtons.appendChild(buildCartOptionButton(psid, option, label, modifier, subLabel));
     });
 
     const prefixInput = document.createElement('textarea');
@@ -557,6 +569,8 @@
       const hasItems = !response.text.includes(EMPTY_CART_MARKER);
       sessionState.cartHasItems = hasItems;
       sessionState.expiredAvailable = response.expiredAvailable === true;
+      sessionState.myrSum = response.myrSum ?? null;
+      sessionState.sgdSum = response.sgdSum ?? null;
 
       const livePanel = document.getElementById(PANEL_ID);
       if (!livePanel || sessionState.view?.type !== 'orders') return;
@@ -571,7 +585,7 @@
       if (!heading || body.querySelector('.cim-cart-buttons') || body.querySelector('.cim-cart-empty')) return;
 
       if (hasItems) {
-        body.insertBefore(buildCartSection(psid), heading);
+        body.insertBefore(buildCartSection(psid, { myrSum: sessionState.myrSum, sgdSum: sessionState.sgdSum }), heading);
       } else {
         const emptyEl = document.createElement('div');
         emptyEl.className = 'cim-cart-empty';
@@ -651,7 +665,7 @@
         body.appendChild(summary);
 
         if (cartSessionValid && sessionState.cartHasItems === true) {
-          body.appendChild(buildCartSection(view.psid));
+          body.appendChild(buildCartSection(view.psid, { myrSum: sessionState.myrSum, sgdSum: sessionState.sgdSum }));
         } else if (cartSessionValid && sessionState.cartHasItems === false) {
           const emptyEl = document.createElement('div');
           emptyEl.className = 'cim-cart-empty';
@@ -1079,7 +1093,7 @@
     if (!panel) return;
 
     if (uid !== sessionState.uid) {
-      sessionState = { uid, name: null, resolved: false, view: null, cartHasItems: null, expiredAvailable: null };
+      sessionState = { uid, name: null, resolved: false, view: null, cartHasItems: null, expiredAvailable: null, myrSum: null, sgdSum: null };
       panel.querySelector('.cim-uid').textContent = `UID: ${uid}`;
       panel.querySelector('.cim-name').textContent = 'Name: detecting...';
       panel.querySelector('.cim-psid').textContent = 'PSID: checking...';

@@ -227,11 +227,15 @@ When `cartSessionValid` is `true` and the `orders` view first renders,
 to check whether the cart is empty. The response shape is:
 
 ```json
-{ "expiredAvailable": boolean, "version": "v2", "content": { "messages": [{ "type": "text", "text": "..." }] } }
+{ "expiredAvailable": boolean, "myrSum": number|null, "sgdSum": number|null, "version": "v2", "content": { "messages": [{ "type": "text", "text": "..." }] } }
 ```
 
-- **Non-empty**: sets `sessionState.cartHasItems = true` and injects
-  `buildCartSection(psid)` (buttons + prefix textarea) above "Recent Orders".
+`background.js` `getCartSummary()` forwards `expiredAvailable`, `myrSum`, and
+`sgdSum` from the raw API JSON alongside `text`.
+
+- **Non-empty**: sets `sessionState.cartHasItems = true`, saves `myrSum`/`sgdSum`
+  to `sessionState`, and injects `buildCartSection(psid, { myrSum, sgdSum })`
+  (buttons + prefix textarea) above "Recent Orders".
 - **Empty**: sets `sessionState.cartHasItems = false` and injects a
   `.cim-cart-empty` pill ("🛒 Empty Cart") in the same position.
 - **`expiredAvailable: true`**: sets `sessionState.expiredAvailable = true` and
@@ -239,18 +243,24 @@ to check whether the cart is empty. The response shape is:
   the top of the body. Nothing is shown when `false`.
 - **Error / no response**: silently ignored; no UI change.
 
-`cartHasItems` and `expiredAvailable` are both reset to `null` on each
-conversation switch so the probe runs once per customer. `renderState` reads
-both for rehydration (when Facebook removes and re-adds the panel).
+`cartHasItems`, `expiredAvailable`, `myrSum`, and `sgdSum` are all reset to
+`null` on each conversation switch so the probe runs once per customer.
+`renderState` reads them for rehydration (when Facebook removes and re-adds
+the panel).
 
-| Button | CSS modifier | `option` param |
-|---|---|---|
-| ALL | `cim-cart-btn--both` (blue gradient) | `1` |
-| 🇲🇾 MYR | `cim-cart-btn--myr` (green gradient) | `2` |
-| 🇸🇬 SGD | `cim-cart-btn--sgd` (amber gradient) | `3` |
+| Button | CSS modifier | `option` param | Sub-label |
+|---|---|---|---|
+| ALL | `cim-cart-btn--both` (blue gradient) | `1` | — |
+| 🇲🇾 MYR | `cim-cart-btn--myr` (green gradient) | `2` | `RM {myrSum}` (`.cim-cart-btn-sublabel`) |
+| 🇸🇬 SGD | `cim-cart-btn--sgd` (amber gradient) | `3` | `S$ {sgdSum}` (`.cim-cart-btn-sublabel`) |
+
+`buildCartSection(psid, prices)` passes a `subLabel` to `buildCartOptionButton`
+for the MYR and SGD buttons. The sub-label is omitted if `prices.myrSum` /
+`prices.sgdSum` is `null`. Buttons use `display: flex; flex-direction: column`
+so the price sits below the flag+currency label.
 
 Clicking a button sends `GET_CART_SUMMARY { psid, option }` → `background.js`
-calls `GET /users/:id?option=N` and returns `{ ok: true, text, expiredAvailable }` (full
+calls `GET /users/:id?option=N` and returns `{ ok: true, text, expiredAvailable, myrSum, sgdSum }` (full
 bilingual order-summary string) or `{ ok: false, error }`.
 
 - Empty-cart detection: `text.includes('您的购物车里暂无商品哦~')` → shows
