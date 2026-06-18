@@ -64,11 +64,17 @@ view, cartHasItems, expiredAvailable }`) on every change to `selected_item_id` i
 4. "(unlink)" sends `UNLINK_BASEROW_UID` (clears `UID`), removes the
    `uidPsidMap` entry, and re-runs the ManyChat search.
 
+`sessionState` now carries `{ uid, name, resolved, view, cartHasItems,
+expiredAvailable, myrSum, sgdSum, manychatInfo }`. `manychatInfo` is `null`
+until `GET_MANYCHAT_INFO` resolves and is reset on every conversation switch.
+
 `sessionState.resolved` marks a terminal view so re-renders from the
 `MutationObserver` skip network calls; `rehydrate()` rebuilds the panel from
 `sessionState` if Facebook removes it mid-flow. `rehydrate()` also retries
 `probeCartAndShowButtons()` if `cartHasItems` is still `null` (handles panel
-removal during an in-flight probe or a silently failed probe).
+removal during an in-flight probe or a silently failed probe), and re-renders
+ManyChat info (lang tags + contact fields) from `sessionState.manychatInfo`
+if already cached.
 
 `proceedWithLookup()` re-fetches the live panel via `document.getElementById`
 after the async `getUidPsidMap()` resolves, so `renderPsidRow` always writes
@@ -156,15 +162,26 @@ a Facebook layout change.
 
 ### ManyChat integration assumptions
 
-`searchManyChatByName()` calls `GET
-https://api.manychat.com/fb/subscriber/findByName?name=...` (`Bearer
-<manychatToken>`), expecting `{ data: [{ id, name|first_name/last_name,
-profile_pic, last_input_text, last_interaction }] }` (`id` = PSID), sorted
-by `last_interaction` descending.
+All ManyChat requests use `Authorization: Bearer <manychatToken>`.
 
-`content.js` renders candidates as cards (`.cim-candidates-list`, ~3 visible
-rows). If `lastMessage` is a URL, `getAttachmentLabel()` maps the extension
-to "Photo"/"Video"/"PDF"/"Audio"/"Attachment" and links to it.
+**`searchManyChatByName()`** — `GET /fb/subscriber/findByName?name=...`,
+expecting `{ data: [{ id, name|first_name/last_name, profile_pic,
+last_input_text, last_interaction }] }` (`id` = PSID), sorted by
+`last_interaction` descending. `content.js` renders candidates as cards
+(`.cim-candidates-list`, ~3 visible rows). If `lastMessage` is a URL,
+`getAttachmentLabel()` maps the extension to "Photo"/"Video"/"PDF"/"Audio"/
+"Attachment" and links to it.
+
+**`getManyChatInfo(psid)`** — `GET /fb/subscriber/getInfo?subscriber_id=<psid>`.
+Called automatically after the `orders` view renders (`fetchAndRenderManyChatInfo()`).
+Returns `{ ok, phone, email, whatsappPhone, tags: [{ id, name }] }`. Result
+cached in `sessionState.manychatInfo`; re-used on rehydration without a
+second network call. Phone/email/WhatsApp are appended to the summary panel
+(with copy buttons) if non-null.
+
+**`manyChatTagAction(action, psid, tagId)`** — `POST /fb/subscriber/addTag`
+or `/fb/subscriber/removeTag` with body `{ subscriber_id, tag_id }`. Used by
+the language tag toggle (see below).
 
 ### Baserow integration assumptions
 
@@ -234,6 +251,42 @@ pointer cursor). Clicking it copies the PSID to the clipboard and shows a
 
 The `(unlink)` link retains its own `.cim-unlink` class (`#0a7cff`) — keep
 these classes separate so their colours don't bleed into each other.
+
+### Language tag toggle
+
+A `.cim-lang-tags` segmented control sits between the PSID row and the body.
+It is populated by `renderLangTags(panel, tags, psid)` once `getManyChatInfo`
+resolves (via `renderManyChatInfoRows`). Two recognised tag IDs:
+
+| Tag ID | Label |
+|---|---|
+| `35385444` | Chinese |
+| `35385464` | English |
+
+**Visual states** (defined in `LANG_TAGS` constant in `content.js`):
+- **Neither set** — container track is light red (`#fff5f5`); both chips are
+  muted rose text (`#cd5c5c`), no border.
+- **One set** — active chip is light green (`#f0fdf4`, `#15803d` text);
+  inactive chip is transparent/grey. Container track is neutral (`#f0f2f5`).
+
+**Click behaviour**:
+1. Clicking the already-active chip is a no-op.
+2. Clicking an inactive chip sets it to `.cim-lang-tag--loading` (`cursor: wait`).
+3. If another tag is currently active: `MANYCHAT_TAG_ACTION remove` fires
+   first; only on success does `MANYCHAT_TAG_ACTION add` fire.
+4. If no tag is active: only `MANYCHAT_TAG_ACTION add` fires.
+5. On full success: updates `sessionState.manychatInfo.tags` and re-renders.
+
+**Error handling**:
+- *Remove fails*: chip flashes `.cim-lang-tag--error` (red, 1.5 s) then
+  re-renders from unchanged `sessionState` — UI stays as-is.
+- *Remove succeeds, Add fails*: `sessionState.manychatInfo.tags` is updated
+  to strip the removed tag **before** the error flash, so after 1.5 s the
+  control re-renders with both chips grey — correctly reflecting ManyChat's
+  real state (neither tag).
+
+`renderPsidRow()` clears `.cim-lang-tags` on every customer switch so stale
+tags from the previous conversation are never shown.
 
 ### Manual candidate search (candidates view)
 
