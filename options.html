@@ -66,6 +66,16 @@
     <label for="baserowOrdersTableId">Orders Table ID</label>
     <input type="text" id="baserowOrdersTableId" autocomplete="off" value="750" />
 
+    <h3>AI Reply API</h3>
+    <p class="hint">
+      Backend that calls Gemini or ChatGPT to generate suggested replies.
+      Exposes <code>POST /ai/reply</code> and returns <code>{ ok, text }</code>.
+    </p>
+    <label for="aiApiUrl">API Base URL</label>
+    <input type="text" id="aiApiUrl" autocomplete="off" value="https://yxch9n4n6e.execute-api.ap-southeast-1.amazonaws.com/latest" />
+    <label for="aiApiToken">API Token (optional)</label>
+    <input type="password" id="aiApiToken" autocomplete="off" />
+
     <button id="save">Save</button>
     <span id="status"></span>
     <script src="options.js"></script>

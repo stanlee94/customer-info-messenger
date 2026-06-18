@@ -24,6 +24,10 @@ directly as an unpacked extension.
   - `baserowBaseUrl` / `baserowToken` / `baserowUsersTableId` (`749`) /
     `baserowOrdersTableId` (`750`). If the base URL's host changes, also
     update `host_permissions` in `manifest.json`.
+  - `aiApiUrl` / `aiApiToken` — AI Reply backend base URL (trailing slash
+    stripped on save) and optional Bearer token. The backend must expose
+    `GET /ai/health` and `POST /ai/reply`. Also add the backend host to
+    `host_permissions` in `manifest.json` once the URL is known.
 - Debugging: `content.js` logs to the Business Suite tab's DevTools console;
   `background.js` via the "service worker" link on `chrome://extensions`.
 - No live Facebook/ManyChat/Baserow sandbox for CLI testing — verify
@@ -145,6 +149,102 @@ removes `.cim-floating` and `.cim-sidebar-visible`, clears inline `left`/`top`,
 and calls `anchor.parentElement.insertBefore(panel, anchor)` to dock the panel
 back.
 
+### AI Quick / AI Details buttons
+
+`#cim-ai-buttons` is a `<div>` injected directly into Facebook's chat composer
+area — **not** inside `#cim-purchase-panel`. It appears between the text-input
+row and the emoji/attachment toolbar row.
+
+**Lifecycle** — `ensureAiButtons()` is called from the debounced `scheduleCheck()`
+callback. It exits immediately if `document.contains(existing)` is true, so the
+buttons survive DOM mutations without flickering. They are only re-created when
+Facebook's SPA fully removes the composer (e.g. on conversation switch).
+`updateAiButtonState()` is also called every debounce cycle to dim/enable the
+buttons based on whether the reply box is empty.
+
+**Health check** — on the first `ensureAiButtons()` call, `GET_AI_HEALTH` is sent
+to `background.js` which calls `GET <aiApiUrl>/ai/health`. The result is cached in
+the module-level `aiHealthy` flag (`null` = unchecked, `true`/`false` = result).
+Buttons are only created if `{ ok: true }` is returned. A second module-level flag
+`aiHealthPending` prevents duplicate in-flight checks.
+
+**Button layout** (left → right): `↩` back button | `⚡ AI Quick` | `🔍 AI Details`
+
+**Finding the reply box** — `findMessengerReplyBox()`:
+1. `[data-lexical-editor="true"]` whose `aria-placeholder` contains `"Messenger"` or `"Reply"` (primary — confirmed against live DOM).
+2. `[contenteditable="true"]` with matching `aria-placeholder` (fallback).
+
+**Finding the insertion point** — `findComposerInsertionPoint()` walks up from
+the reply box until it finds an ancestor with `width > 200 px`, `60 px < height
+< 150 px`, and a `nextElementSibling` (the toolbar row). That element is the
+input row; inserting after it places our div between input and toolbar.
+
+**Empty vs filled detection** (Lexical-specific DOM):
+- **Empty**: `<br data-lexical-managed-linebreak="true">` present in the editor.
+- **Filled**: `<span data-lexical-text="true">user text</span>` present.
+
+`isReplyBoxEmpty()` queries `br[data-lexical-managed-linebreak]`. Buttons are
+`disabled` (opacity 0.45) when the box is empty.
+
+**Reading reply box text** — `getReplyBoxText()` collects all `[data-lexical-text="true"]`
+spans and joins their `textContent`.
+
+**Clearing the reply box** — `clearReplyBox()` targets `[contenteditable="true"][role="textbox"]`
+directly. It deletes character-by-character: for each character (`textContent.length + 2`
+iterations to catch invisible zero-width chars), it collapses the selection to the end then
+fires `keydown Backspace` → `beforeinput deleteContentBackward` → `execCommand('delete')` →
+`input deleteContentBackward` → `keyup Backspace`. Returns `false` if the editor is not found.
+
+Do **not** attempt select-all + single delete for Lexical — it ignores browser-level
+non-collapsed selections for delete operations.
+
+**Inserting text** — `insertTextIntoMessenger(text)` handles multiline AI responses:
+1. Normalises `\\n` escape sequences and `\r\n` to `\n`.
+2. Builds a `DataTransfer` with `text/plain` set to the cleaned text.
+3. Dispatches a synthetic `ClipboardEvent('paste')` on the editor — Lexical intercepts
+   this natively and converts `\n` into its internal line breaks without triggering Enter
+   (which would send the message). Do **not** use Shift+Enter simulation or
+   `insertLineBreak` execCommand — the paste approach is the only reliable method.
+
+**Prepend text** — `injectTextIntoReplyBox(text)` (used by other features, not AI buttons):
+- *Empty*: `box.focus()` then `execCommand('insertText', false, text)`.
+- *Filled*: moves the cursor to offset 0 of the first `[data-lexical-text="true"]`
+  span via the Selection/Range API, then `execCommand('insertText', false, text + ' ')`.
+
+**Click behaviour**:
+1. Read current reply box text via `getReplyBoxText()`. If empty, do nothing.
+2. Send `{ messages: [text], mode }` as `AI_REPLY` to `background.js` →
+   `POST <aiApiUrl>/ai/reply`.
+3. All buttons dim immediately; the clicked button shows a CSS spinner
+   (`.cim-ai-btn--loading` — `::after` pseudo-element, white border-top animation).
+   No status text is shown.
+4. On `{ ok: true, text }`: call `clearReplyBox()` then `insertTextIntoMessenger(text)`.
+5. On complete (success or error): remove `.cim-ai-btn--loading`, re-enable buttons.
+
+**Back button (↩)**:
+- Starts disabled. Enabled when `aiPreviousText` is non-empty (i.e. after an AI
+  call is made).
+- Clicking it calls `replaceReplyBoxText(aiPreviousText)`, clears `aiPreviousText`,
+  and disables itself.
+- `aiPreviousText` is reset to `''` on every conversation switch.
+
+**Backend contract**:
+```
+GET <aiApiUrl>/ai/health
+Authorization: Bearer <aiApiToken>   (omitted if token not set)
+→ { "ok": true }
+
+POST <aiApiUrl>/ai/reply
+Authorization: Bearer <aiApiToken>   (omitted if token not set)
+Content-Type: application/json
+{ "messages": ["the text from the reply box"], "mode": "quick" | "details" }
+→ { "ok": true, "text": "AI reply text" }
+→ { "ok": false, "error": "reason" }
+```
+`"quick"` instructs the backend to return a brief reply; `"details"` a thorough one.
+`messages` is always a single-element array containing whatever the agent typed.
+The model choice and system prompt live entirely on the backend.
+
 ### Fragile/heuristic areas (DOM-dependent)
 
 - `findContactDetailsAnchor()`: finds a leaf with text exactly "Contact
@@ -156,8 +256,11 @@ back.
      finds a `div`/`span` with `-webkit-line-clamp` in its inline style and
      verifies it sits inside a container that also contains "Assigned to " or
      "Assign this conversation" text. Returns that element's text as the name.
+- `findMessengerReplyBox()` / `findComposerInsertionPoint()`: rely on
+  `data-lexical-editor`, `aria-placeholder`, `data-lexical-managed-linebreak`,
+  and `data-lexical-text` attributes specific to Meta's Lexical editor build.
 
-All three rely on Business Suite's obfuscated DOM and may need retuning after
+All rely on Business Suite's obfuscated DOM and may need retuning after
 a Facebook layout change.
 
 ### ManyChat integration assumptions

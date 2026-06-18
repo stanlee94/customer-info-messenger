@@ -2,6 +2,51 @@ const MANYCHAT_API_BASE = 'https://api.manychat.com';
 const CART_API_BASE = 'https://yxch9n4n6e.execute-api.ap-southeast-1.amazonaws.com/latest';
 const ORDER_STATUS_API_BASE = 'https://7n881aguj8.execute-api.ap-southeast-1.amazonaws.com';
 
+function getAiHealth() {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(['aiApiUrl', 'aiApiToken'], ({ aiApiUrl, aiApiToken }) => {
+      if (!aiApiUrl) { resolve({ ok: false }); return; }
+      const headers = {};
+      if (aiApiToken) headers['Authorization'] = `Bearer ${aiApiToken}`;
+      fetch(`${aiApiUrl}/ai/health`, { headers })
+        .then((res) => res.json())
+        .then((json) => resolve({ ok: json?.ok === true }))
+        .catch(() => resolve({ ok: false }));
+    });
+  });
+}
+
+function getAiReply(messages, mode) {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(['aiApiUrl', 'aiApiToken'], ({ aiApiUrl, aiApiToken }) => {
+      if (!aiApiUrl) {
+        resolve({ ok: false, error: 'AI API URL not configured. Set it in extension options.' });
+        return;
+      }
+
+      const headers = { 'Content-Type': 'application/json' };
+      if (aiApiToken) headers['Authorization'] = `Bearer ${aiApiToken}`;
+
+      fetch(`${aiApiUrl}/ai/reply`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ messages, mode }),
+      })
+        .then((res) => {
+          if (!res.ok) throw new Error(`AI API error: ${res.status}`);
+          return res.json();
+        })
+        .then((json) => {
+          if (!json.ok || typeof json.text !== 'string') {
+            throw new Error(json.error || 'Unexpected AI API response.');
+          }
+          resolve({ ok: true, text: json.text });
+        })
+        .catch((err) => resolve({ ok: false, error: err.message }));
+    });
+  });
+}
+
 function searchManyChatByName(name) {
   return new Promise((resolve) => {
     chrome.storage.local.get('manychatToken', ({ manychatToken }) => {
@@ -443,6 +488,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.type === 'GET_ORDER_STATUSES') {
     fetchOrderStatuses(message.orderIds || []).then(sendResponse);
+    return true;
+  }
+
+  if (message?.type === 'GET_AI_HEALTH') {
+    getAiHealth().then(sendResponse);
+    return true;
+  }
+
+  if (message?.type === 'AI_REPLY') {
+    getAiReply(message.messages || [], message.mode || 'quick').then(sendResponse);
     return true;
   }
 });

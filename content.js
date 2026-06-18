@@ -3,6 +3,7 @@
   if (!location.href.includes(ALLOWED_ASSET_ID)) return;
 
   const PANEL_ID = 'cim-purchase-panel';
+  const AI_BUTTONS_ID = 'cim-ai-buttons';
   const CHECK_ANCESTOR_DEPTH = 6;
   const DEBOUNCE_MS = 300;
 
@@ -16,6 +17,9 @@
 
   let debounceTimer = null;
   let cartSessionValid = false;
+  let aiHealthy = null;        // null = unchecked, true/false = result
+  let aiHealthPending = false;
+  let aiPreviousText = '';
   let cartPrefixText = '';
   let panelPosition = null; // {x, y} px — null means sidebar (default), set after first drag
 
@@ -182,6 +186,258 @@
         chrome.storage.local.set({ uidPsidMap: map }, resolve);
       });
     });
+  }
+
+  // ── AI reply helpers ────────────────────────────────────────────────────────
+
+  // Find the Lexical reply box. Primary: data-lexical-editor + aria-placeholder
+  // containing "Messenger". Fallback: aria-placeholder containing "reply".
+  function findMessengerReplyBox() {
+    for (const el of document.querySelectorAll('[data-lexical-editor="true"]')) {
+      if (el.closest(`#${PANEL_ID}`)) continue;
+      const ph = el.getAttribute('aria-placeholder') || '';
+      if (ph.includes('Messenger') || ph.includes('Reply')) return el;
+    }
+    for (const el of document.querySelectorAll('[contenteditable="true"]')) {
+      if (el.closest(`#${PANEL_ID}`)) continue;
+      const ph = (el.getAttribute('aria-placeholder') || '').toLowerCase();
+      if (ph.includes('reply') || ph.includes('messenger')) return el;
+    }
+    return null;
+  }
+
+  // Walk up from the reply box to find the INPUT ROW — the container that holds
+  // the profile pic + editor. We look for the first wide ancestor that has a
+  // nextElementSibling (the toolbar row). Inserting after this element puts our
+  // buttons between the text input and the icon toolbar.
+  function findComposerInsertionPoint() {
+    const replyBox = findMessengerReplyBox();
+    if (!replyBox) return null;
+
+    let ancestor = replyBox;
+    for (let depth = 0; depth < 12; depth++) {
+      if (!ancestor.parentElement) break;
+      ancestor = ancestor.parentElement;
+      const rect = ancestor.getBoundingClientRect();
+      // Wide row that has a next sibling (the toolbar row follows it)
+      if (rect.width > 200 && rect.height > 20 && rect.height < 150 && ancestor.nextElementSibling) {
+        return ancestor;
+      }
+    }
+
+    // Fallback: 5 levels up
+    ancestor = replyBox;
+    for (let i = 0; i < 5; i++) {
+      if (!ancestor.parentElement) break;
+      ancestor = ancestor.parentElement;
+    }
+    return ancestor;
+  }
+
+  // Scrape the last ~20 visible message texts from the conversation thread.
+  // Fragile: relies on dir="auto" being present on message text nodes in
+  // Facebook's obfuscated DOM — may need retuning after a layout change.
+  function scrapeConversationMessages() {
+    const composerEl = findComposerInsertionPoint();
+    const seen = new Set();
+    const results = [];
+    const candidates = document.querySelectorAll('[dir="auto"]');
+    for (const el of candidates) {
+      if (el.closest(`#${PANEL_ID}`) || el.closest(`#${AI_BUTTONS_ID}`)) continue;
+      if (composerEl && composerEl.contains(el)) continue;
+      if (el.closest('button, [role="button"], [role="menuitem"], [role="menu"]')) continue;
+      const text = el.textContent.trim();
+      if (!text || text.length < 2 || seen.has(text) || text.length > 1500) continue;
+      seen.add(text);
+      results.push(text);
+    }
+    return results.slice(-20);
+  }
+
+  // Empty when Lexical has only its managed linebreak placeholder.
+  function isReplyBoxEmpty() {
+    const box = findMessengerReplyBox();
+    if (!box) return true;
+    return !!box.querySelector('br[data-lexical-managed-linebreak]');
+  }
+
+  function clearReplyBox() {
+    const editor = document.querySelector('[contenteditable="true"][role="textbox"]');
+    if (!editor) return false;
+    editor.focus();
+    const charsToDelete = editor.textContent.length + 2;
+    for (let i = 0; i < charsToDelete; i++) {
+      const selection = window.getSelection();
+      selection.selectAllChildren(editor);
+      selection.collapseToEnd();
+      editor.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'Backspace', code: 'Backspace', keyCode: 8, which: 8, bubbles: true, cancelable: true,
+      }));
+      editor.dispatchEvent(new InputEvent('beforeinput', {
+        inputType: 'deleteContentBackward', bubbles: true, cancelable: true,
+      }));
+      document.execCommand('delete', false, null);
+      editor.dispatchEvent(new InputEvent('input', {
+        inputType: 'deleteContentBackward', bubbles: true, cancelable: true,
+      }));
+      editor.dispatchEvent(new KeyboardEvent('keyup', {
+        key: 'Backspace', code: 'Backspace', keyCode: 8, which: 8, bubbles: true, cancelable: true,
+      }));
+    }
+    return true;
+  }
+
+  function insertTextIntoMessenger(text) {
+    const editor = document.querySelector('[contenteditable="true"][role="textbox"]');
+    if (!editor) return false;
+    editor.focus();
+    const cleanText = text.replace(/\\n/g, '\n').replace(/\r\n/g, '\n');
+    const dataTransfer = new DataTransfer();
+    dataTransfer.setData('text/plain', cleanText);
+    editor.dispatchEvent(new ClipboardEvent('paste', {
+      clipboardData: dataTransfer, bubbles: true, cancelable: true,
+    }));
+    return true;
+  }
+
+  function replaceReplyBoxText(text) {
+    const box = findMessengerReplyBox();
+    if (!box) return false;
+    box.focus();
+    box.dispatchEvent(new KeyboardEvent('keydown', {
+      key: 'a', code: 'KeyA', ctrlKey: true, bubbles: true, cancelable: true,
+    }));
+    // Yield one event-loop tick so Lexical can process the select-all
+    // before the insertText replaces the selection.
+    setTimeout(() => document.execCommand('insertText', false, text), 0);
+    return true;
+  }
+
+  function getReplyBoxText() {
+    const box = findMessengerReplyBox();
+    if (!box) return '';
+    return Array.from(box.querySelectorAll('[data-lexical-text="true"]'))
+      .map(el => el.textContent)
+      .join('');
+  }
+
+  // Prepend text to the Lexical reply box.
+  // - Empty box: just insert text (cursor is already at start).
+  // - Filled box: move cursor to the start of the first text node and insert,
+  //   so the prefix appears before whatever the agent already typed.
+  function injectTextIntoReplyBox(text) {
+    const box = findMessengerReplyBox();
+    if (!box) return false;
+    box.focus();
+
+    if (isReplyBoxEmpty()) {
+      document.execCommand('insertText', false, text);
+    } else {
+      const firstSpan = box.querySelector('[data-lexical-text="true"]');
+      const sel = window.getSelection();
+      const range = document.createRange();
+      if (firstSpan && firstSpan.firstChild) {
+        range.setStart(firstSpan.firstChild, 0);
+      } else {
+        range.setStart(box, 0);
+      }
+      range.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(range);
+      document.execCommand('insertText', false, text + ' ');
+    }
+
+    return true;
+  }
+
+  // Dim buttons when the reply box is empty; enable when it has content.
+  function updateAiButtonState() {
+    const wrapper = document.getElementById(AI_BUTTONS_ID);
+    if (!wrapper) return;
+    const empty = isReplyBoxEmpty();
+    wrapper.querySelectorAll('.cim-ai-btn').forEach((btn) => { btn.disabled = empty; });
+  }
+
+  function ensureAiButtons() {
+    // Health check on first call — buttons hidden until backend confirms ok.
+    if (aiHealthy === null) {
+      if (!aiHealthPending) {
+        aiHealthPending = true;
+        chrome.runtime.sendMessage({ type: 'GET_AI_HEALTH' }, (result) => {
+          aiHealthy = !!(result?.ok);
+          aiHealthPending = false;
+          if (aiHealthy) ensureAiButtons();
+        });
+      }
+      return;
+    }
+    if (!aiHealthy) return;
+
+    const existing = document.getElementById(AI_BUTTONS_ID);
+
+    // If buttons are already live in the DOM, leave them alone.
+    // Re-insertion only happens when Facebook removes them (SPA navigation).
+    if (existing && document.contains(existing)) return;
+
+    const insertionPoint = findComposerInsertionPoint();
+    if (!insertionPoint) return;
+
+    existing?.remove();
+
+    const wrapper = document.createElement('div');
+    wrapper.id = AI_BUTTONS_ID;
+
+    const backBtn = document.createElement('button');
+    backBtn.type = 'button';
+    backBtn.className = 'cim-ai-btn cim-ai-btn--back';
+    backBtn.title = 'Restore previous text';
+    backBtn.textContent = '↩';
+    backBtn.disabled = !aiPreviousText;
+
+    const quickBtn = document.createElement('button');
+    quickBtn.type = 'button';
+    quickBtn.className = 'cim-ai-btn cim-ai-btn--quick';
+    quickBtn.textContent = '⚡ AI Quick';
+
+    const detailsBtn = document.createElement('button');
+    detailsBtn.type = 'button';
+    detailsBtn.className = 'cim-ai-btn cim-ai-btn--details';
+    detailsBtn.textContent = '🔍 AI Details';
+
+    wrapper.append(backBtn, quickBtn, detailsBtn);
+    insertionPoint.insertAdjacentElement('afterend', wrapper);
+
+    backBtn.addEventListener('click', () => {
+      if (!aiPreviousText) return;
+      replaceReplyBoxText(aiPreviousText);
+      aiPreviousText = '';
+      backBtn.disabled = true;
+    });
+
+    const handleAiClick = (mode, clickedBtn) => {
+      const text = getReplyBoxText();
+      if (!text) return;
+      const messages = [text];
+      quickBtn.disabled = true;
+      detailsBtn.disabled = true;
+      backBtn.disabled = true;
+      clickedBtn.classList.add('cim-ai-btn--loading');
+
+      chrome.runtime.sendMessage({ type: 'AI_REPLY', messages, mode }, (result) => {
+        clickedBtn.classList.remove('cim-ai-btn--loading');
+        quickBtn.disabled = false;
+        detailsBtn.disabled = false;
+        if (result?.ok) {
+          clearReplyBox();
+          insertTextIntoMessenger(result.text);
+        }
+      });
+    };
+
+    quickBtn.addEventListener('click', () => handleAiClick('quick', quickBtn));
+    detailsBtn.addEventListener('click', () => handleAiClick('details', detailsBtn));
+
+    updateAiButtonState();
   }
 
   function buildPanel() {
@@ -1242,6 +1498,7 @@
 
     if (uid !== sessionState.uid) {
       sessionState = { uid, name: null, resolved: false, view: null, cartHasItems: null, expiredAvailable: null, myrSum: null, sgdSum: null, manychatInfo: null };
+      aiPreviousText = '';
       panel.querySelector('.cim-uid').textContent = `UID: ${uid}`;
       panel.querySelector('.cim-name').textContent = 'Name: detecting...';
       panel.querySelector('.cim-psid').textContent = 'PSID: checking...';
@@ -1283,7 +1540,7 @@
   function scheduleCheck() {
     syncCloseBtnVisibility();
     if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(check, DEBOUNCE_MS);
+    debounceTimer = setTimeout(() => { check(); ensureAiButtons(); updateAiButtonState(); }, DEBOUNCE_MS);
   }
 
   document.addEventListener('click', (event) => {
