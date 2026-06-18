@@ -45,6 +45,63 @@ function searchManyChatByName(name) {
   });
 }
 
+function getManyChatInfo(psid) {
+  return new Promise((resolve) => {
+    chrome.storage.local.get('manychatToken', ({ manychatToken }) => {
+      if (!manychatToken) {
+        resolve({ ok: false, error: 'ManyChat API token not set.' });
+        return;
+      }
+
+      fetch(`${MANYCHAT_API_BASE}/fb/subscriber/getInfo?subscriber_id=${encodeURIComponent(psid)}`, {
+        headers: { Authorization: `Bearer ${manychatToken}` },
+      })
+        .then((res) => {
+          if (!res.ok) throw new Error(`ManyChat API error: ${res.status}`);
+          return res.json();
+        })
+        .then((json) => {
+          const d = json?.data;
+          resolve({
+            ok: true,
+            phone: d?.phone || null,
+            email: d?.email || null,
+            whatsappPhone: d?.whatsapp_phone || null,
+            tags: Array.isArray(d?.tags) ? d.tags.map((t) => ({ id: t.id, name: t.name })) : [],
+          });
+        })
+        .catch((err) => resolve({ ok: false, error: err.message }));
+    });
+  });
+}
+
+function manyChatTagAction(action, psid, tagId) {
+  return new Promise((resolve) => {
+    chrome.storage.local.get('manychatToken', ({ manychatToken }) => {
+      if (!manychatToken) {
+        resolve({ ok: false, error: 'ManyChat API token not set.' });
+        return;
+      }
+
+      const endpoint = action === 'add' ? 'addTag' : 'removeTag';
+      fetch(`${MANYCHAT_API_BASE}/fb/subscriber/${endpoint}`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${manychatToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ subscriber_id: psid, tag_id: tagId }),
+      })
+        .then((res) => {
+          if (!res.ok) throw new Error(`ManyChat API error: ${res.status}`);
+          return res.json();
+        })
+        .then(() => resolve({ ok: true }))
+        .catch((err) => resolve({ ok: false, error: err.message }));
+    });
+  });
+}
+
 function checkSession() {
   return fetch(`${CART_API_BASE}/checkSession`)
     .then((res) => res.json().then((json) => ({ ok: true, valid: res.ok && json?.status === 'ok' })))
@@ -361,6 +418,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.type === 'SEARCH_BASEROW_BY_UID') {
     searchBaserowByUid(message.uid).then(sendResponse);
+    return true;
+  }
+
+  if (message?.type === 'GET_MANYCHAT_INFO') {
+    getManyChatInfo(message.psid).then(sendResponse);
+    return true;
+  }
+
+  if (message?.type === 'MANYCHAT_TAG_ACTION') {
+    manyChatTagAction(message.action, message.psid, message.tagId).then(sendResponse);
     return true;
   }
 

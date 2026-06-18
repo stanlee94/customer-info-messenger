@@ -145,6 +145,71 @@
   text-decoration: underline;
 }
 
+#cim-purchase-panel .cim-lang-tags {
+  display: flex;
+  background: #f0f2f5;
+  border: 1px solid #e4e6eb;
+  border-radius: 8px;
+  padding: 2px;
+  margin-bottom: 8px;
+  gap: 0;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+#cim-purchase-panel .cim-lang-tags--none {
+  background: #fff5f5;
+  border-color: transparent;
+}
+
+#cim-purchase-panel .cim-lang-tag {
+  flex: 1;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 5px 0;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  letter-spacing: 0.1px;
+  transition: background 0.12s, color 0.12s, box-shadow 0.12s;
+  user-select: none;
+}
+
+#cim-purchase-panel .cim-lang-tag--active {
+  background: #f0fdf4;
+  color: #15803d;
+  border-color: transparent;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+#cim-purchase-panel .cim-lang-tag--inactive {
+  background: transparent;
+  color: #8a8d91;
+  border-color: transparent;
+}
+
+#cim-purchase-panel .cim-lang-tags--none .cim-lang-tag--inactive {
+  color: #cd5c5c;
+}
+
+#cim-purchase-panel .cim-lang-tag--inactive:hover {
+  color: #050505;
+}
+
+#cim-purchase-panel .cim-lang-tag--loading {
+  background: transparent;
+  color: #b0b3b8;
+  border-color: transparent;
+  cursor: wait !important;
+  opacity: 0.5;
+}
+
+#cim-purchase-panel .cim-lang-tag--error {
+  background: #fff0f0;
+  color: #d32f2f;
+  border-color: #f5c2c2;
+  cursor: default !important;
+}
+
 #cim-purchase-panel .cim-body ul {
   margin: 0;
   padding-left: 18px;

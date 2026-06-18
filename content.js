@@ -28,6 +28,7 @@
     expiredAvailable: null,
     myrSum: null,
     sgdSum: null,
+    manychatInfo: null,
   };
 
   function getUserIdFromUrl() {
@@ -192,6 +193,7 @@
       <div class="cim-row cim-uid"></div>
       <div class="cim-row cim-name"></div>
       <div class="cim-row cim-psid"></div>
+      <div class="cim-lang-tags"></div>
       <div class="cim-body"></div>
     `;
     return panel;
@@ -264,9 +266,96 @@
     });
   }
 
+  const LANG_TAGS = [
+    { id: 35385444, label: 'Chinese' },
+    { id: 35385464, label: 'English' },
+  ];
+
+  function renderLangTags(panel, tags, psid) {
+    const container = panel.querySelector('.cim-lang-tags');
+    if (!container) return;
+    container.innerHTML = '';
+
+    const tagIds = new Set((tags || []).map((t) => t.id));
+    const activeTag = LANG_TAGS.find((t) => tagIds.has(t.id)) || null;
+
+    container.classList.toggle('cim-lang-tags--none', !activeTag);
+
+    LANG_TAGS.forEach((tag) => {
+      const chip = document.createElement('span');
+      const isActive = activeTag?.id === tag.id;
+      chip.className = isActive ? 'cim-lang-tag cim-lang-tag--active' : 'cim-lang-tag cim-lang-tag--inactive';
+      chip.textContent = tag.label;
+      chip.style.cursor = 'pointer';
+
+      chip.addEventListener('click', () => {
+        if (isActive || chip.dataset.loading) return;
+
+        chip.dataset.loading = '1';
+        const prevClass = chip.className;
+        chip.className = 'cim-lang-tag cim-lang-tag--loading';
+
+        const removeFirst = activeTag
+          ? new Promise((resolve) =>
+              chrome.runtime.sendMessage(
+                { type: 'MANYCHAT_TAG_ACTION', action: 'remove', psid, tagId: activeTag.id },
+                resolve
+              )
+            )
+          : Promise.resolve({ ok: true });
+
+        const showError = (removeAlreadySucceeded) => {
+          if (removeAlreadySucceeded && activeTag && sessionState.manychatInfo) {
+            // Remove went through in ManyChat but add failed — strip the old tag from local state
+            // so the UI reflects the real state (neither tag) after the error flash
+            sessionState.manychatInfo = {
+              ...sessionState.manychatInfo,
+              tags: (sessionState.manychatInfo.tags || []).filter((t) => t.id !== activeTag.id),
+            };
+          }
+          chip.className = 'cim-lang-tag cim-lang-tag--error';
+          setTimeout(() => {
+            delete chip.dataset.loading;
+            const livePanel = document.getElementById(PANEL_ID);
+            if (livePanel) renderLangTags(livePanel, sessionState.manychatInfo?.tags || [], psid);
+            else chip.className = prevClass;
+          }, 1500);
+        };
+
+        removeFirst.then((res) => {
+          if (!res?.ok) {
+            showError(false);
+            return;
+          }
+          chrome.runtime.sendMessage(
+            { type: 'MANYCHAT_TAG_ACTION', action: 'add', psid, tagId: tag.id },
+            (addRes) => {
+              if (!addRes?.ok) {
+                showError(true);
+                return;
+              }
+              if (sessionState.manychatInfo) {
+                const filtered = (sessionState.manychatInfo.tags || []).filter(
+                  (t) => t.id !== (activeTag?.id)
+                );
+                filtered.push({ id: tag.id, name: tag.label });
+                sessionState.manychatInfo = { ...sessionState.manychatInfo, tags: filtered };
+              }
+              const livePanel = document.getElementById(PANEL_ID);
+              if (livePanel) renderLangTags(livePanel, sessionState.manychatInfo?.tags || [], psid);
+            }
+          );
+        });
+      });
+
+      container.appendChild(chip);
+    });
+  }
+
   function renderPsidRow(panel, uid, psid) {
     const row = panel.querySelector('.cim-psid');
     row.innerHTML = '';
+    panel.querySelector('.cim-lang-tags').innerHTML = '';
 
     const nameRow = panel.querySelector('.cim-name');
     const cartUrl = psid
@@ -855,6 +944,49 @@
       sessionState.resolved = true;
       renderState(livePanel, { type: 'orders', data: response.data, psid });
       probeCartAndShowButtons(uid, psid, livePanel);
+      fetchAndRenderManyChatInfo(uid, psid);
+    });
+  }
+
+  function renderManyChatInfoRows(info) {
+    const panel = document.getElementById(PANEL_ID);
+    if (!panel || sessionState.view?.type !== 'orders') return;
+
+    renderLangTags(panel, info.tags || [], sessionState.view?.psid);
+
+    const summary = panel.querySelector('.cim-summary');
+    if (!summary) return;
+
+    const addInfoRow = (labelText, val) => {
+      const row = document.createElement('div');
+      row.className = 'cim-summary-row cim-summary-row--full';
+      const label = document.createElement('span');
+      label.className = 'cim-summary-label';
+      label.textContent = labelText;
+      const value = document.createElement('span');
+      value.className = 'cim-summary-value';
+      value.append(val, buildCopyButton(val));
+      row.append(label, value);
+      summary.appendChild(row);
+    };
+
+    if (info.phone) addInfoRow('Phone', info.phone);
+    if (info.email) addInfoRow('Email', info.email);
+    if (info.whatsappPhone) addInfoRow('WhatsApp', info.whatsappPhone);
+  }
+
+  function fetchAndRenderManyChatInfo(uid, psid) {
+    if (sessionState.manychatInfo) {
+      renderManyChatInfoRows(sessionState.manychatInfo);
+      return;
+    }
+
+    chrome.runtime.sendMessage({ type: 'GET_MANYCHAT_INFO', psid }, (response) => {
+      if (getUserIdFromUrl() !== uid) return;
+      if (chrome.runtime.lastError || !response || !response.ok) return;
+
+      sessionState.manychatInfo = response;
+      renderManyChatInfoRows(response);
     });
   }
 
@@ -1089,6 +1221,9 @@
       if (cartSessionValid && sessionState.view.type === 'orders' && sessionState.cartHasItems === null) {
         probeCartAndShowButtons(sessionState.uid, sessionState.view.psid, panel);
       }
+      if (sessionState.view.type === 'orders' && sessionState.manychatInfo) {
+        fetchAndRenderManyChatInfo(sessionState.uid, sessionState.view.psid);
+      }
     }
   }
 
@@ -1106,7 +1241,7 @@
     if (!panel) return;
 
     if (uid !== sessionState.uid) {
-      sessionState = { uid, name: null, resolved: false, view: null, cartHasItems: null, expiredAvailable: null, myrSum: null, sgdSum: null };
+      sessionState = { uid, name: null, resolved: false, view: null, cartHasItems: null, expiredAvailable: null, myrSum: null, sgdSum: null, manychatInfo: null };
       panel.querySelector('.cim-uid').textContent = `UID: ${uid}`;
       panel.querySelector('.cim-name').textContent = 'Name: detecting...';
       panel.querySelector('.cim-psid').textContent = 'PSID: checking...';
