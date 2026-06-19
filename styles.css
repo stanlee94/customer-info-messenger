@@ -712,9 +712,40 @@
   color: #fff;
 }
 
-#cim-ai-buttons .cim-ai-btn--details {
-  background: linear-gradient(135deg, #0a7cff 0%, #0052b8 100%);
-  color: #fff;
+#cim-ai-buttons .cim-ai-lang {
+  display: flex;
+  background: #e4e6eb;
+  border-radius: 7px;
+  padding: 2px;
+  gap: 0;
+  flex-shrink: 0;
+}
+
+#cim-ai-buttons .cim-ai-lang-chip {
+  font-size: 11px;
+  font-weight: 600;
+  font-family: inherit;
+  padding: 3px 7px;
+  border-radius: 5px;
+  border: none;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.12s, color 0.12s;
+  white-space: nowrap;
+}
+
+#cim-ai-buttons .cim-ai-lang-chip--active {
+  background: #e8f0fe;
+  color: #0a7cff;
+}
+
+#cim-ai-buttons .cim-ai-lang-chip--inactive {
+  background: transparent;
+  color: #8a8d91;
+}
+
+#cim-ai-buttons .cim-ai-lang-chip--inactive:hover {
+  color: #050505;
 }
 
 #cim-ai-buttons .cim-ai-btn:hover:not(:disabled) {

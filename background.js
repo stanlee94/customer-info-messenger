@@ -16,7 +16,7 @@ function getAiHealth() {
   });
 }
 
-function getAiReply(messages, mode) {
+function getAiReply(messages, mode, language) {
   return new Promise((resolve) => {
     chrome.storage.local.get(['aiApiUrl', 'aiApiToken'], ({ aiApiUrl, aiApiToken }) => {
       if (!aiApiUrl) {
@@ -30,7 +30,7 @@ function getAiReply(messages, mode) {
       fetch(`${aiApiUrl}/ai/reply`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ messages, mode }),
+        body: JSON.stringify({ messages, mode, language }),
       })
         .then((res) => {
           if (!res.ok) throw new Error(`AI API error: ${res.status}`);
@@ -497,7 +497,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === 'AI_REPLY') {
-    getAiReply(message.messages || [], message.mode || 'quick').then(sendResponse);
+    getAiReply(message.messages || [], message.mode || 'quick', message.language || 'chinese').then(sendResponse);
     return true;
   }
 });

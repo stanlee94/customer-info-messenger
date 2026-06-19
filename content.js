@@ -20,6 +20,7 @@
   let aiHealthy = null;        // null = unchecked, true/false = result
   let aiHealthPending = false;
   let aiPreviousText = '';
+  let aiLanguage = 'chinese';
   let cartPrefixText = '';
   let panelPosition = null; // {x, y} px — null means sidebar (default), set after first drag
 
@@ -392,50 +393,66 @@
     backBtn.className = 'cim-ai-btn cim-ai-btn--back';
     backBtn.title = 'Restore previous text';
     backBtn.textContent = '↩';
-    backBtn.disabled = !aiPreviousText;
+    backBtn.disabled = false;
 
     const quickBtn = document.createElement('button');
     quickBtn.type = 'button';
     quickBtn.className = 'cim-ai-btn cim-ai-btn--quick';
-    quickBtn.textContent = '⚡ AI Quick';
+    quickBtn.textContent = '✨ AI Rewrite';
 
-    const detailsBtn = document.createElement('button');
-    detailsBtn.type = 'button';
-    detailsBtn.className = 'cim-ai-btn cim-ai-btn--details';
-    detailsBtn.textContent = '🔍 AI Details';
+    const langToggle = document.createElement('div');
+    langToggle.className = 'cim-ai-lang';
+    const langChips = [
+      { value: 'chinese', label: '华语' },
+      { value: 'english', label: 'English' },
+    ];
+    langChips.forEach(({ value, label }) => {
+      const chip = document.createElement('span');
+      chip.className = 'cim-ai-lang-chip ' + (aiLanguage === value ? 'cim-ai-lang-chip--active' : 'cim-ai-lang-chip--inactive');
+      chip.textContent = label;
+      chip.addEventListener('click', () => {
+        if (aiLanguage === value) return;
+        aiLanguage = value;
+        langToggle.querySelectorAll('.cim-ai-lang-chip').forEach((c, i) => {
+          const isActive = langChips[i].value === aiLanguage;
+          c.className = 'cim-ai-lang-chip ' + (isActive ? 'cim-ai-lang-chip--active' : 'cim-ai-lang-chip--inactive');
+        });
+      });
+      langToggle.appendChild(chip);
+    });
 
-    wrapper.append(backBtn, quickBtn, detailsBtn);
+    wrapper.append(backBtn, quickBtn, langToggle);
     insertionPoint.insertAdjacentElement('afterend', wrapper);
 
     backBtn.addEventListener('click', () => {
-      if (!aiPreviousText) return;
-      replaceReplyBoxText(aiPreviousText);
-      aiPreviousText = '';
-      backBtn.disabled = true;
+      chrome.storage.local.get(['aiLastInput'], ({ aiLastInput }) => {
+        if (!aiLastInput) return;
+        clearReplyBox();
+        insertTextIntoMessenger(aiLastInput);
+      });
     });
 
-    const handleAiClick = (mode, clickedBtn) => {
+    const handleAiClick = (clickedBtn) => {
       const text = getReplyBoxText();
       if (!text) return;
       const messages = [text];
       quickBtn.disabled = true;
-      detailsBtn.disabled = true;
       backBtn.disabled = true;
       clickedBtn.classList.add('cim-ai-btn--loading');
 
-      chrome.runtime.sendMessage({ type: 'AI_REPLY', messages, mode }, (result) => {
-        clickedBtn.classList.remove('cim-ai-btn--loading');
-        quickBtn.disabled = false;
-        detailsBtn.disabled = false;
-        if (result?.ok) {
-          clearReplyBox();
-          insertTextIntoMessenger(result.text);
-        }
+      chrome.storage.local.set({ aiLastInput: text }, () => {
+        chrome.runtime.sendMessage({ type: 'AI_REPLY', messages, mode: 'quick', language: aiLanguage }, (result) => {
+          clickedBtn.classList.remove('cim-ai-btn--loading');
+          quickBtn.disabled = false;
+          if (result?.ok) {
+            clearReplyBox();
+            insertTextIntoMessenger(result.text);
+          }
+        });
       });
     };
 
-    quickBtn.addEventListener('click', () => handleAiClick('quick', quickBtn));
-    detailsBtn.addEventListener('click', () => handleAiClick('details', detailsBtn));
+    quickBtn.addEventListener('click', () => handleAiClick(quickBtn));
 
     updateAiButtonState();
   }

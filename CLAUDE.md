@@ -168,7 +168,9 @@ the module-level `aiHealthy` flag (`null` = unchecked, `true`/`false` = result).
 Buttons are only created if `{ ok: true }` is returned. A second module-level flag
 `aiHealthPending` prevents duplicate in-flight checks.
 
-**Button layout** (left → right): `↩` back button | `⚡ AI Quick` | `🔍 AI Details`
+**Button layout** (left → right): `↩` back button | `✨ AI Rewrite` | `华语 / English` language toggle
+
+**Module-level state**: `aiHealthy` (`null`/`true`/`false`), `aiHealthPending` (bool), `aiLanguage` (`'chinese'`/`'english'`, defaults to `'chinese'`).
 
 **Finding the reply box** — `findMessengerReplyBox()`:
 1. `[data-lexical-editor="true"]` whose `aria-placeholder` contains `"Messenger"` or `"Reply"` (primary — confirmed against live DOM).
@@ -211,22 +213,22 @@ non-collapsed selections for delete operations.
 - *Filled*: moves the cursor to offset 0 of the first `[data-lexical-text="true"]`
   span via the Selection/Range API, then `execCommand('insertText', false, text + ' ')`.
 
-**Click behaviour**:
+**Language toggle** — a segmented control (`cim-ai-lang`) with two chips: `华语` (`chinese`) and `English` (`english`). Active chip uses blue (`#0a7cff` / `#e8f0fe`) to distinguish it from the panel's green ManyChat lang-tag toggle. Selection is stored in the module-level `aiLanguage` variable (defaults to `'chinese'`; persists across conversation switches, resets on page reload).
+
+**Click behaviour** (`✨ AI Rewrite`):
 1. Read current reply box text via `getReplyBoxText()`. If empty, do nothing.
-2. Send `{ messages: [text], mode }` as `AI_REPLY` to `background.js` →
-   `POST <aiApiUrl>/ai/reply`.
-3. All buttons dim immediately; the clicked button shows a CSS spinner
+2. Save text to `chrome.storage.local` as `aiLastInput`.
+3. Only after the storage write completes, send `{ messages: [text], mode: 'quick', language: aiLanguage }` as `AI_REPLY` to `background.js` → `POST <aiApiUrl>/ai/reply`.
+4. All action buttons dim immediately; the clicked button shows a CSS spinner
    (`.cim-ai-btn--loading` — `::after` pseudo-element, white border-top animation).
    No status text is shown.
-4. On `{ ok: true, text }`: call `clearReplyBox()` then `insertTextIntoMessenger(text)`.
-5. On complete (success or error): remove `.cim-ai-btn--loading`, re-enable buttons.
+5. On `{ ok: true, text }`: call `clearReplyBox()` then `insertTextIntoMessenger(text)`.
+6. On complete (success or error): remove `.cim-ai-btn--loading`, re-enable buttons.
 
 **Back button (↩)**:
-- Starts disabled. Enabled when `aiPreviousText` is non-empty (i.e. after an AI
-  call is made).
-- Clicking it calls `replaceReplyBoxText(aiPreviousText)`, clears `aiPreviousText`,
-  and disables itself.
-- `aiPreviousText` is reset to `''` on every conversation switch.
+- Always starts enabled. `updateAiButtonState()` dims it (along with all `.cim-ai-btn`) when the reply box is empty.
+- Clicking it reads `aiLastInput` from `chrome.storage.local`. If found, calls `clearReplyBox()` then `insertTextIntoMessenger(aiLastInput)` to restore the text that was in the box before the last AI rewrite.
+- If `aiLastInput` is not set (no AI call made yet in this session), the click is a no-op.
 
 **Backend contract**:
 ```
@@ -237,11 +239,11 @@ Authorization: Bearer <aiApiToken>   (omitted if token not set)
 POST <aiApiUrl>/ai/reply
 Authorization: Bearer <aiApiToken>   (omitted if token not set)
 Content-Type: application/json
-{ "messages": ["the text from the reply box"], "mode": "quick" | "details" }
+{ "messages": ["the text from the reply box"], "mode": "quick", "language": "chinese" | "english" }
 → { "ok": true, "text": "AI reply text" }
 → { "ok": false, "error": "reason" }
 ```
-`"quick"` instructs the backend to return a brief reply; `"details"` a thorough one.
+`mode` is always `"quick"`. `language` reflects the user's selected language toggle (defaults to `"chinese"`).
 `messages` is always a single-element array containing whatever the agent typed.
 The model choice and system prompt live entirely on the backend.
 
