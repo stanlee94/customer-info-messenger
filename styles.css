@@ -677,12 +677,12 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* ── AI Quick / Details buttons (injected below messenger composer) ───────── */
+/* ── AI buttons bar (injected below messenger composer) ─────────────────── */
 #cim-ai-buttons {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 8px 4px;
+  padding: 5px 8px;
   background: #f0f2f5;
   border-top: 1px solid #e4e6eb;
 }
@@ -697,25 +697,37 @@
   border: none;
   border-radius: 6px;
   cursor: pointer;
-  transition: opacity 0.15s ease, transform 0.1s ease;
+  transition: opacity 0.15s ease, transform 0.1s ease, background 0.15s ease;
 }
 
+/* Back button — white secondary pill */
 #cim-ai-buttons .cim-ai-btn--back {
   flex: 0 0 auto;
-  padding: 5px 8px;
-  background: #e4e6eb;
+  padding: 5px 9px;
+  background: #fff;
   color: #050505;
+  border: 1px solid #d8dadf;
+  line-height: 1;
 }
 
+#cim-ai-buttons .cim-ai-btn--back:hover:not(:disabled) {
+  background: #f0f2f5;
+  border-color: #c5c8ce;
+  opacity: 1;
+  transform: none;
+}
+
+/* AI Rewrite — project accent blue */
 #cim-ai-buttons .cim-ai-btn--quick {
-  background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
+  background: linear-gradient(135deg, #0a7cff 0%, #0052b8 100%);
   color: #fff;
 }
 
+/* Language toggle — iOS-style segmented control */
 #cim-ai-buttons .cim-ai-lang {
   display: flex;
   background: #e4e6eb;
-  border-radius: 7px;
+  border-radius: 8px;
   padding: 2px;
   gap: 0;
   flex-shrink: 0;
@@ -725,36 +737,46 @@
   font-size: 11px;
   font-weight: 600;
   font-family: inherit;
-  padding: 3px 7px;
-  border-radius: 5px;
+  padding: 3px 8px;
+  border-radius: 6px;
   border: none;
   cursor: pointer;
   user-select: none;
-  transition: background 0.12s, color 0.12s;
+  transition: background 0.15s, color 0.15s, box-shadow 0.15s;
   white-space: nowrap;
+  line-height: 1.4;
 }
 
+/* Active chip: white pill with subtle shadow */
 #cim-ai-buttons .cim-ai-lang-chip--active {
-  background: #e8f0fe;
+  background: #fff;
   color: #0a7cff;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.12), 0 1px 1px rgba(0,0,0,0.08);
 }
 
 #cim-ai-buttons .cim-ai-lang-chip--inactive {
   background: transparent;
-  color: #8a8d91;
+  color: #65676b;
 }
 
 #cim-ai-buttons .cim-ai-lang-chip--inactive:hover {
+  background: rgba(0,0,0,0.05);
   color: #050505;
 }
 
+#cim-ai-buttons .cim-ai-lang-chip:focus-visible {
+  outline: 2px solid #0a7cff;
+  outline-offset: 1px;
+}
+
 #cim-ai-buttons .cim-ai-btn:hover:not(:disabled) {
-  opacity: 0.9;
+  opacity: 0.88;
   transform: translateY(-1px);
 }
 
 #cim-ai-buttons .cim-ai-btn:active:not(:disabled) {
   transform: translateY(0);
+  opacity: 1;
 }
 
 #cim-ai-buttons .cim-ai-btn:disabled {
@@ -763,24 +785,27 @@
   transform: none;
 }
 
+/* Loading: hide text, show centered spinner */
 #cim-ai-buttons .cim-ai-btn--loading {
   opacity: 1 !important;
   pointer-events: none;
+  color: transparent !important;
 }
 
 #cim-ai-buttons .cim-ai-btn--loading::after {
   content: '';
-  display: inline-block;
-  width: 10px;
-  height: 10px;
-  margin-left: 6px;
-  border: 2px solid rgba(255,255,255,0.4);
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(255,255,255,0.35);
   border-top-color: #fff;
   border-radius: 50%;
   animation: cim-spin 0.7s linear infinite;
-  vertical-align: middle;
 }
 
 @keyframes cim-spin {
-  to { transform: rotate(360deg); }
+  to { transform: translate(-50%, -50%) rotate(360deg); }
 }

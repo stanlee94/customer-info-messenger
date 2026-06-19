@@ -394,6 +394,7 @@
     backBtn.title = 'Restore previous text';
     backBtn.textContent = '↩';
     backBtn.disabled = false;
+    backBtn.setAttribute('aria-label', 'Restore previous text');
 
     const quickBtn = document.createElement('button');
     quickBtn.type = 'button';
@@ -408,15 +409,24 @@
     ];
     langChips.forEach(({ value, label }) => {
       const chip = document.createElement('span');
-      chip.className = 'cim-ai-lang-chip ' + (aiLanguage === value ? 'cim-ai-lang-chip--active' : 'cim-ai-lang-chip--inactive');
+      const isInitiallyActive = aiLanguage === value;
+      chip.className = 'cim-ai-lang-chip ' + (isInitiallyActive ? 'cim-ai-lang-chip--active' : 'cim-ai-lang-chip--inactive');
       chip.textContent = label;
-      chip.addEventListener('click', () => {
+      chip.setAttribute('role', 'button');
+      chip.setAttribute('tabindex', '0');
+      chip.setAttribute('aria-pressed', isInitiallyActive ? 'true' : 'false');
+      const activateChip = () => {
         if (aiLanguage === value) return;
         aiLanguage = value;
         langToggle.querySelectorAll('.cim-ai-lang-chip').forEach((c, i) => {
           const isActive = langChips[i].value === aiLanguage;
           c.className = 'cim-ai-lang-chip ' + (isActive ? 'cim-ai-lang-chip--active' : 'cim-ai-lang-chip--inactive');
+          c.setAttribute('aria-pressed', isActive ? 'true' : 'false');
         });
+      };
+      chip.addEventListener('click', activateChip);
+      chip.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activateChip(); }
       });
       langToggle.appendChild(chip);
     });

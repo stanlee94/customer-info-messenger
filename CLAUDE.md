@@ -149,7 +149,7 @@ removes `.cim-floating` and `.cim-sidebar-visible`, clears inline `left`/`top`,
 and calls `anchor.parentElement.insertBefore(panel, anchor)` to dock the panel
 back.
 
-### AI Quick / AI Details buttons
+### AI Rewrite button bar
 
 `#cim-ai-buttons` is a `<div>` injected directly into Facebook's chat composer
 area — **not** inside `#cim-purchase-panel`. It appears between the text-input
@@ -213,21 +213,21 @@ non-collapsed selections for delete operations.
 - *Filled*: moves the cursor to offset 0 of the first `[data-lexical-text="true"]`
   span via the Selection/Range API, then `execCommand('insertText', false, text + ' ')`.
 
-**Language toggle** — a segmented control (`cim-ai-lang`) with two chips: `华语` (`chinese`) and `English` (`english`). Active chip uses blue (`#0a7cff` / `#e8f0fe`) to distinguish it from the panel's green ManyChat lang-tag toggle. Selection is stored in the module-level `aiLanguage` variable (defaults to `'chinese'`; persists across conversation switches, resets on page reload).
+**Language toggle** — a segmented control (`cim-ai-lang`) with two chips: `华语` (`chinese`) and `English` (`english`). Styled as an iOS-style segmented control: active chip is a **white pill with a subtle drop shadow**; inactive chips are `#65676b` text on transparent background. This keeps it visually distinct from the panel's green ManyChat lang-tag toggle. Chips have `role="button"`, `tabindex="0"`, `aria-pressed`, and a `keydown` handler for Enter/Space keyboard activation. Selection is stored in the module-level `aiLanguage` variable (defaults to `'chinese'`; persists across conversation switches, resets on page reload).
 
 **Click behaviour** (`✨ AI Rewrite`):
 1. Read current reply box text via `getReplyBoxText()`. If empty, do nothing.
 2. Save text to `chrome.storage.local` as `aiLastInput`.
 3. Only after the storage write completes, send `{ messages: [text], mode: 'quick', language: aiLanguage }` as `AI_REPLY` to `background.js` → `POST <aiApiUrl>/ai/reply`.
-4. All action buttons dim immediately; the clicked button shows a CSS spinner
-   (`.cim-ai-btn--loading` — `::after` pseudo-element, white border-top animation).
-   No status text is shown.
+4. All action buttons dim immediately; the clicked button adds `.cim-ai-btn--loading`:
+   `color: transparent` hides the button text; a `::after` spinner is absolutely
+   centered (`position:absolute; top/left 50%; translate(-50%,-50%)`). No status text.
 5. On `{ ok: true, text }`: call `clearReplyBox()` then `insertTextIntoMessenger(text)`.
 6. On complete (success or error): remove `.cim-ai-btn--loading`, re-enable buttons.
 
-**Back button (↩)**:
+**Back button (↩)** — white pill with `1px solid #d8dadf` border (`aria-label="Restore previous text"`):
 - Always starts enabled. `updateAiButtonState()` dims it (along with all `.cim-ai-btn`) when the reply box is empty.
-- Clicking it reads `aiLastInput` from `chrome.storage.local`. If found, calls `clearReplyBox()` then `insertTextIntoMessenger(aiLastInput)` to restore the text that was in the box before the last AI rewrite.
+- Clicking it reads `aiLastInput` from `chrome.storage.local`. If found, calls `clearReplyBox()` then `insertTextIntoMessenger(aiLastInput)` to restore the text before the last AI rewrite.
 - If `aiLastInput` is not set (no AI call made yet in this session), the click is a no-op.
 
 **Backend contract**:
