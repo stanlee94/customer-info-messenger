@@ -46,19 +46,22 @@
   }
 
   function findContactDetailsAnchor() {
+    const ANCHOR_TEXTS = ['Contact details', 'About', 'Facebook profile', 'Data sharing'];
     const candidates = document.querySelectorAll('div, span, h1, h2, h3, h4');
-    for (const el of candidates) {
-      if (el.children.length === 0 && el.textContent.trim() === 'Contact details') {
-        let anchor = el;
-        let depth = 0;
-        while (anchor.parentElement && depth < CHECK_ANCESTOR_DEPTH) {
-          if (anchor.parentElement.children.length > 1) {
-            return anchor;
+    for (const text of ANCHOR_TEXTS) {
+      for (const el of candidates) {
+        if (el.children.length === 0 && el.textContent.trim() === text) {
+          let anchor = el;
+          let depth = 0;
+          while (anchor.parentElement && depth < CHECK_ANCESTOR_DEPTH) {
+            if (anchor.parentElement.children.length > 1) {
+              return anchor;
+            }
+            anchor = anchor.parentElement;
+            depth++;
           }
-          anchor = anchor.parentElement;
-          depth++;
+          return anchor;
         }
-        return anchor;
       }
     }
     return null;
