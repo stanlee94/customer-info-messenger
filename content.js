@@ -1030,18 +1030,26 @@
 
     const overlay = document.createElement('div');
     overlay.id = PARCEL_OVERLAY_ID;
-    overlay.addEventListener('click', closeParcelDrawer);
-    document.body.appendChild(overlay);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) closeParcelDrawer(); });
 
-    const drawer = document.createElement('div');
-    drawer.id = PARCEL_DRAWER_ID;
+    const modal = document.createElement('div');
+    modal.id = PARCEL_DRAWER_ID;
+    modal.setAttribute('role', 'dialog');
 
     const header = document.createElement('div');
     header.className = 'cim-drawer-header';
 
+    const titleWrap = document.createElement('div');
+    titleWrap.className = 'cim-drawer-title-wrap';
+
     const title = document.createElement('span');
     title.className = 'cim-drawer-title';
-    title.textContent = '📦 Parcel Photos';
+    title.textContent = 'Parcel Photos';
+
+    const subtitle = document.createElement('span');
+    subtitle.className = 'cim-drawer-subtitle';
+
+    titleWrap.append(title, subtitle);
 
     const closeBtn = document.createElement('button');
     closeBtn.type = 'button';
@@ -1050,52 +1058,63 @@
     closeBtn.textContent = '✕';
     closeBtn.addEventListener('click', closeParcelDrawer);
 
-    header.append(title, closeBtn);
+    header.append(titleWrap, closeBtn);
 
     const drawerBody = document.createElement('div');
     drawerBody.className = 'cim-drawer-body';
 
-    drawer.append(header, drawerBody);
-    document.body.appendChild(drawer);
+    const footer = document.createElement('div');
+    footer.className = 'cim-drawer-footer';
+    const footerClose = document.createElement('button');
+    footerClose.type = 'button';
+    footerClose.className = 'cim-drawer-footer-close';
+    footerClose.textContent = 'Close';
+    footerClose.addEventListener('click', closeParcelDrawer);
+    footer.appendChild(footerClose);
+
+    modal.append(header, drawerBody, footer);
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
 
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && drawer.classList.contains('cim-parcel-drawer--open')) {
+      if (e.key === 'Escape' && overlay.classList.contains('cim-parcel-overlay--visible')) {
         closeParcelDrawer();
       }
     });
 
-    return drawer;
+    return modal;
   }
 
   function openParcelDrawer(orderId) {
-    const drawer = ensureParcelDrawer();
+    const modal = ensureParcelDrawer();
     const overlay = document.getElementById(PARCEL_OVERLAY_ID);
-    const drawerBody = drawer.querySelector('.cim-drawer-body');
+    const drawerBody = modal.querySelector('.cim-drawer-body');
+    const titleEl = modal.querySelector('.cim-drawer-title');
 
+    if (titleEl) titleEl.textContent = 'Parcel Photos';
+    const subtitleElReset = modal.querySelector('.cim-drawer-subtitle');
+    if (subtitleElReset) subtitleElReset.textContent = '';
     drawerBody.innerHTML = '<div class="cim-drawer-loading">Loading…</div>';
     overlay.classList.add('cim-parcel-overlay--visible');
-    drawer.classList.add('cim-parcel-drawer--open');
 
     chrome.runtime.sendMessage({ type: 'GET_PARCEL_PHOTO_ORDER', orderId }, (res) => {
-      const liveDrawer = document.getElementById(PARCEL_DRAWER_ID);
-      if (!liveDrawer) return;
-      const liveBody = liveDrawer.querySelector('.cim-drawer-body');
+      const liveModal = document.getElementById(PARCEL_DRAWER_ID);
+      if (!liveModal) return;
+      const liveBody = liveModal.querySelector('.cim-drawer-body');
       if (!res?.ok) {
         liveBody.innerHTML = '<div class="cim-drawer-error">Failed to load photos.</div>';
         return;
       }
-      renderDrawerContent(liveBody, res, orderId);
+      renderDrawerContent(liveBody, liveModal, res, orderId);
     });
   }
 
   function closeParcelDrawer() {
-    const drawer = document.getElementById(PARCEL_DRAWER_ID);
     const overlay = document.getElementById(PARCEL_OVERLAY_ID);
-    if (drawer) drawer.classList.remove('cim-parcel-drawer--open');
     if (overlay) overlay.classList.remove('cim-parcel-overlay--visible');
   }
 
-  function renderDrawerContent(body, data, orderId) {
+  function renderDrawerContent(body, modal, data, orderId) {
     body.innerHTML = '';
 
     if (!data.found || !data.orders || !data.orders.length) {
@@ -1106,94 +1125,205 @@
       return;
     }
 
-    const orderIdEl = document.createElement('div');
-    orderIdEl.className = 'cim-drawer-order-id';
-    orderIdEl.textContent = orderId;
-    body.appendChild(orderIdEl);
+    const titleEl = modal.querySelector('.cim-drawer-title');
+    if (titleEl) titleEl.textContent = data.orders[0].customerName || orderId;
+
+    const subtitleEl = modal.querySelector('.cim-drawer-subtitle');
+    if (subtitleEl) {
+      const n = data.orders.filter((o) => o.trackingNumber).length;
+      subtitleEl.textContent = `${n} parcel${n === 1 ? '' : 's'}`;
+    }
+
+    const singleWms = data.orders.length === 1;
 
     data.orders.forEach((wmsOrder, wmsIdx) => {
-      const group = document.createElement('div');
-      group.className = 'cim-drawer-wms-group';
+      const contentEls = buildWmsContent(wmsOrder);
 
-      const wmsHeader = document.createElement('div');
-      wmsHeader.className = 'cim-drawer-wms-header';
+      if (singleWms) {
+        contentEls.forEach((el) => body.appendChild(el));
+      } else {
+        const section = document.createElement('div');
+        section.className = 'cim-parcel-section';
 
-      const wmsIdEl = document.createElement('span');
-      wmsIdEl.className = 'cim-drawer-wms-id';
-      wmsIdEl.textContent = wmsOrder.wmsId || `WMS #${wmsIdx + 1}`;
+        const sectionHeader = document.createElement('div');
+        sectionHeader.className = 'cim-parcel-section-header';
 
-      const countEl = document.createElement('span');
-      countEl.className = 'cim-drawer-wms-count';
-      const cnt = wmsOrder.imageCount || 0;
-      countEl.textContent = `${cnt} photo${cnt === 1 ? '' : 's'}`;
+        const hasTracking = !!wmsOrder.trackingNumber;
 
-      wmsHeader.append(wmsIdEl, countEl);
-      group.appendChild(wmsHeader);
+        const sectionTitle = document.createElement('span');
+        sectionTitle.className = 'cim-parcel-section-title' + (hasTracking ? '' : ' cim-parcel-section-title--no-tracking');
+        sectionTitle.textContent = wmsOrder.wmsId || `Parcel ${wmsIdx + 1}`;
 
+        const right = document.createElement('div');
+        right.className = 'cim-parcel-section-right';
+
+        if (!hasTracking) {
+          const noTrackTag = document.createElement('span');
+          noTrackTag.className = 'cim-parcel-no-tracking';
+          noTrackTag.textContent = 'No tracking';
+          right.appendChild(noTrackTag);
+        }
+
+        const cnt = wmsOrder.imageCount || 0;
+        const countEl = document.createElement('span');
+        countEl.className = 'cim-parcel-section-count';
+        countEl.textContent = `${cnt} photo${cnt === 1 ? '' : 's'}`;
+
+        const chevron = document.createElement('span');
+        chevron.className = 'cim-parcel-section-chevron';
+        chevron.textContent = '▸';
+
+        right.append(countEl, chevron);
+        sectionHeader.append(sectionTitle, right);
+
+        const sectionBody = document.createElement('div');
+        sectionBody.className = 'cim-parcel-section-body';
+        contentEls.forEach((el) => sectionBody.appendChild(el));
+
+        // First parcel open by default
+        if (wmsIdx === 0) {
+          sectionBody.style.display = 'flex';
+          chevron.style.transform = 'rotate(90deg)';
+        }
+
+        sectionHeader.addEventListener('click', () => {
+          const open = sectionBody.style.display === 'none' || sectionBody.style.display === '';
+          sectionBody.style.display = open ? 'flex' : 'none';
+          chevron.style.transform = open ? 'rotate(90deg)' : '';
+        });
+
+        section.append(sectionHeader, sectionBody);
+        body.appendChild(section);
+      }
+    });
+  }
+
+  function buildWmsContent(wmsOrder) {
+    const els = [];
+
+    // Info card
+    const card = document.createElement('div');
+    card.className = 'cim-drawer-info-card';
+
+    const fields = [
+      ['Customer', wmsOrder.customerName, false],
+      ['WMS ID', wmsOrder.wmsId, false],
+      ['ERP ID', wmsOrder.erpId, false],
+      ['EC2 Order', wmsOrder.ec2OrderId, true],
+      ['Task ID', wmsOrder.taskId, false],
+      ['Tracking', wmsOrder.trackingNumber || null, false, !wmsOrder.trackingNumber],
+    ];
+
+    fields.forEach(([label, value, isLink, noTracking]) => {
+      if (!value && !noTracking) return;
+      const row = document.createElement('div');
+      row.className = 'cim-drawer-info-row';
+      const labelEl = document.createElement('span');
+      labelEl.className = 'cim-drawer-info-label';
+      labelEl.textContent = label;
+      let valueEl;
+      if (isLink) {
+        valueEl = document.createElement('a');
+        valueEl.href = `https://ddherbs.com.my/track/${value}`;
+        valueEl.target = '_blank';
+        valueEl.rel = 'noopener noreferrer';
+        valueEl.className = 'cim-drawer-info-value cim-drawer-info-value--link';
+        valueEl.appendChild(document.createTextNode(value));
+        const icon = document.createElement('span');
+        icon.className = 'cim-drawer-ext-icon';
+        icon.textContent = ' ↗';
+        valueEl.appendChild(icon);
+      } else if (noTracking) {
+        valueEl = document.createElement('span');
+        valueEl.className = 'cim-drawer-info-value cim-drawer-info-value--no-tracking';
+        valueEl.textContent = 'No tracking number';
+      } else {
+        valueEl = document.createElement('span');
+        valueEl.className = 'cim-drawer-info-value';
+        valueEl.textContent = value;
+      }
+      row.append(labelEl, valueEl);
+      card.appendChild(row);
+    });
+
+    els.push(card);
+
+    // Meta: ⏱ time · uploader
+    if (wmsOrder.lastPhotoAt || wmsOrder.createdBy) {
       const meta = document.createElement('div');
       meta.className = 'cim-drawer-meta';
-      const addChip = (text, muted) => {
-        const chip = document.createElement('span');
-        chip.className = 'cim-drawer-chip' + (muted ? ' cim-drawer-chip--muted' : '');
-        chip.textContent = text;
-        meta.appendChild(chip);
-      };
-      if (wmsOrder.taskId) addChip('TASK: ' + wmsOrder.taskId, false);
-      if (wmsOrder.trackingNumber) addChip('📦 ' + wmsOrder.trackingNumber, false);
-      if (wmsOrder.createdBy) addChip('👤 ' + wmsOrder.createdBy, true);
+      const parts = [];
       if (wmsOrder.lastPhotoAt) {
         const d = new Date(wmsOrder.lastPhotoAt);
-        addChip(`🕐 ${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}`, true);
+        const h = d.getHours(), m = d.getMinutes();
+        const ampm = h >= 12 ? 'pm' : 'am';
+        const h12 = h % 12 || 12;
+        parts.push(`${h12}:${String(m).padStart(2, '0')} ${ampm}`);
       }
-      group.appendChild(meta);
+      if (wmsOrder.createdBy) parts.push(wmsOrder.createdBy);
+      meta.appendChild(document.createTextNode('⏱ ' + parts.join(' · ')));
+      els.push(meta);
+    }
 
-      const allImages = wmsOrder.images || [];
+    // Photo sections
+    const allImages = wmsOrder.images || [];
+    if (!allImages.length) {
+      const noPhotos = document.createElement('div');
+      noPhotos.className = 'cim-drawer-no-photos';
+      noPhotos.textContent = 'No photos yet.';
+      els.push(noPhotos);
+    } else {
+      const KINDS = [
+        { kind: 'internal', badge: 'Internal', desc: '内部存档', cls: 'cim-drawer-badge--internal' },
+        { kind: 'customer', badge: 'Customer', desc: '客户可见', cls: 'cim-drawer-badge--customer' },
+        { kind: null,       badge: 'Other',    desc: '',         cls: 'cim-drawer-badge--other' },
+      ];
 
-      if (!allImages.length) {
-        const noPhotos = document.createElement('div');
-        noPhotos.className = 'cim-drawer-no-photos';
-        noPhotos.textContent = 'No photos yet.';
-        group.appendChild(noPhotos);
-      } else {
-        ['internal', 'customer', null].forEach((kind) => {
-          const kindPhotos = allImages.filter((img) => img.kind === kind);
-          if (!kindPhotos.length) return;
+      KINDS.forEach(({ kind, badge, desc, cls }) => {
+        const kindPhotos = allImages.filter((img) => img.kind === kind);
+        if (!kindPhotos.length) return;
 
-          const section = document.createElement('div');
-          section.className = 'cim-drawer-kind-section';
+        const section = document.createElement('div');
+        section.className = 'cim-drawer-kind-section';
 
-          const label = document.createElement('div');
-          label.className = 'cim-drawer-kind-label';
-          label.textContent = kind === 'internal' ? '内部存档 Internal'
-            : kind === 'customer' ? '客户可见 Customer'
-            : 'Other';
-          section.appendChild(label);
+        const kindHeader = document.createElement('div');
+        kindHeader.className = 'cim-drawer-kind-header';
 
-          const grid = document.createElement('div');
-          grid.className = 'cim-drawer-photo-grid';
+        const badgeEl = document.createElement('span');
+        badgeEl.className = `cim-drawer-badge ${cls}`;
+        badgeEl.textContent = badge;
 
-          kindPhotos.forEach((img) => {
-            const thumb = document.createElement('div');
-            thumb.className = 'cim-drawer-thumb';
-            const imgEl = document.createElement('img');
-            imgEl.src = img.url;
-            imgEl.alt = '';
-            imgEl.loading = 'lazy';
-            thumb.appendChild(imgEl);
-            thumb.addEventListener('click', () => {
-              const startIdx = allImages.findIndex((i) => i.id === img.id);
-              openGalleryModal(allImages, startIdx >= 0 ? startIdx : 0);
-            });
-            grid.appendChild(thumb);
+        const kindDesc = document.createElement('span');
+        kindDesc.className = 'cim-drawer-kind-desc';
+        kindDesc.textContent = (desc ? desc + ' · ' : '') + kindPhotos.length;
+
+        kindHeader.append(badgeEl, kindDesc);
+        section.appendChild(kindHeader);
+
+        const grid = document.createElement('div');
+        grid.className = 'cim-drawer-photo-grid';
+
+        kindPhotos.forEach((img) => {
+          const thumb = document.createElement('div');
+          thumb.className = 'cim-drawer-thumb';
+          const imgEl = document.createElement('img');
+          imgEl.src = img.url;
+          imgEl.alt = '';
+          imgEl.loading = 'lazy';
+          thumb.appendChild(imgEl);
+          thumb.addEventListener('click', () => {
+            const startIdx = allImages.findIndex((i) => i.id === img.id);
+            openGalleryModal(allImages, startIdx >= 0 ? startIdx : 0);
           });
-
-          section.appendChild(grid);
-          group.appendChild(section);
+          grid.appendChild(thumb);
         });
-      }
 
-      body.appendChild(group);
-    });
+        section.appendChild(grid);
+        els.push(section);
+      });
+    }
+
+    return els;
   }
 
   // ── Gallery / lightbox modal ────────────────────────────────────────────────
@@ -1201,7 +1331,9 @@
   function buildGalleryModal() {
     const modal = document.createElement('div');
     modal.id = GALLERY_MODAL_ID;
-    modal.addEventListener('click', (e) => { if (e.target === modal) closeGalleryModal(); });
+    modal.addEventListener('click', (e) => {
+      if (!e.target.closest('button, img, .cim-gallery-thumbs')) closeGalleryModal();
+    });
 
     const closeBtn = document.createElement('button');
     closeBtn.type = 'button';
