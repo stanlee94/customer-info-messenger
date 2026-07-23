@@ -24,6 +24,12 @@
   let cartPrefixText = '';
   let panelPosition = null; // {x, y} px — null means sidebar (default), set after first drag
 
+  const PARCEL_DRAWER_ID = 'cim-parcel-drawer';
+  const PARCEL_OVERLAY_ID = 'cim-parcel-overlay';
+  const GALLERY_MODAL_ID = 'cim-gallery-modal';
+  let galleryImages = [];
+  let galleryIndex = 0;
+
   let sessionState = {
     uid: null,
     name: null,
@@ -981,6 +987,334 @@
     });
   }
 
+  // ── Parcel photo icon ───────────────────────────────────────────────────────
+
+  function buildPhotoIconBtn(orderId) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'cim-photo-icon';
+    btn.title = 'View parcel photos';
+    btn.setAttribute('aria-label', 'View parcel photos');
+
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('width', '12');
+    svg.setAttribute('height', '12');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '2');
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+
+    const camPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    camPath.setAttribute('d', 'M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z');
+    const camCircle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    camCircle.setAttribute('cx', '12');
+    camCircle.setAttribute('cy', '13');
+    camCircle.setAttribute('r', '4');
+    svg.append(camPath, camCircle);
+    btn.appendChild(svg);
+
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      openParcelDrawer(orderId);
+    });
+    return btn;
+  }
+
+  // ── Parcel photo drawer ─────────────────────────────────────────────────────
+
+  function ensureParcelDrawer() {
+    if (document.getElementById(PARCEL_DRAWER_ID)) return document.getElementById(PARCEL_DRAWER_ID);
+
+    const overlay = document.createElement('div');
+    overlay.id = PARCEL_OVERLAY_ID;
+    overlay.addEventListener('click', closeParcelDrawer);
+    document.body.appendChild(overlay);
+
+    const drawer = document.createElement('div');
+    drawer.id = PARCEL_DRAWER_ID;
+
+    const header = document.createElement('div');
+    header.className = 'cim-drawer-header';
+
+    const title = document.createElement('span');
+    title.className = 'cim-drawer-title';
+    title.textContent = '📦 Parcel Photos';
+
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'cim-drawer-close';
+    closeBtn.setAttribute('aria-label', 'Close');
+    closeBtn.textContent = '✕';
+    closeBtn.addEventListener('click', closeParcelDrawer);
+
+    header.append(title, closeBtn);
+
+    const drawerBody = document.createElement('div');
+    drawerBody.className = 'cim-drawer-body';
+
+    drawer.append(header, drawerBody);
+    document.body.appendChild(drawer);
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && drawer.classList.contains('cim-parcel-drawer--open')) {
+        closeParcelDrawer();
+      }
+    });
+
+    return drawer;
+  }
+
+  function openParcelDrawer(orderId) {
+    const drawer = ensureParcelDrawer();
+    const overlay = document.getElementById(PARCEL_OVERLAY_ID);
+    const drawerBody = drawer.querySelector('.cim-drawer-body');
+
+    drawerBody.innerHTML = '<div class="cim-drawer-loading">Loading…</div>';
+    overlay.classList.add('cim-parcel-overlay--visible');
+    drawer.classList.add('cim-parcel-drawer--open');
+
+    chrome.runtime.sendMessage({ type: 'GET_PARCEL_PHOTO_ORDER', orderId }, (res) => {
+      const liveDrawer = document.getElementById(PARCEL_DRAWER_ID);
+      if (!liveDrawer) return;
+      const liveBody = liveDrawer.querySelector('.cim-drawer-body');
+      if (!res?.ok) {
+        liveBody.innerHTML = '<div class="cim-drawer-error">Failed to load photos.</div>';
+        return;
+      }
+      renderDrawerContent(liveBody, res, orderId);
+    });
+  }
+
+  function closeParcelDrawer() {
+    const drawer = document.getElementById(PARCEL_DRAWER_ID);
+    const overlay = document.getElementById(PARCEL_OVERLAY_ID);
+    if (drawer) drawer.classList.remove('cim-parcel-drawer--open');
+    if (overlay) overlay.classList.remove('cim-parcel-overlay--visible');
+  }
+
+  function renderDrawerContent(body, data, orderId) {
+    body.innerHTML = '';
+
+    if (!data.found || !data.orders || !data.orders.length) {
+      const empty = document.createElement('div');
+      empty.className = 'cim-drawer-empty';
+      empty.textContent = 'No parcel photos found.';
+      body.appendChild(empty);
+      return;
+    }
+
+    const orderIdEl = document.createElement('div');
+    orderIdEl.className = 'cim-drawer-order-id';
+    orderIdEl.textContent = orderId;
+    body.appendChild(orderIdEl);
+
+    data.orders.forEach((wmsOrder, wmsIdx) => {
+      const group = document.createElement('div');
+      group.className = 'cim-drawer-wms-group';
+
+      const wmsHeader = document.createElement('div');
+      wmsHeader.className = 'cim-drawer-wms-header';
+
+      const wmsIdEl = document.createElement('span');
+      wmsIdEl.className = 'cim-drawer-wms-id';
+      wmsIdEl.textContent = wmsOrder.wmsId || `WMS #${wmsIdx + 1}`;
+
+      const countEl = document.createElement('span');
+      countEl.className = 'cim-drawer-wms-count';
+      const cnt = wmsOrder.imageCount || 0;
+      countEl.textContent = `${cnt} photo${cnt === 1 ? '' : 's'}`;
+
+      wmsHeader.append(wmsIdEl, countEl);
+      group.appendChild(wmsHeader);
+
+      const meta = document.createElement('div');
+      meta.className = 'cim-drawer-meta';
+      const addChip = (text, muted) => {
+        const chip = document.createElement('span');
+        chip.className = 'cim-drawer-chip' + (muted ? ' cim-drawer-chip--muted' : '');
+        chip.textContent = text;
+        meta.appendChild(chip);
+      };
+      if (wmsOrder.taskId) addChip('TASK: ' + wmsOrder.taskId, false);
+      if (wmsOrder.trackingNumber) addChip('📦 ' + wmsOrder.trackingNumber, false);
+      if (wmsOrder.createdBy) addChip('👤 ' + wmsOrder.createdBy, true);
+      if (wmsOrder.lastPhotoAt) {
+        const d = new Date(wmsOrder.lastPhotoAt);
+        addChip(`🕐 ${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}`, true);
+      }
+      group.appendChild(meta);
+
+      const allImages = wmsOrder.images || [];
+
+      if (!allImages.length) {
+        const noPhotos = document.createElement('div');
+        noPhotos.className = 'cim-drawer-no-photos';
+        noPhotos.textContent = 'No photos yet.';
+        group.appendChild(noPhotos);
+      } else {
+        ['internal', 'customer', null].forEach((kind) => {
+          const kindPhotos = allImages.filter((img) => img.kind === kind);
+          if (!kindPhotos.length) return;
+
+          const section = document.createElement('div');
+          section.className = 'cim-drawer-kind-section';
+
+          const label = document.createElement('div');
+          label.className = 'cim-drawer-kind-label';
+          label.textContent = kind === 'internal' ? '内部存档 Internal'
+            : kind === 'customer' ? '客户可见 Customer'
+            : 'Other';
+          section.appendChild(label);
+
+          const grid = document.createElement('div');
+          grid.className = 'cim-drawer-photo-grid';
+
+          kindPhotos.forEach((img) => {
+            const thumb = document.createElement('div');
+            thumb.className = 'cim-drawer-thumb';
+            const imgEl = document.createElement('img');
+            imgEl.src = img.url;
+            imgEl.alt = '';
+            imgEl.loading = 'lazy';
+            thumb.appendChild(imgEl);
+            thumb.addEventListener('click', () => {
+              const startIdx = allImages.findIndex((i) => i.id === img.id);
+              openGalleryModal(allImages, startIdx >= 0 ? startIdx : 0);
+            });
+            grid.appendChild(thumb);
+          });
+
+          section.appendChild(grid);
+          group.appendChild(section);
+        });
+      }
+
+      body.appendChild(group);
+    });
+  }
+
+  // ── Gallery / lightbox modal ────────────────────────────────────────────────
+
+  function buildGalleryModal() {
+    const modal = document.createElement('div');
+    modal.id = GALLERY_MODAL_ID;
+    modal.addEventListener('click', (e) => { if (e.target === modal) closeGalleryModal(); });
+
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'cim-gallery-close';
+    closeBtn.setAttribute('aria-label', 'Close gallery');
+    closeBtn.textContent = '✕';
+    closeBtn.addEventListener('click', closeGalleryModal);
+
+    const counter = document.createElement('div');
+    counter.className = 'cim-gallery-counter';
+
+    const prevBtn = document.createElement('button');
+    prevBtn.type = 'button';
+    prevBtn.className = 'cim-gallery-nav cim-gallery-nav--prev';
+    prevBtn.setAttribute('aria-label', 'Previous');
+    prevBtn.textContent = '‹';
+    prevBtn.addEventListener('click', () => galleryStep(-1));
+
+    const mainArea = document.createElement('div');
+    mainArea.className = 'cim-gallery-main';
+    const mainImg = document.createElement('img');
+    mainImg.className = 'cim-gallery-img';
+    mainImg.alt = '';
+    mainArea.appendChild(mainImg);
+
+    const nextBtn = document.createElement('button');
+    nextBtn.type = 'button';
+    nextBtn.className = 'cim-gallery-nav cim-gallery-nav--next';
+    nextBtn.setAttribute('aria-label', 'Next');
+    nextBtn.textContent = '›';
+    nextBtn.addEventListener('click', () => galleryStep(1));
+
+    const thumbStrip = document.createElement('div');
+    thumbStrip.className = 'cim-gallery-thumbs';
+
+    modal.append(closeBtn, counter, prevBtn, mainArea, nextBtn, thumbStrip);
+    document.body.appendChild(modal);
+    return modal;
+  }
+
+  function openGalleryModal(images, startIndex) {
+    galleryImages = images;
+    galleryIndex = startIndex;
+
+    let modal = document.getElementById(GALLERY_MODAL_ID);
+    if (!modal) modal = buildGalleryModal();
+
+    modal.classList.add('cim-gallery-modal--open');
+    renderGalleryImage(modal);
+    renderGalleryThumbs(modal);
+
+    modal._onKeyDown = (e) => {
+      if (e.key === 'ArrowLeft') { e.preventDefault(); galleryStep(-1); }
+      else if (e.key === 'ArrowRight') { e.preventDefault(); galleryStep(1); }
+      else if (e.key === 'Escape') { e.preventDefault(); closeGalleryModal(); }
+    };
+    document.addEventListener('keydown', modal._onKeyDown);
+  }
+
+  function closeGalleryModal() {
+    const modal = document.getElementById(GALLERY_MODAL_ID);
+    if (!modal) return;
+    modal.classList.remove('cim-gallery-modal--open');
+    if (modal._onKeyDown) {
+      document.removeEventListener('keydown', modal._onKeyDown);
+      modal._onKeyDown = null;
+    }
+  }
+
+  function galleryStep(dir) {
+    if (!galleryImages.length) return;
+    galleryIndex = (galleryIndex + dir + galleryImages.length) % galleryImages.length;
+    const modal = document.getElementById(GALLERY_MODAL_ID);
+    if (!modal) return;
+    renderGalleryImage(modal);
+    renderGalleryThumbs(modal);
+  }
+
+  function renderGalleryImage(modal) {
+    const img = modal.querySelector('.cim-gallery-img');
+    if (img && galleryImages[galleryIndex]) img.src = galleryImages[galleryIndex].url;
+    const counter = modal.querySelector('.cim-gallery-counter');
+    if (counter) counter.textContent = `${galleryIndex + 1} / ${galleryImages.length}`;
+    const single = galleryImages.length <= 1;
+    const prev = modal.querySelector('.cim-gallery-nav--prev');
+    const next = modal.querySelector('.cim-gallery-nav--next');
+    if (prev) prev.style.display = single ? 'none' : '';
+    if (next) next.style.display = single ? 'none' : '';
+  }
+
+  function renderGalleryThumbs(modal) {
+    const strip = modal.querySelector('.cim-gallery-thumbs');
+    if (!strip) return;
+    strip.innerHTML = '';
+    galleryImages.forEach((img, i) => {
+      const thumb = document.createElement('div');
+      thumb.className = 'cim-gallery-thumb' + (i === galleryIndex ? ' cim-gallery-thumb--active' : '');
+      const imgEl = document.createElement('img');
+      imgEl.src = img.url;
+      imgEl.alt = '';
+      imgEl.loading = 'lazy';
+      thumb.appendChild(imgEl);
+      thumb.addEventListener('click', () => {
+        galleryIndex = i;
+        renderGalleryImage(modal);
+        renderGalleryThumbs(modal);
+      });
+      strip.appendChild(thumb);
+    });
+    const active = strip.querySelector('.cim-gallery-thumb--active');
+    if (active) active.scrollIntoView({ block: 'nearest', inline: 'center' });
+  }
+
   function renderCandidatesList(list, candidates, type) {
     list.innerHTML = '';
     const buildCard = type === 'baserow' ? buildBaserowCandidateCard : buildCandidateCard;
@@ -1094,6 +1428,7 @@
 
             const idEl = document.createElement('a');
             idEl.className = 'cim-order-id';
+            idEl.dataset.orderId = order.orderId || '';
             idEl.textContent = formatValue(order.orderId);
             idEl.href = `https://ddherbs.com.my/track/${encodeURIComponent(order.orderId)}`;
             idEl.target = '_blank';
@@ -1132,6 +1467,21 @@
                 if (response.statuses[el.textContent] === 'WAIT_AUDIT') {
                   el.style.color = 'orange';
                 }
+              });
+            });
+
+            chrome.runtime.sendMessage({ type: 'CHECK_PARCEL_PHOTOS', orderIds }, (photoRes) => {
+              if (getUserIdFromUrl() !== capturedUid) return;
+              if (!photoRes?.ok || !photoRes.results) return;
+              const livePanel = document.getElementById(PANEL_ID);
+              if (!livePanel) return;
+              Object.entries(photoRes.results).forEach(([orderId, info]) => {
+                if (!info.hasPhotos) return;
+                const idEl = livePanel.querySelector(`.cim-order-id[data-order-id="${CSS.escape(orderId)}"]`);
+                if (!idEl) return;
+                const wrap = idEl.closest('.cim-order-id-wrap');
+                if (!wrap || wrap.querySelector('.cim-photo-icon')) return;
+                wrap.appendChild(buildPhotoIconBtn(orderId));
               });
             });
           }

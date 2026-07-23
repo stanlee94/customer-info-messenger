@@ -515,3 +515,97 @@ No auth header required. Expected response: an array of objects with
 map and returns `{ ok: true, statuses }`. `content.js` then queries
 `.cim-order-id` elements by text content and sets `color: yellow` on any whose
 status is `"WAIT_AUDIT"`. Other statuses are left unstyled.
+
+### Parcel photos — icon, drawer, gallery
+
+After the orders list is rendered, `content.js` fires two parallel async calls:
+`GET_ORDER_STATUSES` (see above) and `CHECK_PARCEL_PHOTOS`. Both use the same
+captured `uid` guard so stale responses from a previous customer are discarded.
+
+**Batch photo probe** — `CHECK_PARCEL_PHOTOS` sends `background.js` the full
+`orderIds` array. `background.js` calls:
+
+```
+GET ${CART_API_BASE}/parcelPhotos/check?ids=<id1>,<id2>,...
+→ { count, results: { [orderId]: { hasPhotos: boolean, imageCount: number } } }
+```
+
+No auth, no image bytes — just booleans. `content.js` iterates the results and,
+for every order where `hasPhotos === true`, appends a `.cim-photo-icon` camera
+SVG button to that order's `.cim-order-id-wrap`. The icon is skipped if one
+already exists (idempotent). `.cim-order-id` elements carry a `data-order-id`
+attribute (set at render time) so lookup is `querySelector('[data-order-id="…"]')`
+rather than text matching.
+
+**Slide-in drawer** — clicking the camera icon calls `openParcelDrawer(orderId)`,
+which:
+1. Calls `ensureParcelDrawer()` — creates `#cim-parcel-drawer` and
+   `#cim-parcel-overlay` once and appends both to `document.body`; subsequent
+   calls return the existing elements.
+2. Shows `.cim-parcel-overlay--visible` (dim backdrop) and adds
+   `.cim-parcel-drawer--open` to the drawer (CSS `translateX(0)` slides it in
+   from the right with a 250 ms cubic-bezier transition).
+3. Sends `GET_PARCEL_PHOTO_ORDER { orderId }` → `background.js` calls
+   `GET ${CART_API_BASE}/parcelPhotos/order/<orderId>`.
+4. Renders `renderDrawerContent(body, res, orderId)` on success.
+
+Closing: ✕ button, overlay click, or Escape key all call `closeParcelDrawer()`
+which removes the two open classes.
+
+**Drawer layout** (rendered by `renderDrawerContent`):
+- EC2 order ID in a muted header row.
+- One `.cim-drawer-wms-group` per WMS order in `res.orders[]` (handles
+  multi-WMS — one EC2 order can map to multiple parcels).
+- Per WMS group: WMS ID + photo count heading; meta chips (task ID, tracking
+  number, uploader, date); then photos split into **内部存档 Internal** /
+  **客户可见 Customer** / **Other** sub-sections, each with a 3-column
+  `.cim-drawer-photo-grid` of `.cim-drawer-thumb` tiles.
+- `kind: null` photos fall into the "Other" sub-section (never silently dropped).
+
+**Detail endpoint contract:**
+```
+GET ${CART_API_BASE}/parcelPhotos/order/:orderId
+→ {
+    found: boolean,
+    ec2OrderId, orderCount, imageCount,
+    orders: [{
+      headerId, wmsId, erpId, ec2OrderId, taskId, trackingNumber,
+      customerName, lastPhotoAt, createdBy, createdAt, imageCount,
+      internal: [photo], customer: [photo], images: [photo]
+    }]
+  }
+```
+Each photo: `{ id, name (S3 key), url (public S3 URL), kind ('internal'|'customer'|null), uploadedBy, createdAt }`.
+HTTP 500 on Baserow failure; `found: false` for unknown order IDs — branch on
+HTTP status first, then `found`.
+
+**Gallery modal** — clicking any `.cim-drawer-thumb` calls
+`openGalleryModal(wmsOrder.images, startIndex)` where `images` is the flat
+per-WMS combined array and `startIndex` is the clicked photo's position within
+it. The modal (`#cim-gallery-modal`, `display:none` → `display:flex`):
+- Full-screen dark overlay (`rgba(0,0,0,0.92)`), `z-index: 2147483647`.
+- Centre image (`.cim-gallery-img`, `object-fit: contain`).
+- `‹` / `›` navigation buttons (hidden when `images.length <= 1`).
+- `N / total` counter at the top centre.
+- Scrollable thumbnail strip (`.cim-gallery-thumbs`) at the bottom;
+  active thumb gets a white border + full opacity.
+- Keyboard: `←`/`→` to navigate, `Escape` to close. The `keydown` listener
+  is attached on open and removed on close (`modal._onKeyDown`).
+- Clicking the overlay backdrop closes the modal.
+
+**Module-level state** (in `content.js`):
+- `PARCEL_DRAWER_ID`, `PARCEL_OVERLAY_ID`, `GALLERY_MODAL_ID` — element IDs.
+- `galleryImages` — current image array for the open gallery session.
+- `galleryIndex` — current image index.
+
+No `manifest.json` changes needed — `yxch9n4n6e.execute-api.ap-southeast-1.amazonaws.com`
+is already in `host_permissions` for the cart endpoints.
+
+**Smoke-test curl:**
+```bash
+BASE=https://yxch9n4n6e.execute-api.ap-southeast-1.amazonaws.com/latest
+# Batch probe (all order IDs at once):
+curl "$BASE/parcelPhotos/check?ids=F955820260720007336,F955820260722007192"
+# Detail (on icon click):
+curl "$BASE/parcelPhotos/order/F955820260722007192"
+```

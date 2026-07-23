@@ -167,6 +167,27 @@ function getCartSummary(psid, option) {
     .catch((err) => ({ ok: false, error: err.message }));
 }
 
+function checkParcelPhotos(orderIds) {
+  if (!orderIds.length) return Promise.resolve({ ok: true, results: {} });
+  return fetch(`${CART_API_BASE}/parcelPhotos/check?ids=${encodeURIComponent(orderIds.join(','))}`)
+    .then((res) => {
+      if (!res.ok) throw new Error(`Parcel photos API error: ${res.status}`);
+      return res.json();
+    })
+    .then((json) => ({ ok: true, results: json.results || {} }))
+    .catch((err) => ({ ok: false, error: err.message }));
+}
+
+function getParcelPhotoOrder(orderId) {
+  return fetch(`${CART_API_BASE}/parcelPhotos/order/${encodeURIComponent(orderId)}`)
+    .then((res) => {
+      if (!res.ok) throw new Error(`Parcel photos API error: ${res.status}`);
+      return res.json();
+    })
+    .then((json) => ({ ok: true, ...json }))
+    .catch((err) => ({ ok: false, error: err.message }));
+}
+
 function fetchOrderStatuses(orderIds) {
   if (!orderIds.length) return Promise.resolve({ ok: true, statuses: {} });
   return fetch(`${ORDER_STATUS_API_BASE}/orders/${orderIds.join(',')}`)
@@ -488,6 +509,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.type === 'GET_ORDER_STATUSES') {
     fetchOrderStatuses(message.orderIds || []).then(sendResponse);
+    return true;
+  }
+
+  if (message?.type === 'CHECK_PARCEL_PHOTOS') {
+    checkParcelPhotos(message.orderIds || []).then(sendResponse);
+    return true;
+  }
+
+  if (message?.type === 'GET_PARCEL_PHOTO_ORDER') {
+    getParcelPhotoOrder(message.orderId).then(sendResponse);
     return true;
   }
 
