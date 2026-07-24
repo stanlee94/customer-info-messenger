@@ -458,12 +458,20 @@
   border-top: 1px solid #e4e6eb;
 }
 
-#cim-purchase-panel .cim-orders-heading a {
+#cim-purchase-panel .cim-orders-heading-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
   color: inherit;
-  text-decoration: none;
+  cursor: pointer;
 }
 
-#cim-purchase-panel .cim-orders-heading a:hover {
+#cim-purchase-panel .cim-orders-heading-btn:hover {
   color: #0a7cff;
 }
 
@@ -1327,4 +1335,1503 @@
   height: 100%;
   object-fit: cover;
   display: block;
+}
+
+/* ── Cart modal ──────────────────────────────────────────────────────────── */
+#cim-cart-modal-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 2147483641;
+  align-items: center;
+  justify-content: center;
+}
+
+#cim-cart-modal-overlay.cim-cart-modal-overlay--visible {
+  display: flex;
+}
+
+#cim-cart-modal {
+  background: #ffffff;
+  border-radius: 16px;
+  width: 480px;
+  max-width: calc(100vw - 32px);
+  height: 78vh;
+  max-height: 680px;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  font-family: inherit;
+  font-size: 13px;
+  color: #050505;
+  overflow: hidden;
+}
+
+/* Header buttons */
+.cim-cart-back-btn {
+  flex-shrink: 0;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid #e4e6eb;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #65676b;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+}
+
+.cim-cart-back-btn:hover {
+  background: #f0f2f5;
+  color: #050505;
+}
+
+.cim-cart-header-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.cim-cart-add-btn {
+  height: 32px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 8px;
+  background: #0a7cff;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+
+.cim-cart-add-btn:hover {
+  background: #0060d6;
+}
+
+.cim-cart-refresh-btn {
+  width: 32px;
+  height: 32px;
+  border: 1px solid #e4e6eb;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #65676b;
+  font-size: 18px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s;
+  line-height: 1;
+}
+
+.cim-cart-refresh-btn:hover {
+  background: #f0f2f5;
+  color: #050505;
+}
+
+/* Busy overlay on body */
+.cim-cart-body--busy {
+  pointer-events: none;
+  opacity: 0.55;
+}
+
+/* Error toast */
+.cim-cart-error-toast {
+  background: #fee2e2;
+  color: #991b1b;
+  border: 1px solid #fca5a5;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  margin-bottom: 10px;
+}
+
+/* Toolbar */
+.cim-cart-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 4px 10px;
+  border-bottom: 1px solid #f0f2f5;
+  margin-bottom: 4px;
+  flex-shrink: 0;
+}
+
+.cim-cart-select-all {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #65676b;
+  cursor: pointer;
+  user-select: none;
+}
+
+.cim-cart-checkbox {
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+  accent-color: #0a7cff;
+}
+
+.cim-cart-bulk-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.cim-cart-bulk-btn {
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 0.12s, opacity 0.12s;
+}
+
+.cim-cart-bulk-btn:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+
+.cim-cart-bulk-btn--delete {
+  background: #fee2e2;
+  color: #dc2626;
+  border-color: #fca5a5;
+}
+
+.cim-cart-bulk-btn--delete:not(:disabled):hover {
+  background: #fca5a5;
+}
+
+.cim-cart-bulk-btn--renew {
+  background: #dbeafe;
+  color: #1d4ed8;
+  border-color: #93c5fd;
+}
+
+.cim-cart-bulk-btn--renew:not(:disabled):hover {
+  background: #bfdbfe;
+}
+
+/* Cart item rows */
+.cim-cart-item-row {
+  border: 1px solid #e4e6eb;
+  border-radius: 12px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.cim-cart-item-row--expired {
+  border-color: #fca5a5;
+  background: #fff8f8;
+}
+
+.cim-cart-item-chk-wrap {
+  padding-top: 2px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.cim-cart-item-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.cim-cart-item-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.cim-cart-item-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #050505;
+  line-height: 1.4;
+  flex: 1;
+  min-width: 0;
+}
+
+.cim-cart-item-badges {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.cim-cart-origin-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 5px;
+  border-radius: 4px;
+  letter-spacing: 0.03em;
+}
+
+.cim-cart-origin-badge--live {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.cim-cart-origin-badge--system {
+  background: #f0f2f5;
+  color: #65676b;
+}
+
+.cim-cart-expired-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.cim-cart-item-bottom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.cim-cart-item-price {
+  font-size: 12px;
+  color: #8a8d91;
+  flex-shrink: 0;
+}
+
+/* Qty stepper */
+.cim-cart-stepper {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #e4e6eb;
+  border-radius: 8px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.cim-cart-stepper-btn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: #f0f2f5;
+  color: #050505;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s;
+  line-height: 1;
+  padding: 0;
+}
+
+.cim-cart-stepper-btn:hover:not(:disabled) {
+  background: #e4e6eb;
+}
+
+.cim-cart-stepper-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.cim-cart-stepper-qty {
+  width: 36px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  padding: 0 4px;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: #050505;
+  font-family: inherit;
+}
+.cim-cart-stepper-qty:disabled {
+  opacity: 0.5;
+}
+
+.cim-cart-item-line-total {
+  font-size: 13px;
+  font-weight: 700;
+  color: #050505;
+  font-variant-numeric: tabular-nums;
+  flex: 1;
+  text-align: right;
+}
+
+.cim-cart-item-actions {
+  display: flex;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+.cim-cart-item-renew-btn {
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid #86efac;
+  border-radius: 6px;
+  background: #f0fdf4;
+  color: #15803d;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.cim-cart-item-renew-btn:hover:not(:disabled) {
+  background: #dcfce7;
+}
+
+.cim-cart-item-delete-btn {
+  width: 26px;
+  height: 26px;
+  border: 1px solid #e4e6eb;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #65676b;
+  font-size: 13px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+  padding: 0;
+}
+
+.cim-cart-item-delete-btn:hover:not(:disabled) {
+  background: #fee2e2;
+  color: #dc2626;
+  border-color: #fca5a5;
+}
+
+/* Total row */
+.cim-cart-total-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border: 1px solid #e4e6eb;
+  border-radius: 12px;
+  background: #f9fafb;
+  margin-top: 4px;
+}
+
+.cim-cart-total-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #65676b;
+}
+
+.cim-cart-total-value {
+  font-size: 15px;
+  font-weight: 800;
+  color: #050505;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Goods picker ─────────────────────────────────────────────────────────── */
+.cim-goods-mode-row {
+  display: flex;
+  background: #f0f2f5;
+  border-radius: 8px;
+  padding: 3px;
+  gap: 2px;
+  margin-bottom: 10px;
+  flex-shrink: 0;
+}
+
+.cim-goods-mode-btn {
+  flex: 1;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  background: transparent;
+  color: #65676b;
+  transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+  white-space: nowrap;
+}
+
+.cim-goods-mode-btn--active {
+  background: #ffffff;
+  color: #0a7cff;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.12), 0 1px 1px rgba(0,0,0,0.08);
+}
+
+.cim-goods-mode-btn:not(.cim-goods-mode-btn--active):hover {
+  background: rgba(0,0,0,0.05);
+  color: #050505;
+}
+
+.cim-smart-hint {
+  font-size: 11px;
+  color: #8a8d91;
+  margin-bottom: 8px;
+  line-height: 1.4;
+  flex-shrink: 0;
+}
+
+.cim-goods-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  flex-shrink: 0;
+}
+
+.cim-goods-select-all {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #65676b;
+  cursor: pointer;
+  user-select: none;
+}
+
+.cim-goods-checkbox {
+  width: 15px;
+  height: 15px;
+  accent-color: #0a7cff;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.cim-goods-add-selected-btn {
+  height: 28px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 7px;
+  background: #0a7cff;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+}
+
+.cim-goods-add-selected-btn:hover:not(:disabled) {
+  background: #0060d6;
+}
+
+.cim-goods-add-selected-btn:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+
+.cim-goods-item-check {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding-right: 2px;
+}
+
+.cim-smart-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #f0f2f5;
+  margin-bottom: 4px;
+}
+
+.cim-smart-group:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+  margin-bottom: 0;
+}
+
+.cim-smart-group-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cim-smart-group-query {
+  font-size: 12px;
+  font-weight: 600;
+  color: #050505;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cim-smart-group-count {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+
+.cim-smart-group-count--found {
+  background: #f0fdf4;
+  color: #15803d;
+}
+
+.cim-smart-group-count--empty {
+  background: #f9fafb;
+  color: #8a8d91;
+}
+
+.cim-smart-group-count--error {
+  background: #fff5f5;
+  color: #dc2626;
+}
+
+.cim-goods-search-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-shrink: 0;
+}
+
+.cim-goods-search-input {
+  flex: 1;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid #e4e6eb;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #050505;
+  background: #ffffff;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.cim-goods-search-input:focus {
+  border-color: #0a7cff;
+}
+
+.cim-goods-search-btn {
+  height: 34px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 8px;
+  background: #0a7cff;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s;
+}
+
+.cim-goods-search-btn:hover {
+  background: #0060d6;
+}
+
+.cim-goods-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cim-goods-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #e4e6eb;
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+
+.cim-goods-thumb {
+  width: 48px;
+  height: 48px;
+  border-radius: 8px;
+  overflow: hidden;
+  flex-shrink: 0;
+  background: #f0f2f5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cim-goods-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.cim-goods-thumb--empty::after {
+  content: '—';
+  font-size: 12px;
+  color: #8a8d91;
+}
+
+.cim-goods-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.cim-goods-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #050505;
+  line-height: 1.4;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.cim-goods-meta {
+  font-size: 11px;
+  color: #65676b;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.cim-goods-off-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.cim-goods-item-right {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.cim-goods-add-btn {
+  height: 28px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 7px;
+  background: #0a7cff;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s;
+  width: 100%;
+}
+
+.cim-goods-add-btn:hover:not(:disabled) {
+  background: #0060d6;
+}
+
+.cim-goods-add-btn:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+
+.cim-goods-add-btn--done {
+  background: #15803d !important;
+  opacity: 1 !important;
+  cursor: default !important;
+}
+
+/* Pager */
+.cim-goods-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 12px 0 4px;
+  flex-shrink: 0;
+}
+
+.cim-goods-pager-btn {
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid #e4e6eb;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #050505;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.cim-goods-pager-btn:hover:not(:disabled) {
+  background: #f0f2f5;
+}
+
+.cim-goods-pager-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.cim-goods-pager-info {
+  font-size: 12px;
+  color: #65676b;
+  font-variant-numeric: tabular-nums;
+}
+
+.cim-delete-confirm {
+  background: #fff;
+  border: 1px solid #e4e6eb;
+  border-radius: 8px;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.18);
+  padding: 7px 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.cim-delete-confirm span {
+  color: #050505;
+  font-weight: 500;
+}
+.cim-delete-confirm-yes,
+.cim-delete-confirm-no {
+  border: none;
+  border-radius: 5px;
+  padding: 3px 9px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  line-height: 1.4;
+}
+.cim-delete-confirm-yes {
+  background: #e53935;
+  color: #fff;
+}
+.cim-delete-confirm-yes:hover { background: #c62828; }
+.cim-delete-confirm-no {
+  background: #f0f2f5;
+  color: #050505;
+}
+.cim-delete-confirm-no:hover { background: #e4e6eb; }
+
+/* ── Copy cart view ──────────────────────────────────────────────────────── */
+.cim-cart-copy-btn {
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid #e4e6eb;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #65676b;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+}
+.cim-cart-copy-btn:hover {
+  background: #f0f2f5;
+  color: #050505;
+}
+
+.cim-copy-help {
+  margin: 0 0 14px;
+  font-size: 12px;
+  color: #65676b;
+  line-height: 1.55;
+}
+
+.cim-copy-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  color: #65676b;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 6px;
+}
+
+.cim-copy-input-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.cim-copy-input {
+  flex: 1;
+  min-width: 0;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid #e4e6eb;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #050505;
+  background: #ffffff;
+  outline: none;
+  transition: border-color 0.15s;
+  box-sizing: border-box;
+}
+.cim-copy-input:focus {
+  border-color: #0a7cff;
+}
+
+.cim-copy-preview-btn {
+  height: 36px;
+  padding: 0 16px;
+  border: none;
+  border-radius: 8px;
+  background: #0a7cff;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: background 0.15s;
+}
+.cim-copy-preview-btn:hover:not(:disabled) { background: #0060d6; }
+.cim-copy-preview-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.cim-copy-expired-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #65676b;
+  cursor: pointer;
+  margin-bottom: 16px;
+  user-select: none;
+}
+.cim-copy-expired-chk {
+  accent-color: #0a7cff;
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.cim-copy-results {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cim-copy-section {
+  border-radius: 10px;
+  border: 1px solid;
+  overflow: hidden;
+}
+.cim-copy-section--added  { border-color: #86efac; background: #f0fdf4; }
+.cim-copy-section--skipped { border-color: #fde68a; background: #fffbeb; }
+.cim-copy-section--failed  { border-color: #fca5a5; background: #fff8f8; }
+
+.cim-copy-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid;
+}
+.cim-copy-section--added  .cim-copy-section-header { border-bottom-color: #86efac; }
+.cim-copy-section--skipped .cim-copy-section-header { border-bottom-color: #fde68a; }
+.cim-copy-section--failed  .cim-copy-section-header { border-bottom-color: #fca5a5; }
+
+.cim-copy-section-title { font-size: 12px; font-weight: 600; }
+.cim-copy-section--added  .cim-copy-section-title { color: #15803d; }
+.cim-copy-section--skipped .cim-copy-section-title { color: #b45309; }
+.cim-copy-section--failed  .cim-copy-section-title { color: #dc2626; }
+
+.cim-copy-section-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 20px;
+}
+.cim-copy-section--added  .cim-copy-section-badge { background: #dcfce7; color: #15803d; }
+.cim-copy-section--skipped .cim-copy-section-badge { background: #fef3c7; color: #92400e; }
+.cim-copy-section--failed  .cim-copy-section-badge { background: #fee2e2; color: #dc2626; }
+
+.cim-copy-section-list {
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.cim-copy-item {
+  font-size: 12px;
+  color: #050505;
+  line-height: 1.4;
+  padding: 1px 0;
+}
+
+.cim-copy-confirm-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 4px;
+  margin-top: 4px;
+}
+.cim-copy-cancel-btn {
+  height: 34px;
+  padding: 0 16px;
+  border: 1px solid #e4e6eb;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #65676b;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.cim-copy-cancel-btn:hover:not(:disabled) { background: #f0f2f5; color: #050505; }
+.cim-copy-confirm-btn {
+  height: 34px;
+  padding: 0 16px;
+  border: none;
+  border-radius: 8px;
+  background: #0a7cff;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.cim-copy-confirm-btn:hover:not(:disabled) { background: #0060d6; }
+.cim-copy-cancel-btn:disabled,
+.cim-copy-confirm-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.cim-copy-success-banner {
+  background: #f0fdf4;
+  color: #15803d;
+  border: 1px solid #86efac;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.cim-copy-view-cart-btn {
+  height: 34px;
+  padding: 0 20px;
+  border: none;
+  border-radius: 8px;
+  background: #0a7cff;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  align-self: flex-start;
+  transition: background 0.15s;
+}
+.cim-copy-view-cart-btn:hover { background: #0060d6; }
+
+/* ── Order list modal ────────────────────────────────────────────────────── */
+#cim-order-list-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 2147483642;
+  align-items: center;
+  justify-content: center;
+}
+
+#cim-order-list-overlay.cim-order-list-overlay--visible {
+  display: flex;
+}
+
+#cim-order-list-modal {
+  background: #ffffff;
+  border-radius: 16px;
+  width: 480px;
+  max-width: calc(100vw - 32px);
+  height: 78vh;
+  max-height: 680px;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  font-family: inherit;
+  font-size: 13px;
+  color: #050505;
+  overflow: hidden;
+}
+
+.cim-ol-card {
+  border: 1px solid #e4e6eb;
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: #ffffff;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  transition: background 0.12s;
+}
+
+.cim-ol-card:hover {
+  background: #f7f8fa;
+}
+
+.cim-ol-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.cim-ol-sn {
+  font-size: 13px;
+  font-weight: 700;
+  color: #050505;
+  letter-spacing: 0.2px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cim-ol-amount {
+  font-size: 13px;
+  font-weight: 700;
+  color: #15803d;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.cim-ol-mid {
+  font-size: 12px;
+  color: #65676b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cim-ol-info {
+  font-size: 11px;
+  color: #8a8d91;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cim-ol-bot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.cim-ol-status-badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 20px;
+  background: #f0f2f5;
+  color: #65676b;
+  white-space: nowrap;
+}
+
+.cim-ol-status--done {
+  background: #f0fdf4;
+  color: #15803d;
+}
+
+.cim-ol-status--pending {
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.cim-ol-status--waiting {
+  background: #f0f2f5;
+  color: #65676b;
+}
+
+.cim-ol-card--clickable {
+  cursor: pointer;
+}
+
+/* ── Order list footer with actions zone ─────────────────────────────────── */
+
+#cim-order-list-modal .cim-drawer-footer {
+  justify-content: space-between;
+  align-items: center;
+}
+
+.cim-ol-footer-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* ── Back button in order list header ────────────────────────────────────── */
+
+.cim-ol-back-btn {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #0a7cff;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 4px 6px;
+  border-radius: 6px;
+  transition: background 0.12s;
+  white-space: nowrap;
+}
+
+.cim-ol-back-btn:hover {
+  background: #f0f2f5;
+}
+
+/* ── Order detail view ────────────────────────────────────────────────────── */
+
+.cim-od-status-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding-bottom: 4px;
+}
+
+.cim-od-section {
+  border-top: 1px solid #e4e6eb;
+  padding-top: 12px;
+}
+
+.cim-od-section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.cim-od-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: #8a8d91;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.cim-od-edit-btn {
+  background: none;
+  border: 1px solid #0a7cff;
+  color: #0a7cff;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 10px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+  flex-shrink: 0;
+}
+
+.cim-od-edit-btn:hover {
+  background: #0a7cff;
+  color: #fff;
+}
+
+/* Items list */
+.cim-od-items-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.cim-od-item-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid #f0f2f5;
+}
+
+.cim-od-item-row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.cim-od-item-img-wrap {
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #f0f2f5;
+}
+
+.cim-od-item-img {
+  width: 44px;
+  height: 44px;
+  object-fit: cover;
+  display: block;
+}
+
+.cim-od-item-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cim-od-item-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: #050505;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cim-od-item-meta {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.cim-od-item-code {
+  font-size: 11px;
+  background: #e8f4fd;
+  color: #0a7cff;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.cim-od-item-origin {
+  font-size: 11px;
+  color: #8a8d91;
+}
+
+.cim-od-item-ship {
+  font-size: 11px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-weight: 500;
+}
+
+.cim-od-ship--done {
+  background: #f0fdf4;
+  color: #15803d;
+}
+
+.cim-od-ship--pending {
+  background: #fff7ed;
+  color: #c2410c;
+}
+
+.cim-od-item-price-col {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+  flex-shrink: 0;
+}
+
+.cim-od-item-qty {
+  font-size: 12px;
+  color: #8a8d91;
+}
+
+.cim-od-item-linetotal {
+  font-size: 13px;
+  font-weight: 700;
+  color: #050505;
+}
+
+/* Fee summary */
+.cim-od-fee-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.cim-od-fee-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.cim-od-fee-label {
+  font-size: 13px;
+  color: #65676b;
+}
+
+.cim-od-fee-value {
+  font-size: 13px;
+  font-weight: 500;
+  color: #050505;
+}
+
+.cim-od-fee-row--discount .cim-od-fee-value {
+  color: #15803d;
+}
+
+.cim-od-fee-row--add .cim-od-fee-value {
+  color: #c2410c;
+}
+
+.cim-od-fee-row--payable {
+  border-top: 1px solid #e4e6eb;
+  margin-top: 4px;
+  padding-top: 7px;
+}
+
+.cim-od-fee-row--payable .cim-od-fee-label,
+.cim-od-fee-row--payable .cim-od-fee-value {
+  font-size: 14px;
+  font-weight: 700;
+  color: #050505;
+}
+
+/* Operation buttons */
+.cim-od-op-btn {
+  font-size: 13px;
+  font-weight: 600;
+  padding: 7px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  border: none;
+  transition: opacity 0.15s, background 0.15s;
+  white-space: nowrap;
+}
+
+.cim-od-op-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.cim-od-op-btn--confirm {
+  background: #0a7cff;
+  color: #fff;
+}
+
+.cim-od-op-btn--confirm:hover:not(:disabled) {
+  background: #0060d6;
+}
+
+.cim-od-op-btn--confirm-paid {
+  background: linear-gradient(135deg, #0a7cff, #0052b8);
+  color: #fff;
+}
+
+.cim-od-op-btn--confirm-paid:hover:not(:disabled) {
+  opacity: 0.88;
+}
+
+.cim-od-op-btn--pay {
+  background: #15803d;
+  color: #fff;
+}
+
+.cim-od-op-btn--pay:hover:not(:disabled) {
+  background: #166534;
+}
+
+.cim-od-op-btn--ship {
+  background: #7c3aed;
+  color: #fff;
+}
+
+.cim-od-op-btn--ship:hover:not(:disabled) {
+  background: #6d28d9;
+}
+
+.cim-od-op-btn--cancel {
+  background: #f0f2f5;
+  color: #65676b;
+  border: 1px solid #d8dadf;
+}
+
+.cim-od-op-btn--cancel:hover:not(:disabled) {
+  background: #e4e6eb;
+}
+
+.cim-od-op-btn--save {
+  background: #0a7cff;
+  color: #fff;
+}
+
+.cim-od-op-btn--save:hover:not(:disabled) {
+  background: #0060d6;
+}
+
+/* Error/info toast inside detail modal */
+.cim-od-toast {
+  display: none;
+  background: #fef2f2;
+  border: 1px solid #fca5a5;
+  color: #dc2626;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 8px 12px;
+  border-radius: 8px;
+  margin-bottom: 4px;
+}
+
+/* Edit consignee form */
+.cim-od-form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.cim-od-form-group:last-child {
+  margin-bottom: 0;
+}
+
+.cim-od-form-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #65676b;
+}
+
+.cim-od-form-input,
+.cim-od-form-textarea {
+  font-size: 13px;
+  color: #050505;
+  background: #fff;
+  border: 1px solid #e4e6eb;
+  border-radius: 8px;
+  padding: 8px 10px;
+  outline: none;
+  transition: border-color 0.15s;
+  font-family: inherit;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.cim-od-form-input:focus,
+.cim-od-form-textarea:focus {
+  border-color: #0a7cff;
+}
+
+.cim-od-form-textarea {
+  resize: vertical;
+  min-height: 48px;
 }

@@ -344,11 +344,9 @@ is unreliable inside injected content scripts.
 
 When a PSID is linked, `renderPsidRow()` also updates the name row: the
 customer name becomes an `<a class="cim-name-link">` (dark text, underline on
-hover) that opens the customer's live cart page in a new tab:
-
-```
-https://ec2.full2house.com/Ent/index.php?win_name=&fb_user_id=<PSID>&a=EntLive&m=mallCartUserLists&live_id=
-```
+hover) that calls `openCartModal(psid)` on click — opening the EC2 cart
+management modal (see "EC2 Cart modal" below). It does **not** navigate to a
+new tab.
 
 The PSID number is rendered as a `<span class="cim-psid-link">` (dark text,
 pointer cursor). Clicking it copies the PSID to the clipboard and shows a
@@ -356,6 +354,354 @@ pointer cursor). Clicking it copies the PSID to the clipboard and shows a
 
 The `(unlink)` link retains its own `.cim-unlink` class (`#0a7cff`) — keep
 these classes separate so their colours don't bleed into each other.
+
+### EC2 Cart modal (Goals 1–3)
+
+A centered modal (`#cim-cart-modal` inside `#cim-cart-modal-overlay`) that
+gives operators full EC2 cart management without leaving the Messenger tab.
+Triggered by clicking the customer name link. Same visual pattern as the
+parcel photos drawer (480 px wide, 78 vh, shared `.cim-drawer-*` classes for
+header/body/footer).
+
+**API base** — same `CART_API_BASE`
+(`https://yxch9n4n6e.execute-api.ap-southeast-1.amazonaws.com/latest`).
+All cart endpoints are under `/api/`. Every response is `{ok, ...}` or
+`{ok:false, msg}` — errors are shown as a 3 s red toast
+(`.cim-cart-error-toast`) at the top of the modal body. After every write,
+the full cart is re-fetched; never optimistic updates.
+
+**Module-level state** (in `content.js`):
+- `CART_MODAL_ID`, `CART_MODAL_OVERLAY_ID` — element IDs.
+- `cartModalPsid` — PSID of the customer whose cart is open; set by
+  `openCartModal(psid)`, used by refresh/back-button handlers.
+- `cartSelectedRecIds` — `Set` of `recId` strings currently checked; reset on
+  every `showCartView()` call.
+- `goodsKeyword`, `goodsPage`, `goodsTotalPages` — goods-picker pagination
+  state; reset when `showGoodsPicker()` is called.
+- `goodsQtys` — `{ [goodsId]: qty }` map persisting per-product stepper
+  values across searches within one picker session; reset on `openCartModal`.
+- `goodsSearchMode` — `'normal'` | `'smart'`; reset to `'normal'` on every
+  `showGoodsPicker()` call.
+- `goodsSelectedIds` — `Set<goodsId>` of items checked in the multi-select
+  toolbar; reset on `showGoodsPicker()`, on every new search, and on mode switch.
+
+**Header modes** — `setCartHeaderMode(mode)` swaps the header between two
+states without recreating the DOM:
+
+| Element | `'cart'` mode | `'goods'` mode |
+|---|---|---|
+| `.cim-cart-back-btn` | hidden | visible (→ `showCartView`) |
+| `.cim-cart-add-btn` | visible (→ `showGoodsPicker`) | hidden |
+| `.cim-cart-refresh-btn` | visible (→ `showCartView`) | hidden |
+| `.cim-drawer-title` | customer name | "Add Product" |
+
+**Cart view** (`showCartView(psid)` → `renderCartContent(body, modal, data, psid)`):
+
+`GET_CART_ITEMS { psid }` → `background.js` → `GET /api/cart?fbUserId=<psid>`
+→ `{ ok, items:[{recId, goodsId, name, qty, price, origin, expired}], userId, ecUserId }`.
+
+Rendered elements:
+- **Modal header subtitle** — starts at `0 items · RM0.00`; updated live by
+  `syncBulkButtons()` on every checkbox change to show the selected count and
+  sum of selected line totals. Uses `itemLineTotals` (`Map<recId, lineTotal>`)
+  built once in `renderCartContent`. The bottom total row always shows the full
+  cart total and is unchanged by selection.
+- **Toolbar** (`.cim-cart-toolbar`) — `☐ All` select-all checkbox
+  (indeterminate when partial); `Delete` and `Renew Expiry` bulk buttons
+  (disabled when `cartSelectedRecIds` is empty).
+- **Item rows** (`.cim-cart-item-row`, `--expired` variant) — checkbox
+  feeding `cartSelectedRecIds`; name + LIVE/SYS badge + ⚠ Expired badge;
+  `RM X.xx/ea` price; `[−][qty][+]` stepper with editable `<input
+  type="text">` in the middle (digit-only filter on `input` event; Enter/blur
+  commits; Escape restores; input disabled during in-flight API call); line
+  total; per-item `Renew` button (expired items only); `🗑` delete button.
+- **Total row** (`.cim-cart-total-row`) — sum of all line totals (static,
+  always shows the full cart total regardless of selection).
+
+`setCartBodyBusy(true/false)` adds `pointer-events:none; opacity:0.55` to the
+body during bulk operations. `renderCartContent` calls `setCartBodyBusy(false)`
+at its very start so the busy overlay is always cleared when the cart reloads —
+this fixes a freeze where `Renew Expiry` (or bulk `Delete`) on a successful API
+response would leave the modal permanently grayed.
+
+**Delete confirmation** — clicking `🗑` (per-item) or the bulk `Delete` button
+calls `showDeleteConfirm(triggerEl, onConfirm)` instead of invoking the API
+directly. The helper creates a fixed-position popover ("Delete? · Yes · No")
+above the trigger via `getBoundingClientRect`, appended to `document.body` at
+`z-index:2147483647`. Yes proceeds with the API call; No or click-outside
+dismisses. Any existing popover is removed before a new one is shown.
+
+**Closing the modal** — `closeCartModal()` additionally strips `.cim-cart-section`,
+`.cim-cart-empty`, and `.cim-expired-notice` from the panel, resets
+`sessionState.{cartHasItems,myrSum,sgdSum,expiredAvailable}` to `null`, and
+calls `probeCartAndShowButtons()` so the MYR/SGD price sub-labels on the panel
+buttons refresh immediately after the modal is closed.
+
+**Goods picker** (`showGoodsPicker(psid)` → `renderGoodsPicker(body, psid)`):
+
+The picker has two modes toggled by a `Normal | ✦ Smart` segmented control at the top.
+
+**Normal mode** — `SEARCH_GOODS { keyword, page }` → `background.js` → `GET /api/goods?keyword=&page=`
+→ `{ ok, result:{ total, pages, items:[{goodsId, name, price, stock, warehouseCode, onSale, img}], noResult } }`.
+100 rows/page. `result.noResult === true` means no `items` key — guarded. Pagination shown when `pages > 1`.
+
+**Smart mode** — operator types a comma-separated sentence (both `，` and `,` split); `renderGoodsPicker` splits on `/[，,]/`, trims, drops blanks, then fans out **one `SMART_SEARCH_GOODS` per segment** in parallel. Each segment is further split on whitespace into a `words` array. Results render as labeled groups (`.cim-smart-group`) — one per segment — each with a query label, a count badge (`--found` green / `--empty` grey / `--error` red), and the matched cards below. No pagination. The keydown Enter handler checks `!e.isComposing` so Chinese IME character-confirmation Enter does not fire the search.
+
+`SMART_SEARCH_GOODS { words }` → `background.js` `smartSearchGoods(words)` → `POST /api/goods/search`
+with body `{ words: string[] }` → `{ ok, items, total }`. Same item shape as `GET /api/goods`.
+No match → `total: 0, items: []` (never `noResult`). Error → `{ ok: false, msg }`.
+
+**Shared card layout** (`buildGoodsCard(goods)` — closure inside `renderGoodsPicker`): checkbox
+(`.cim-goods-item-cb`, `data-goods-id` attribute) + 48 × 48 px thumbnail + name + `RM X.xx · Stock: N`
+meta + `OFF` badge + qty stepper + `Add` button. Both modes use the same builder.
+
+**Multi-select toolbar** (`.cim-goods-toolbar`) sits between the search row and the list:
+- `☐ All` select-all label+checkbox (`selectAllCb`) — goes indeterminate on partial selection.
+- `Add Selected (N)` button (`addSelectedBtn`) — disabled at 0; shows count when > 0.
+
+`goodsSelectedIds` (module-level `Set`) tracks checked goodsIds. `visibleGoodsIds` (closure array,
+reset on every render) lists all goodsIds currently in the list — used for select-all logic.
+`syncToolbar()` keeps both the select-all state and the button text/enabled state in sync.
+
+Switching modes or running a new search clears `goodsSelectedIds` and `visibleGoodsIds` and calls
+`syncToolbar()`. Switching back to Normal from Smart re-runs `doSearch('', 1)` to restore the initial list.
+
+**Add Selected bulk action**: fires parallel `CART_ADD_ITEM` calls for every item in `goodsSelectedIds`.
+On each success, marks that card's `Add` button as `✓ Added`. Errors show via `showCartError` toast.
+After all complete: clears selection, updates toolbar, shows `✓ N added` or `N ok · M failed` for 2 s.
+
+**Background.js message handlers added for cart:**
+
+| Message type | API call |
+|---|---|
+| `GET_CART_ITEMS { psid }` | `GET /api/cart?fbUserId=<psid>` |
+| `CART_DELETE_ITEMS { recIds }` | `POST /api/cart/delete` |
+| `CART_REFRESH_VALIDITY { recIds }` | `POST /api/cart/refresh-validity` |
+| `CART_UPDATE_QTY { recId, qty }` | `POST /api/cart/quantity` |
+| `CART_ADD_ITEM { fbUserId, goodsId, qty }` | `POST /api/cart/items` |
+| `SEARCH_GOODS { keyword, page }` | `GET /api/goods?keyword=&page=` |
+| `SMART_SEARCH_GOODS { words }` | `POST /api/goods/search` |
+| `CART_COPY_ITEMS { fbUserId, sourceFbUserId, dryRun?, includeExpired? }` | `POST /api/cart/copy` |
+
+No `manifest.json` changes needed — the API gateway host is already in
+`host_permissions`. No auth headers — the backend manages the EC2 session
+cookie automatically.
+
+**Goals status:**
+- Goal 1 (cart view/edit): ✅ complete
+- Goal 2 (goods picker): ✅ complete
+- Goal 3 (multi-select → delete/renew): ✅ complete; "create order from
+  selection" pending Goal 4
+- Goal 4 (order creation): not yet implemented
+- Goal 5 (order list): ✅ complete — see "Order list modal" below
+- Goal 6 (order detail): ✅ complete — see "Order detail view" below
+- Copy cart: ✅ complete — see "Copy cart view" below
+
+### Copy cart view
+
+A sub-view inside the cart modal triggered by the **"↙ Copy"** button in the
+cart header. Lets the operator copy all items from another customer's cart into
+the currently open one. Quantities merge if the same product already exists.
+
+**Header mode** — `setCartHeaderMode('copy')`: hides Add/Copy/Refresh, shows
+← Back (returns to cart view), sets title to "Copy Cart".
+
+**Module-level state** (in `content.js`):
+- `copySourceId` — the last-typed source fbUserId; persists if the operator
+  goes back and reopens the view within the same page session.
+
+**Flow (preview → confirm):**
+1. Operator types the source customer's `fbUserId` and clicks **Preview** (or
+   presses Enter). A dry-run call (`dryRun: true`) is made; nothing is written.
+2. Results appear as color-coded sections:
+   - **✓ Will be added** (green) — items that would be copied.
+   - **⏭ Will be skipped** (amber) — items not even attempted, with reason.
+     The only current reason is `"expired"`: expired lines are skipped by
+     default unless **Include expired items** is checked.
+3. **Confirm Copy** button appears only when `added.length > 0`. Clicking it
+   sends the real (non-dry-run) copy request.
+4. After copy, results show:
+   - Green success banner: `✓ Copy complete — Added X · skipped Y · failed Z`.
+   - **⚠ Failed to add** (red) section if any items were rejected by the
+     portal (e.g. out-of-stock). Each row shows name × qty — error reason.
+   - **View Cart** button reloads the cart view with the updated items.
+
+**Skipped vs Failed distinction:**
+- *Skipped* — not attempted (expired, filtered pre-flight by the API).
+- *Failed* — attempted but portal rejected (e.g. insufficient stock).
+
+**Background.js handler:** `CART_COPY_ITEMS { fbUserId, sourceFbUserId, dryRun?,
+includeExpired? }` → `POST /api/cart/copy`. Returns `{ ok, added, skipped,
+failed, cart }`. `cart` is the target cart re-fetched after copy — used
+directly by `renderCopySuccess` via the "View Cart" button reload rather than
+parsed inline.
+
+**Functions in `content.js`:**
+- `showCopyCartView(psid)` — entry point; resets `copySourceId`, switches
+  header mode, calls `renderCopyCartView`.
+- `buildCopySection(title, count, variant)` — reusable colored section builder
+  (`'added'` / `'skipped'` / `'failed'`).
+- `renderCopyCartView(body, psid)` — builds the full form + preview/confirm
+  state machine via closures.
+
+### Order list modal (Goal 5)
+
+A centered modal (`#cim-order-list-modal` inside `#cim-order-list-overlay`) that
+shows all non-cancelled orders for a customer. Triggered by clicking the
+**"Recent Orders ↗"** heading in the orders view (replaces the old EC2 external
+link). Same visual pattern as the cart modal (480 px wide, 78 vh, shared
+`.cim-drawer-*` classes).
+
+**Module-level state** (in `content.js`):
+- `ORDER_LIST_MODAL_ID`, `ORDER_LIST_OVERLAY_ID` — element IDs.
+- `orderListModalPsid` — PSID of the customer whose orders are loaded.
+
+**Functions:**
+- `ensureOrderListModal()` — creates the overlay/modal DOM once; returns the
+  modal element. Header has a refresh button (↻) and close (✕). Footer has a
+  Close button. Escape key closes.
+- `openOrderListModal(psid)` — sets `orderListModalPsid`, shows the overlay,
+  calls `showOrderList(psid)`.
+- `closeOrderListModal()` — removes the visible class.
+- `showOrderList(psid)` — sends `GET_ORDER_LIST { psid }` → `background.js` →
+  `GET /api/orders?fbUserId=<psid>&newStatus=0&noCancel=on`. On success renders
+  order cards; on failure shows `.cim-drawer-error`.
+- `mapShippingLabel(method)` — maps raw EC2 shipping method strings to short
+  labels: substring `西马` → `"西马"`, `东马` → `"东马"`, `新加坡` → `"新加坡"`,
+  `system`/`自取` (case-insensitive) → `"自取"`, otherwise returns the raw string.
+- `formatOrderDate(dateStr)` — parses any `Date`-compatible string and returns
+  `"D/M/YYYY"` (no leading zeros); falls back to the raw string if unparseable.
+
+**API response** (`GET_ORDER_LIST`):
+```
+GET /api/orders?fbUserId=<psid>&newStatus=0&noCancel=on
+→ { ok, orders: [{ orderId, orderSn, mobile, amount, consignee, statusText,
+                   statusParts, orderTime, shippingMethod, paymentMethod }] }
+```
+`orderTime` and `shippingMethod` are additive fields confirmed present alongside
+the base set. `statusParts` is `{ confirm, payment, shipping }`.
+
+**Card layout** (`.cim-ol-card`, flex column, `gap: 5px`):
+1. `.cim-ol-top` — `"F" + orderSn` (bold, `.cim-ol-sn`) + `RM X.XX` (green,
+   `.cim-ol-amount`) — flex row, space-between.
+2. `.cim-ol-mid` — `consignee · mobile` in secondary grey.
+3. `.cim-ol-info` — `formatOrderDate(orderTime) · mapShippingLabel(shippingMethod)`
+   in small muted text (11 px, `#8a8d91`). Omitted entirely when both values
+   are falsy.
+4. `.cim-ol-bot` — status badge pills (`.cim-ol-status-badge`), one per
+   `statusParts` key (`confirm`, `payment`, `shipping`); color-coded:
+   - `已…` → green (`.cim-ol-status--done`)
+   - `未…` → amber (`.cim-ol-status--pending`)
+   - `待…` → grey (`.cim-ol-status--waiting`)
+   Falls back to a single badge from `statusText` if `statusParts` is absent.
+
+**Background.js handler added:**
+
+| Message type | API call |
+|---|---|
+| `GET_ORDER_LIST { psid }` | `GET /api/orders?fbUserId=<psid>&newStatus=0&noCancel=on` |
+
+### Order detail view (Goal 6)
+
+Order list cards are clickable (`.cim-ol-card--clickable`, `cursor: pointer`). Clicking
+one calls `openOrderDetail(orderId)` which shows the detail inside the **same
+`#cim-order-list-modal`** — no second modal. The header swaps between two modes via
+`setOrderListHeaderMode(mode, modal)`:
+
+| Element | `'list'` mode | `'detail'` mode |
+|---|---|---|
+| `.cim-ol-back-btn` (← Back) | hidden | visible → `showOrderList(orderListModalPsid)` |
+| `.cim-cart-refresh-btn` (↻) | visible | hidden |
+
+**Module-level state added:**
+- `orderDetailOrderId` — orderId of the currently-rendered detail; used as a stale-response
+  guard (`if (orderDetailOrderId !== orderId) return`).
+
+**Footer in detail/edit mode** — `ensureOrderListModal()` now builds the footer with two
+zones: `.cim-ol-footer-actions` (left, flex row) and the standard Close button (right).
+`#cim-order-list-modal .cim-drawer-footer` overrides the global `justify-content` to
+`space-between`. Action buttons are injected into `.cim-ol-footer-actions` by
+`renderOrderDetail` and cleared on every view transition.
+
+**Functions:**
+- `openOrderDetail(orderId)` — ensures the overlay is visible, calls `showOrderDetail`.
+- `showOrderDetail(orderId)` — sets `orderDetailOrderId`, switches header to `'detail'`
+  mode, clears footer actions, fetches `GET_ORDER_DETAIL`, calls `renderOrderDetail`.
+- `renderOrderDetail(body, modal, data)` — renders the full detail and populates footer buttons.
+- `doOrderOperations(orderId, operations, modal)` — runs an array of EC2 operations in
+  sequence (e.g. `['confirm', 'pay']` for Confirm+Paid), then re-fetches the detail.
+- `showOrderDetailToast(modal, msg)` — shows a `.cim-od-toast` error banner at the top
+  of the body for 4 s; creates the element once and reuses it.
+- `showEditConsigneeDialog(modal, orderId, detailData)` — switches title to "Edit
+  Recipient", fetches `GET_ORDER_CONSIGNEE`, calls `renderEditConsigneeForm`.
+- `renderEditConsigneeForm(body, modal, orderId, form, detailData)` — builds the edit
+  form (consignee, mobile, email, address, postcode, order note, CS note); puts
+  Cancel + Save in `.cim-ol-footer-actions`. Cancel re-renders from cached `detailData`
+  (no refetch). Save calls `UPDATE_ORDER_CONSIGNEE` then re-fetches via `showOrderDetail`.
+
+**`renderOrderDetail` layout** (top → bottom inside `.cim-drawer-body`):
+1. `.cim-od-status-row` — three `.cim-ol-status-badge` pills reusing existing colour
+   classes (`--done` / `--pending` / `--waiting`).
+2. `.cim-drawer-info-card` — order meta: Order Time, Payment, Pay Time (if paid),
+   Shipping, Ship Time (if shipped), Buyer name.
+3. **Recipient** `.cim-od-section` — section header with title + **Edit** button
+   (`.cim-od-edit-btn`); info card with Name / Mobile / Email / Address.
+4. **Items** `.cim-od-section` — `.cim-od-items-list`; each `.cim-od-item-row` has:
+   44 × 44 px thumbnail (`.cim-od-item-img-wrap`), name + meta line (live code
+   `.cim-od-item-code`, origin `.cim-od-item-origin`, ship state badge
+   `.cim-od-ship--done` / `--pending`), qty × line total column.
+5. **Summary** `.cim-od-section` — `.cim-od-fee-list` rows: Subtotal, Shipping,
+   Discount (green, `--discount`), Add Amount (red, `--add`), **Payable** (bold,
+   `--payable` with top border).
+6. **Notes** `.cim-od-section` — Order Note and CS Note; omitted when both absent.
+
+**Action button logic** (derived entirely from `statusParts` string prefixes):
+
+| `statusParts` state | Buttons shown |
+|---|---|
+| `confirm` starts with `待` | **Confirm** + **Confirm+Paid** |
+| `confirm` not `待` AND `payment` starts with `未` | **Pay** |
+| `payment` starts with `已` AND `shipping` starts with `未` | **Ship** |
+
+`doOrderOperations` sequences operations: Confirm+Paid fires `confirm` → on success
+fires `pay`, then refetches. Any failure re-enables buttons and shows a toast.
+Ship maps to the EC2 operation string `"shiped"` (verbatim, as captured from portal).
+
+**Edit consignee form** — `regionCity` and `regionArea` (EC2 region IDs) are held
+from the fetched `form` object and sent back unchanged on save; the operator edits
+consignee / mobile / email / address / postcode (regionCode) / order note / CS note.
+Required fields (`consignee`, `mobile`, `address`, `regionCode`) are validated
+client-side before the POST.
+
+**Background.js handlers added:**
+
+| Message type | API call |
+|---|---|
+| `GET_ORDER_DETAIL { orderId }` | `GET /api/orders/:orderId` |
+| `GET_ORDER_CONSIGNEE { orderId }` | `GET /api/orders/:orderId/consignee` |
+| `UPDATE_ORDER_CONSIGNEE { orderId, data }` | `POST /api/orders/:orderId/consignee` |
+| `ORDER_OPERATION { orderId, operation }` | `POST /api/orders/:orderId/operations` |
+
+**`GET /api/orders/:orderId` response shape:**
+```
+{ ok, orderId, orderSn, statusText, statusParts:{confirm, payment, shipping},
+  subtotal, shipping, payable,
+  buyer:{name, fbUserId}, orderTime, paymentMethod, payTime, shippingMethod, shipTime,
+  recipient:{consignee, mobile, address, email},
+  customerGroup, note, csNote,
+  items:[{recId, img, name, shipState, note, origin, price, qty, lineTotal}],
+  itemsCount, itemsTotal,
+  discount:{amount, note}|null, addAmount:{amount, note}|null }
+```
+`payTime`/`shipTime` are datetimes when done, otherwise the literal `未付款`/`未出货`.
+HTTP 422 for an unknown orderId.
+
+**`GET /api/orders/:orderId/consignee` response shape:**
+```
+{ ok, form: { consignee, mobile, email, address, serviceNote, note,
+              regionCountry, regionCity, regionArea, regionCode,
+              countries:[{id,name}] } }
+```
 
 ### Language tag toggle
 

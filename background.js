@@ -178,6 +178,142 @@ function checkParcelPhotos(orderIds) {
     .catch((err) => ({ ok: false, error: err.message }));
 }
 
+function getCartItems(psid) {
+  return fetch(`${CART_API_BASE}/api/cart?fbUserId=${encodeURIComponent(psid)}`)
+    .then((res) => res.json())
+    .then((json) => {
+      if (!json.ok) return { ok: false, error: json.msg || 'Failed to load cart.' };
+      return { ok: true, items: json.items || [], userId: json.userId, ecUserId: json.ecUserId };
+    })
+    .catch((err) => ({ ok: false, error: err.message }));
+}
+
+function deleteCartItems(recIds) {
+  return fetch(`${CART_API_BASE}/api/cart/delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ recIds }),
+  })
+    .then((res) => res.json())
+    .then((json) => json.ok ? { ok: true } : { ok: false, error: json.msg || 'Delete failed.' })
+    .catch((err) => ({ ok: false, error: err.message }));
+}
+
+function refreshCartValidity(recIds) {
+  return fetch(`${CART_API_BASE}/api/cart/refresh-validity`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ recIds }),
+  })
+    .then((res) => res.json())
+    .then((json) => json.ok ? { ok: true } : { ok: false, error: json.msg || 'Renew failed.' })
+    .catch((err) => ({ ok: false, error: err.message }));
+}
+
+function updateCartQty(recId, qty) {
+  return fetch(`${CART_API_BASE}/api/cart/quantity`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ recId, qty }),
+  })
+    .then((res) => res.json())
+    .then((json) => json.ok ? { ok: true } : { ok: false, error: json.msg || 'Update qty failed.' })
+    .catch((err) => ({ ok: false, error: err.message }));
+}
+
+function addCartItem(fbUserId, goodsId, qty) {
+  return fetch(`${CART_API_BASE}/api/cart/items`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fbUserId, goodsId, qty }),
+  })
+    .then((res) => res.json())
+    .then((json) => json.ok ? { ok: true } : { ok: false, error: json.msg || 'Add to cart failed.' })
+    .catch((err) => ({ ok: false, error: err.message }));
+}
+
+function searchGoods(keyword, page) {
+  const params = new URLSearchParams({ page: String(page) });
+  if (keyword) params.set('keyword', keyword);
+  return fetch(`${CART_API_BASE}/api/goods?${params}`)
+    .then((res) => res.json())
+    .then((json) => json.ok ? { ok: true, result: json.result } : { ok: false, error: json.msg || 'Search failed.' })
+    .catch((err) => ({ ok: false, error: err.message }));
+}
+
+function smartSearchGoods(words) {
+  return fetch(`${CART_API_BASE}/api/goods/search`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ words }),
+  })
+    .then((res) => res.json())
+    .then((json) => json.ok
+      ? { ok: true, items: json.items || [], total: json.total || 0 }
+      : { ok: false, error: json.msg || 'Search failed.' })
+    .catch((err) => ({ ok: false, error: err.message }));
+}
+
+function copyCart(fbUserId, sourceFbUserId, dryRun, includeExpired) {
+  const body = { fbUserId, sourceFbUserId };
+  if (dryRun) body.dryRun = true;
+  if (includeExpired) body.includeExpired = true;
+  return fetch(`${CART_API_BASE}/api/cart/copy`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+    .then((res) => res.json())
+    .then((json) => {
+      if (!json.ok) return { ok: false, error: json.msg || 'Copy failed.' };
+      return { ok: true, added: json.added || [], skipped: json.skipped || [], failed: json.failed || [], cart: json.cart || null };
+    })
+    .catch((err) => ({ ok: false, error: err.message }));
+}
+
+function fetchOrderList(psid) {
+  return fetch(`${CART_API_BASE}/api/orders?fbUserId=${encodeURIComponent(psid)}&newStatus=0&noCancel=on`)
+    .then((res) => res.json())
+    .then((json) => json.ok ? { ok: true, orders: json.orders } : { ok: false, error: json.msg || 'Failed to load orders.' })
+    .catch((err) => ({ ok: false, error: err.message }));
+}
+
+function getOrderDetail(orderId) {
+  return fetch(`${CART_API_BASE}/api/orders/${encodeURIComponent(orderId)}`)
+    .then((res) => res.json())
+    .then((json) => json.ok ? { ok: true, ...json } : { ok: false, error: json.msg || 'Failed to load order.' })
+    .catch((err) => ({ ok: false, error: err.message }));
+}
+
+function getOrderConsignee(orderId) {
+  return fetch(`${CART_API_BASE}/api/orders/${encodeURIComponent(orderId)}/consignee`)
+    .then((res) => res.json())
+    .then((json) => json.ok ? { ok: true, form: json.form } : { ok: false, error: json.msg || 'Failed to load consignee form.' })
+    .catch((err) => ({ ok: false, error: err.message }));
+}
+
+function updateOrderConsignee(orderId, data) {
+  return fetch(`${CART_API_BASE}/api/orders/${encodeURIComponent(orderId)}/consignee`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+    .then((res) => res.json())
+    .then((json) => json.ok ? { ok: true } : { ok: false, error: json.msg || 'Update failed.' })
+    .catch((err) => ({ ok: false, error: err.message }));
+}
+
+function orderOperation(orderId, operation) {
+  return fetch(`${CART_API_BASE}/api/orders/${encodeURIComponent(orderId)}/operations`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ operation }),
+  })
+    .then((res) => res.json())
+    .then((json) => json.ok ? { ok: true } : { ok: false, error: json.msg || 'Operation failed.' })
+    .catch((err) => ({ ok: false, error: err.message }));
+}
+
 function getParcelPhotoOrder(orderId) {
   return fetch(`${CART_API_BASE}/parcelPhotos/order/${encodeURIComponent(orderId)}`)
     .then((res) => {
@@ -514,6 +650,71 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.type === 'CHECK_PARCEL_PHOTOS') {
     checkParcelPhotos(message.orderIds || []).then(sendResponse);
+    return true;
+  }
+
+  if (message?.type === 'GET_CART_ITEMS') {
+    getCartItems(message.psid).then(sendResponse);
+    return true;
+  }
+
+  if (message?.type === 'CART_DELETE_ITEMS') {
+    deleteCartItems(message.recIds || []).then(sendResponse);
+    return true;
+  }
+
+  if (message?.type === 'CART_REFRESH_VALIDITY') {
+    refreshCartValidity(message.recIds || []).then(sendResponse);
+    return true;
+  }
+
+  if (message?.type === 'CART_UPDATE_QTY') {
+    updateCartQty(message.recId, message.qty).then(sendResponse);
+    return true;
+  }
+
+  if (message?.type === 'CART_ADD_ITEM') {
+    addCartItem(message.fbUserId, message.goodsId, message.qty).then(sendResponse);
+    return true;
+  }
+
+  if (message?.type === 'SEARCH_GOODS') {
+    searchGoods(message.keyword || '', message.page || 1).then(sendResponse);
+    return true;
+  }
+
+  if (message?.type === 'SMART_SEARCH_GOODS') {
+    smartSearchGoods(message.words || []).then(sendResponse);
+    return true;
+  }
+
+  if (message?.type === 'CART_COPY_ITEMS') {
+    copyCart(message.fbUserId, message.sourceFbUserId, message.dryRun || false, message.includeExpired || false).then(sendResponse);
+    return true;
+  }
+
+  if (message?.type === 'GET_ORDER_LIST') {
+    fetchOrderList(message.psid).then(sendResponse);
+    return true;
+  }
+
+  if (message?.type === 'GET_ORDER_DETAIL') {
+    getOrderDetail(message.orderId).then(sendResponse);
+    return true;
+  }
+
+  if (message?.type === 'GET_ORDER_CONSIGNEE') {
+    getOrderConsignee(message.orderId).then(sendResponse);
+    return true;
+  }
+
+  if (message?.type === 'UPDATE_ORDER_CONSIGNEE') {
+    updateOrderConsignee(message.orderId, message.data).then(sendResponse);
+    return true;
+  }
+
+  if (message?.type === 'ORDER_OPERATION') {
+    orderOperation(message.orderId, message.operation).then(sendResponse);
     return true;
   }
 

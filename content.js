@@ -30,6 +30,14 @@
   let galleryImages = [];
   let galleryIndex = 0;
 
+  const CART_MODAL_ID = 'cim-cart-modal';
+  const CART_MODAL_OVERLAY_ID = 'cim-cart-modal-overlay';
+
+  const ORDER_LIST_MODAL_ID = 'cim-order-list-modal';
+  const ORDER_LIST_OVERLAY_ID = 'cim-order-list-overlay';
+  let orderListModalPsid = null;
+  let orderDetailOrderId = null;
+
   let sessionState = {
     uid: null,
     name: null,
@@ -661,10 +669,12 @@
       nameRow.append('Name: ');
       const nameLink = document.createElement('a');
       nameLink.className = 'cim-name-link';
-      nameLink.href = cartUrl;
-      nameLink.target = '_blank';
-      nameLink.rel = 'noopener noreferrer';
+      nameLink.href = '#';
       nameLink.textContent = sessionState.name || '';
+      nameLink.addEventListener('click', (e) => {
+        e.preventDefault();
+        openCartModal(psid);
+      });
       nameRow.append(nameLink);
     }
 
@@ -1021,6 +1031,1636 @@
       openParcelDrawer(orderId);
     });
     return btn;
+  }
+
+  // ── Cart modal ──────────────────────────────────────────────────────────────
+
+  let cartModalPsid = null;
+  let cartSelectedRecIds = new Set();
+  let goodsKeyword = '';
+  let goodsPage = 1;
+  let goodsTotalPages = 1;
+  let goodsQtys = {};
+  let goodsSearchMode = 'normal'; // 'normal' | 'smart'
+  let goodsSelectedIds = new Set();
+  let copySourceId = '';
+
+  function ensureCartModal() {
+    if (document.getElementById(CART_MODAL_ID)) return document.getElementById(CART_MODAL_ID);
+
+    const overlay = document.createElement('div');
+    overlay.id = CART_MODAL_OVERLAY_ID;
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) closeCartModal(); });
+
+    const modal = document.createElement('div');
+    modal.id = CART_MODAL_ID;
+    modal.setAttribute('role', 'dialog');
+
+    const header = document.createElement('div');
+    header.className = 'cim-drawer-header';
+
+    const backBtn = document.createElement('button');
+    backBtn.type = 'button';
+    backBtn.className = 'cim-cart-back-btn';
+    backBtn.setAttribute('aria-label', 'Back to cart');
+    backBtn.textContent = '← Back';
+    backBtn.style.display = 'none';
+    backBtn.addEventListener('click', () => showCartView(cartModalPsid));
+
+    const titleWrap = document.createElement('div');
+    titleWrap.className = 'cim-drawer-title-wrap';
+    const title = document.createElement('span');
+    title.className = 'cim-drawer-title';
+    title.textContent = 'Cart';
+    const subtitle = document.createElement('span');
+    subtitle.className = 'cim-drawer-subtitle';
+    titleWrap.append(title, subtitle);
+
+    const headerRight = document.createElement('div');
+    headerRight.className = 'cim-cart-header-right';
+
+    const addBtn = document.createElement('button');
+    addBtn.type = 'button';
+    addBtn.className = 'cim-cart-add-btn';
+    addBtn.textContent = '+ Add';
+    addBtn.addEventListener('click', () => showGoodsPicker(cartModalPsid));
+
+    const copyBtn = document.createElement('button');
+    copyBtn.type = 'button';
+    copyBtn.className = 'cim-cart-copy-btn';
+    copyBtn.textContent = '↙ Copy';
+    copyBtn.setAttribute('aria-label', 'Copy from another customer');
+    copyBtn.addEventListener('click', () => showCopyCartView(cartModalPsid));
+
+    const refreshBtn = document.createElement('button');
+    refreshBtn.type = 'button';
+    refreshBtn.className = 'cim-cart-refresh-btn';
+    refreshBtn.setAttribute('aria-label', 'Refresh');
+    refreshBtn.textContent = '↻';
+    refreshBtn.addEventListener('click', () => showCartView(cartModalPsid));
+
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'cim-drawer-close';
+    closeBtn.setAttribute('aria-label', 'Close');
+    closeBtn.textContent = '✕';
+    closeBtn.addEventListener('click', closeCartModal);
+
+    headerRight.append(addBtn, copyBtn, refreshBtn, closeBtn);
+    header.append(backBtn, titleWrap, headerRight);
+
+    const drawerBody = document.createElement('div');
+    drawerBody.className = 'cim-drawer-body';
+
+    const footer = document.createElement('div');
+    footer.className = 'cim-drawer-footer';
+    const footerClose = document.createElement('button');
+    footerClose.type = 'button';
+    footerClose.className = 'cim-drawer-footer-close';
+    footerClose.textContent = 'Close';
+    footerClose.addEventListener('click', closeCartModal);
+    footer.appendChild(footerClose);
+
+    modal.append(header, drawerBody, footer);
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && overlay.classList.contains('cim-cart-modal-overlay--visible')) {
+        closeCartModal();
+      }
+    });
+
+    return modal;
+  }
+
+  function openCartModal(psid) {
+    cartModalPsid = psid;
+    cartSelectedRecIds = new Set();
+    goodsQtys = {};
+    ensureCartModal();
+    document.getElementById(CART_MODAL_OVERLAY_ID).classList.add('cim-cart-modal-overlay--visible');
+    showCartView(psid);
+  }
+
+  function closeCartModal() {
+    const overlay = document.getElementById(CART_MODAL_OVERLAY_ID);
+    if (overlay) overlay.classList.remove('cim-cart-modal-overlay--visible');
+
+    if (sessionState.view?.type === 'orders' && sessionState.view?.psid) {
+      const panel = document.getElementById(PANEL_ID);
+      if (panel) {
+        panel.querySelector('.cim-cart-section')?.remove();
+        panel.querySelector('.cim-cart-empty')?.remove();
+        panel.querySelector('.cim-expired-notice')?.remove();
+        sessionState.cartHasItems = null;
+        sessionState.myrSum = null;
+        sessionState.sgdSum = null;
+        sessionState.expiredAvailable = null;
+        probeCartAndShowButtons(sessionState.uid, sessionState.view.psid, panel);
+      }
+    }
+  }
+
+  function setCartHeaderMode(mode) {
+    const modal = document.getElementById(CART_MODAL_ID);
+    if (!modal) return;
+    const isGoods = mode === 'goods';
+    const isCopy = mode === 'copy';
+    const isCart = mode === 'cart';
+    modal.querySelector('.cim-cart-back-btn').style.display = (isGoods || isCopy) ? '' : 'none';
+    modal.querySelector('.cim-cart-add-btn').style.display = isCart ? '' : 'none';
+    modal.querySelector('.cim-cart-copy-btn').style.display = isCart ? '' : 'none';
+    modal.querySelector('.cim-cart-refresh-btn').style.display = isCart ? '' : 'none';
+    modal.querySelector('.cim-drawer-title').textContent = isGoods ? 'Add Product' : isCopy ? 'Copy Cart' : (sessionState.name || 'Cart');
+    modal.querySelector('.cim-drawer-subtitle').textContent = '';
+  }
+
+  function setCartBodyBusy(busy) {
+    document.getElementById(CART_MODAL_ID)?.querySelector('.cim-drawer-body')?.classList.toggle('cim-cart-body--busy', busy);
+  }
+
+  function showCartError(modal, msg) {
+    const body = modal?.querySelector('.cim-drawer-body');
+    if (!body) return;
+    body.querySelector('.cim-cart-error-toast')?.remove();
+    const toast = document.createElement('div');
+    toast.className = 'cim-cart-error-toast';
+    toast.textContent = msg;
+    body.insertBefore(toast, body.firstChild);
+    setTimeout(() => toast.remove(), 3000);
+  }
+
+  function showCartView(psid) {
+    const modal = ensureCartModal();
+    const body = modal.querySelector('.cim-drawer-body');
+    cartSelectedRecIds = new Set();
+    setCartHeaderMode('cart');
+    body.innerHTML = '<div class="cim-drawer-loading">Loading cart…</div>';
+    chrome.runtime.sendMessage({ type: 'GET_CART_ITEMS', psid }, (res) => {
+      const liveModal = document.getElementById(CART_MODAL_ID);
+      if (!liveModal) return;
+      const liveBody = liveModal.querySelector('.cim-drawer-body');
+      if (!res?.ok) {
+        liveBody.innerHTML = `<div class="cim-drawer-error">${res?.error || 'Failed to load cart.'}</div>`;
+        return;
+      }
+      renderCartContent(liveBody, liveModal, res, psid);
+    });
+  }
+
+  function showDeleteConfirm(triggerEl, onConfirm) {
+    document.querySelector('.cim-delete-confirm')?.remove();
+    const pop = document.createElement('div');
+    pop.className = 'cim-delete-confirm';
+    const label = document.createElement('span');
+    label.textContent = 'Delete?';
+    const yesBtn = document.createElement('button');
+    yesBtn.className = 'cim-delete-confirm-yes';
+    yesBtn.textContent = 'Yes';
+    const noBtn = document.createElement('button');
+    noBtn.className = 'cim-delete-confirm-no';
+    noBtn.textContent = 'No';
+    pop.append(label, yesBtn, noBtn);
+    document.body.appendChild(pop);
+    const rect = triggerEl.getBoundingClientRect();
+    pop.style.cssText = `position:fixed;left:${rect.left + rect.width / 2}px;top:${rect.top - 6}px;transform:translate(-50%,-100%);z-index:2147483647`;
+    const dismiss = () => pop.remove();
+    yesBtn.addEventListener('click', (e) => { e.stopPropagation(); dismiss(); onConfirm(); });
+    noBtn.addEventListener('click', (e) => { e.stopPropagation(); dismiss(); });
+    setTimeout(() => document.addEventListener('click', dismiss, { once: true }), 0);
+  }
+
+  function renderCartContent(body, modal, data, psid) {
+    setCartBodyBusy(false);
+    body.innerHTML = '';
+    const subtitleEl = modal.querySelector('.cim-drawer-subtitle');
+    const items = data.items || [];
+
+    if (items.length === 0) {
+      if (subtitleEl) subtitleEl.textContent = 'Empty cart';
+      const empty = document.createElement('div');
+      empty.className = 'cim-drawer-empty';
+      empty.textContent = '🛒 Cart is empty';
+      body.appendChild(empty);
+      return;
+    }
+
+    const total = items.reduce((sum, it) => sum + (parseFloat(it.price) || 0) * (parseInt(it.qty, 10) || 0), 0);
+    if (subtitleEl) subtitleEl.textContent = '0 items · RM0.00';
+
+    const itemLineTotals = new Map(
+      items.map((it) => [it.recId, (parseFloat(it.price) || 0) * (parseInt(it.qty, 10) || 0)])
+    );
+
+    // ── Toolbar ───────────────────────────────────────────────────────────────
+    const toolbar = document.createElement('div');
+    toolbar.className = 'cim-cart-toolbar';
+
+    const selectAllLabel = document.createElement('label');
+    selectAllLabel.className = 'cim-cart-select-all';
+    const selectAllChk = document.createElement('input');
+    selectAllChk.type = 'checkbox';
+    selectAllChk.className = 'cim-cart-checkbox';
+    selectAllLabel.append(selectAllChk, document.createTextNode(' All'));
+
+    const bulkActions = document.createElement('div');
+    bulkActions.className = 'cim-cart-bulk-actions';
+    const bulkDeleteBtn = document.createElement('button');
+    bulkDeleteBtn.type = 'button';
+    bulkDeleteBtn.className = 'cim-cart-bulk-btn cim-cart-bulk-btn--delete';
+    bulkDeleteBtn.textContent = 'Delete';
+    bulkDeleteBtn.disabled = true;
+    const bulkRenewBtn = document.createElement('button');
+    bulkRenewBtn.type = 'button';
+    bulkRenewBtn.className = 'cim-cart-bulk-btn cim-cart-bulk-btn--renew';
+    bulkRenewBtn.textContent = 'Renew Expiry';
+    bulkRenewBtn.disabled = true;
+    bulkActions.append(bulkDeleteBtn, bulkRenewBtn);
+    toolbar.append(selectAllLabel, bulkActions);
+    body.appendChild(toolbar);
+
+    function syncBulkButtons() {
+      const allChks = body.querySelectorAll('.cim-cart-item-check');
+      const checked = body.querySelectorAll('.cim-cart-item-check:checked').length;
+      bulkDeleteBtn.disabled = cartSelectedRecIds.size === 0;
+      bulkRenewBtn.disabled = cartSelectedRecIds.size === 0;
+      selectAllChk.indeterminate = checked > 0 && checked < allChks.length;
+      selectAllChk.checked = allChks.length > 0 && checked === allChks.length;
+      const selTotal = [...cartSelectedRecIds].reduce((sum, id) => sum + (itemLineTotals.get(id) || 0), 0);
+      const n = cartSelectedRecIds.size;
+      if (subtitleEl) subtitleEl.textContent = `${n} item${n === 1 ? '' : 's'} · RM${selTotal.toFixed(2)}`;
+    }
+
+    selectAllChk.addEventListener('change', () => {
+      body.querySelectorAll('.cim-cart-item-check').forEach((chk) => {
+        chk.checked = selectAllChk.checked;
+        if (selectAllChk.checked) cartSelectedRecIds.add(chk.dataset.recId);
+        else cartSelectedRecIds.delete(chk.dataset.recId);
+      });
+      syncBulkButtons();
+    });
+
+    bulkDeleteBtn.addEventListener('click', () => {
+      const recIds = [...cartSelectedRecIds];
+      if (!recIds.length) return;
+      showDeleteConfirm(bulkDeleteBtn, () => {
+        setCartBodyBusy(true);
+        chrome.runtime.sendMessage({ type: 'CART_DELETE_ITEMS', recIds }, (res) => {
+          if (res?.ok) { showCartView(psid); }
+          else { setCartBodyBusy(false); showCartError(modal, res?.error || 'Delete failed.'); }
+        });
+      });
+    });
+
+    bulkRenewBtn.addEventListener('click', () => {
+      const recIds = [...cartSelectedRecIds];
+      if (!recIds.length) return;
+      setCartBodyBusy(true);
+      chrome.runtime.sendMessage({ type: 'CART_REFRESH_VALIDITY', recIds }, (res) => {
+        if (res?.ok) { showCartView(psid); }
+        else { setCartBodyBusy(false); showCartError(modal, res?.error || 'Renew failed.'); }
+      });
+    });
+
+    // ── Item rows ─────────────────────────────────────────────────────────────
+    items.forEach((item) => {
+      const row = document.createElement('div');
+      row.className = 'cim-cart-item-row' + (item.expired ? ' cim-cart-item-row--expired' : '');
+
+      const chkLabel = document.createElement('label');
+      chkLabel.className = 'cim-cart-item-chk-wrap';
+      const chk = document.createElement('input');
+      chk.type = 'checkbox';
+      chk.className = 'cim-cart-checkbox cim-cart-item-check';
+      chk.dataset.recId = item.recId;
+      chk.addEventListener('change', () => {
+        if (chk.checked) cartSelectedRecIds.add(item.recId);
+        else cartSelectedRecIds.delete(item.recId);
+        syncBulkButtons();
+      });
+      chkLabel.appendChild(chk);
+
+      const content = document.createElement('div');
+      content.className = 'cim-cart-item-content';
+
+      // Name + badges
+      const top = document.createElement('div');
+      top.className = 'cim-cart-item-top';
+      const name = document.createElement('span');
+      name.className = 'cim-cart-item-name';
+      name.textContent = item.name || '(Unknown product)';
+      const badges = document.createElement('div');
+      badges.className = 'cim-cart-item-badges';
+      if (item.origin) {
+        const ob = document.createElement('span');
+        ob.className = `cim-cart-origin-badge cim-cart-origin-badge--${item.origin}`;
+        ob.textContent = item.origin === 'live' ? 'LIVE' : 'SYS';
+        badges.appendChild(ob);
+      }
+      if (item.expired) {
+        const eb = document.createElement('span');
+        eb.className = 'cim-cart-expired-badge';
+        eb.textContent = '⚠ Expired';
+        badges.appendChild(eb);
+      }
+      top.append(name, badges);
+
+      // Controls row
+      const bottom = document.createElement('div');
+      bottom.className = 'cim-cart-item-bottom';
+
+      const price = parseFloat(item.price) || 0;
+      const priceEl = document.createElement('span');
+      priceEl.className = 'cim-cart-item-price';
+      priceEl.textContent = `RM ${price.toFixed(2)}/ea`;
+
+      // Qty stepper
+      const stepper = document.createElement('div');
+      stepper.className = 'cim-cart-stepper';
+      const minusBtn = document.createElement('button');
+      minusBtn.type = 'button';
+      minusBtn.className = 'cim-cart-stepper-btn';
+      minusBtn.textContent = '−';
+      minusBtn.disabled = parseInt(item.qty, 10) <= 1;
+      const qtyDisplay = document.createElement('input');
+      qtyDisplay.type = 'text';
+      qtyDisplay.inputMode = 'numeric';
+      qtyDisplay.className = 'cim-cart-stepper-qty';
+      qtyDisplay.value = String(item.qty);
+      qtyDisplay.setAttribute('aria-label', 'Quantity');
+      const plusBtn = document.createElement('button');
+      plusBtn.type = 'button';
+      plusBtn.className = 'cim-cart-stepper-btn';
+      plusBtn.textContent = '+';
+
+      const doQtyChange = (newQty) => {
+        if (newQty < 1) return;
+        minusBtn.disabled = true;
+        plusBtn.disabled = true;
+        qtyDisplay.disabled = true;
+        chrome.runtime.sendMessage({ type: 'CART_UPDATE_QTY', recId: item.recId, qty: newQty }, (res) => {
+          if (res?.ok) { showCartView(psid); }
+          else {
+            minusBtn.disabled = parseInt(qtyDisplay.value, 10) <= 1;
+            plusBtn.disabled = false;
+            qtyDisplay.disabled = false;
+            showCartError(modal, res?.error || 'Failed to update quantity.');
+          }
+        });
+      };
+      minusBtn.addEventListener('click', () => doQtyChange(parseInt(qtyDisplay.value, 10) - 1));
+      plusBtn.addEventListener('click', () => doQtyChange(parseInt(qtyDisplay.value, 10) + 1));
+
+      qtyDisplay.addEventListener('input', () => {
+        qtyDisplay.value = qtyDisplay.value.replace(/\D/g, '').replace(/^0+(\d)/, '$1');
+      });
+      qtyDisplay.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); qtyDisplay.blur(); }
+        if (e.key === 'Escape') { qtyDisplay.value = String(item.qty); qtyDisplay.blur(); }
+      });
+      qtyDisplay.addEventListener('blur', () => {
+        const val = parseInt(qtyDisplay.value, 10);
+        if (!val || val < 1) { qtyDisplay.value = String(item.qty); return; }
+        if (val !== parseInt(item.qty, 10)) doQtyChange(val);
+      });
+      stepper.append(minusBtn, qtyDisplay, plusBtn);
+
+      const lineTotal = price * (parseInt(item.qty, 10) || 0);
+      const lineTotalEl = document.createElement('span');
+      lineTotalEl.className = 'cim-cart-item-line-total';
+      lineTotalEl.textContent = `RM ${lineTotal.toFixed(2)}`;
+
+      const actions = document.createElement('div');
+      actions.className = 'cim-cart-item-actions';
+
+      if (item.expired) {
+        const renewBtn = document.createElement('button');
+        renewBtn.type = 'button';
+        renewBtn.className = 'cim-cart-item-renew-btn';
+        renewBtn.textContent = 'Renew';
+        renewBtn.addEventListener('click', () => {
+          renewBtn.disabled = true;
+          chrome.runtime.sendMessage({ type: 'CART_REFRESH_VALIDITY', recIds: [item.recId] }, (res) => {
+            if (res?.ok) { showCartView(psid); }
+            else { renewBtn.disabled = false; showCartError(modal, res?.error || 'Renew failed.'); }
+          });
+        });
+        actions.appendChild(renewBtn);
+      }
+
+      const deleteBtn = document.createElement('button');
+      deleteBtn.type = 'button';
+      deleteBtn.className = 'cim-cart-item-delete-btn';
+      deleteBtn.setAttribute('aria-label', 'Delete');
+      deleteBtn.textContent = '🗑';
+      deleteBtn.addEventListener('click', () => {
+        showDeleteConfirm(deleteBtn, () => {
+          deleteBtn.disabled = true;
+          chrome.runtime.sendMessage({ type: 'CART_DELETE_ITEMS', recIds: [item.recId] }, (res) => {
+            if (res?.ok) { showCartView(psid); }
+            else { deleteBtn.disabled = false; showCartError(modal, res?.error || 'Delete failed.'); }
+          });
+        });
+      });
+      actions.appendChild(deleteBtn);
+
+      bottom.append(priceEl, stepper, lineTotalEl, actions);
+      content.append(top, bottom);
+      row.append(chkLabel, content);
+      body.appendChild(row);
+    });
+
+    // Total
+    const totalRow = document.createElement('div');
+    totalRow.className = 'cim-cart-total-row';
+    const totalLabel = document.createElement('span');
+    totalLabel.className = 'cim-cart-total-label';
+    totalLabel.textContent = 'Total';
+    const totalValue = document.createElement('span');
+    totalValue.className = 'cim-cart-total-value';
+    totalValue.textContent = `RM ${total.toFixed(2)}`;
+    totalRow.append(totalLabel, totalValue);
+    body.appendChild(totalRow);
+  }
+
+  // ── Goods picker ─────────────────────────────────────────────────────────────
+
+  function showGoodsPicker(psid) {
+    goodsKeyword = '';
+    goodsPage = 1;
+    goodsTotalPages = 1;
+    goodsQtys = {};
+    goodsSearchMode = 'normal';
+    goodsSelectedIds = new Set();
+    const modal = ensureCartModal();
+    setCartHeaderMode('goods');
+    renderGoodsPicker(modal.querySelector('.cim-drawer-body'), psid);
+  }
+
+  function renderGoodsPicker(body, psid) {
+    body.innerHTML = '';
+
+    // tracks goodsIds visible in the current result set (for select-all)
+    let visibleGoodsIds = [];
+
+    // Mode toggle
+    const modeRow = document.createElement('div');
+    modeRow.className = 'cim-goods-mode-row';
+    const normalModeBtn = document.createElement('button');
+    normalModeBtn.type = 'button';
+    normalModeBtn.className = 'cim-goods-mode-btn' + (goodsSearchMode === 'normal' ? ' cim-goods-mode-btn--active' : '');
+    normalModeBtn.textContent = 'Normal';
+    const smartModeBtn = document.createElement('button');
+    smartModeBtn.type = 'button';
+    smartModeBtn.className = 'cim-goods-mode-btn' + (goodsSearchMode === 'smart' ? ' cim-goods-mode-btn--active' : '');
+    smartModeBtn.textContent = '✦ Smart';
+    modeRow.append(normalModeBtn, smartModeBtn);
+    body.appendChild(modeRow);
+
+    // Search bar
+    const searchRow = document.createElement('div');
+    searchRow.className = 'cim-goods-search-row';
+    const searchInput = document.createElement('input');
+    searchInput.type = 'text';
+    searchInput.className = 'cim-goods-search-input';
+    searchInput.placeholder = goodsSearchMode === 'smart' ? '红枣 去核 500g，枸杞 250g，菊花 朵' : 'Search products…';
+    searchInput.value = goodsSearchMode === 'normal' ? goodsKeyword : '';
+    const searchBtn = document.createElement('button');
+    searchBtn.type = 'button';
+    searchBtn.className = 'cim-goods-search-btn';
+    searchBtn.textContent = 'Search';
+    searchRow.append(searchInput, searchBtn);
+    body.appendChild(searchRow);
+
+    // Smart hint
+    const smartHint = document.createElement('div');
+    smartHint.className = 'cim-smart-hint';
+    smartHint.textContent = 'Separate products with commas (，or ,): 红枣 去核 500g，枸杞 250g';
+    smartHint.style.display = goodsSearchMode === 'smart' ? '' : 'none';
+    body.appendChild(smartHint);
+
+    // Multi-select toolbar
+    const toolbarRow = document.createElement('div');
+    toolbarRow.className = 'cim-goods-toolbar';
+    const selectAllLabel = document.createElement('label');
+    selectAllLabel.className = 'cim-goods-select-all';
+    const selectAllCb = document.createElement('input');
+    selectAllCb.type = 'checkbox';
+    selectAllCb.className = 'cim-goods-checkbox';
+    const selectAllText = document.createElement('span');
+    selectAllText.textContent = 'All';
+    selectAllLabel.append(selectAllCb, selectAllText);
+    const addSelectedBtn = document.createElement('button');
+    addSelectedBtn.type = 'button';
+    addSelectedBtn.className = 'cim-goods-add-selected-btn';
+    addSelectedBtn.textContent = 'Add Selected';
+    addSelectedBtn.disabled = true;
+    toolbarRow.append(selectAllLabel, addSelectedBtn);
+    body.appendChild(toolbarRow);
+
+    const listEl = document.createElement('div');
+    listEl.className = 'cim-goods-list';
+    body.appendChild(listEl);
+
+    const pagerEl = document.createElement('div');
+    pagerEl.className = 'cim-goods-pager';
+    pagerEl.style.display = goodsSearchMode === 'smart' ? 'none' : '';
+    body.appendChild(pagerEl);
+
+    function syncToolbar() {
+      const count = goodsSelectedIds.size;
+      addSelectedBtn.disabled = count === 0;
+      addSelectedBtn.textContent = count === 0 ? 'Add Selected' : `Add Selected (${count})`;
+      const allChecked = visibleGoodsIds.length > 0 && visibleGoodsIds.every((id) => goodsSelectedIds.has(id));
+      const someChecked = visibleGoodsIds.some((id) => goodsSelectedIds.has(id));
+      selectAllCb.checked = allChecked;
+      selectAllCb.indeterminate = !allChecked && someChecked;
+    }
+
+    selectAllCb.addEventListener('change', () => {
+      if (selectAllCb.checked) visibleGoodsIds.forEach((id) => goodsSelectedIds.add(id));
+      else visibleGoodsIds.forEach((id) => goodsSelectedIds.delete(id));
+      listEl.querySelectorAll('.cim-goods-item-cb').forEach((cb) => {
+        cb.checked = goodsSelectedIds.has(cb.dataset.goodsId);
+      });
+      syncToolbar();
+    });
+
+    addSelectedBtn.addEventListener('click', () => {
+      const selectedArray = [...goodsSelectedIds];
+      if (!selectedArray.length) return;
+      addSelectedBtn.disabled = true;
+      addSelectedBtn.textContent = 'Adding…';
+      selectAllCb.disabled = true;
+      let done = 0, failed = 0, remaining = selectedArray.length;
+      selectedArray.forEach((goodsId) => {
+        const qty = goodsQtys[goodsId] || 1;
+        chrome.runtime.sendMessage({ type: 'CART_ADD_ITEM', fbUserId: psid, goodsId, qty }, (res) => {
+          if (res?.ok) {
+            done++;
+            const cb = listEl.querySelector(`.cim-goods-item-cb[data-goods-id="${CSS.escape(goodsId)}"]`);
+            const cardAddBtn = cb?.closest('.cim-goods-item')?.querySelector('.cim-goods-add-btn');
+            if (cardAddBtn) { cardAddBtn.textContent = '✓ Added'; cardAddBtn.classList.add('cim-goods-add-btn--done'); }
+          } else {
+            failed++;
+            showCartError(document.getElementById(CART_MODAL_ID), res?.error || 'Add failed.');
+          }
+          remaining--;
+          if (remaining > 0) return;
+          goodsSelectedIds.clear();
+          listEl.querySelectorAll('.cim-goods-item-cb').forEach((cb) => { cb.checked = false; });
+          selectAllCb.checked = false;
+          selectAllCb.indeterminate = false;
+          selectAllCb.disabled = false;
+          syncToolbar();
+          addSelectedBtn.textContent = failed === 0 ? `✓ ${done} added` : `${done} ok · ${failed} failed`;
+          setTimeout(() => { addSelectedBtn.textContent = 'Add Selected'; }, 2000);
+        });
+      });
+    });
+
+    function setMode(mode) {
+      goodsSearchMode = mode;
+      normalModeBtn.classList.toggle('cim-goods-mode-btn--active', mode === 'normal');
+      smartModeBtn.classList.toggle('cim-goods-mode-btn--active', mode === 'smart');
+      pagerEl.style.display = mode === 'smart' ? 'none' : '';
+      smartHint.style.display = mode === 'smart' ? '' : 'none';
+      searchInput.placeholder = mode === 'smart' ? '红枣 去核 500g，枸杞 250g，菊花 朵' : 'Search products…';
+      searchInput.value = '';
+      listEl.innerHTML = '';
+      pagerEl.innerHTML = '';
+      goodsKeyword = '';
+      goodsSelectedIds.clear();
+      visibleGoodsIds = [];
+      syncToolbar();
+      searchInput.focus();
+      if (mode === 'normal') doSearch('', 1); // restore initial list
+    }
+
+    normalModeBtn.addEventListener('click', () => { if (goodsSearchMode !== 'normal') setMode('normal'); });
+    smartModeBtn.addEventListener('click', () => { if (goodsSearchMode !== 'smart') setMode('smart'); });
+
+    // Shared card builder
+    function buildGoodsCard(goods) {
+      const card = document.createElement('div');
+      card.className = 'cim-goods-item';
+
+      const checkWrap = document.createElement('label');
+      checkWrap.className = 'cim-goods-item-check';
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.className = 'cim-goods-item-cb cim-goods-checkbox';
+      checkbox.dataset.goodsId = goods.goodsId;
+      checkbox.checked = goodsSelectedIds.has(goods.goodsId);
+      checkbox.addEventListener('change', () => {
+        if (checkbox.checked) goodsSelectedIds.add(goods.goodsId);
+        else goodsSelectedIds.delete(goods.goodsId);
+        syncToolbar();
+      });
+      checkWrap.appendChild(checkbox);
+
+      const thumb = document.createElement('div');
+      thumb.className = 'cim-goods-thumb';
+      if (goods.img) {
+        const img = document.createElement('img');
+        img.src = goods.img;
+        img.alt = '';
+        img.addEventListener('error', () => { img.style.display = 'none'; thumb.classList.add('cim-goods-thumb--empty'); });
+        thumb.appendChild(img);
+      } else {
+        thumb.classList.add('cim-goods-thumb--empty');
+      }
+
+      const info = document.createElement('div');
+      info.className = 'cim-goods-info';
+      const goodsName = document.createElement('div');
+      goodsName.className = 'cim-goods-name';
+      goodsName.textContent = goods.name || '(Unknown)';
+      const meta = document.createElement('div');
+      meta.className = 'cim-goods-meta';
+      meta.textContent = `RM ${(parseFloat(goods.price) || 0).toFixed(2)} · Stock: ${goods.stock ?? '—'}`;
+      if (!goods.onSale) {
+        const off = document.createElement('span');
+        off.className = 'cim-goods-off-badge';
+        off.textContent = 'OFF';
+        meta.append(' ', off);
+      }
+      info.append(goodsName, meta);
+
+      const right = document.createElement('div');
+      right.className = 'cim-goods-item-right';
+
+      const stepper = document.createElement('div');
+      stepper.className = 'cim-cart-stepper';
+      const gQty = goodsQtys[goods.goodsId] || 1;
+      const minusBtn = document.createElement('button');
+      minusBtn.type = 'button';
+      minusBtn.className = 'cim-cart-stepper-btn';
+      minusBtn.textContent = '−';
+      minusBtn.disabled = gQty <= 1;
+      const qtyEl = document.createElement('input');
+      qtyEl.type = 'text';
+      qtyEl.inputMode = 'numeric';
+      qtyEl.className = 'cim-cart-stepper-qty';
+      qtyEl.value = String(gQty);
+      qtyEl.setAttribute('aria-label', 'Quantity');
+      const plusBtn = document.createElement('button');
+      plusBtn.type = 'button';
+      plusBtn.className = 'cim-cart-stepper-btn';
+      plusBtn.textContent = '+';
+      minusBtn.addEventListener('click', () => {
+        const cur = parseInt(qtyEl.value, 10);
+        if (cur <= 1) return;
+        qtyEl.value = String(cur - 1);
+        goodsQtys[goods.goodsId] = cur - 1;
+        minusBtn.disabled = cur - 1 <= 1;
+      });
+      plusBtn.addEventListener('click', () => {
+        const cur = parseInt(qtyEl.value, 10);
+        qtyEl.value = String(cur + 1);
+        goodsQtys[goods.goodsId] = cur + 1;
+        minusBtn.disabled = false;
+      });
+      qtyEl.addEventListener('input', () => {
+        qtyEl.value = qtyEl.value.replace(/\D/g, '').replace(/^0+(\d)/, '$1');
+      });
+      qtyEl.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); qtyEl.blur(); }
+        if (e.key === 'Escape') { qtyEl.value = String(goodsQtys[goods.goodsId] || 1); qtyEl.blur(); }
+      });
+      qtyEl.addEventListener('blur', () => {
+        const val = parseInt(qtyEl.value, 10);
+        const clamped = (!val || val < 1) ? 1 : val;
+        qtyEl.value = String(clamped);
+        goodsQtys[goods.goodsId] = clamped;
+        minusBtn.disabled = clamped <= 1;
+      });
+      stepper.append(minusBtn, qtyEl, plusBtn);
+
+      const outOfStock = goods.stock !== null && goods.stock !== undefined && parseInt(goods.stock, 10) === 0;
+      const addBtn = document.createElement('button');
+      addBtn.type = 'button';
+      addBtn.className = 'cim-goods-add-btn';
+      addBtn.textContent = 'Add';
+      addBtn.disabled = outOfStock || !goods.onSale;
+
+      addBtn.addEventListener('click', () => {
+        const qty = parseInt(qtyEl.value, 10) || 1;
+        addBtn.disabled = true;
+        addBtn.textContent = '…';
+        chrome.runtime.sendMessage({ type: 'CART_ADD_ITEM', fbUserId: psid, goodsId: goods.goodsId, qty }, (res) => {
+          if (res?.ok) {
+            addBtn.textContent = '✓ Added';
+            addBtn.classList.add('cim-goods-add-btn--done');
+          } else {
+            addBtn.disabled = false;
+            addBtn.textContent = 'Add';
+            showCartError(document.getElementById(CART_MODAL_ID), res?.error || 'Add failed.');
+          }
+        });
+      });
+
+      right.append(stepper, addBtn);
+      card.append(checkWrap, thumb, info, right);
+      return card;
+    }
+
+    // Normal search (GET, paginated)
+    const doSearch = (keyword, page) => {
+      goodsKeyword = keyword;
+      goodsPage = page;
+      goodsSelectedIds.clear();
+      visibleGoodsIds = [];
+      listEl.innerHTML = '<div class="cim-drawer-loading">Searching…</div>';
+      pagerEl.innerHTML = '';
+      syncToolbar();
+      chrome.runtime.sendMessage({ type: 'SEARCH_GOODS', keyword, page }, (res) => {
+        if (!res?.ok) {
+          listEl.innerHTML = `<div class="cim-drawer-error">${res?.error || 'Search failed.'}</div>`;
+          return;
+        }
+        const result = res.result || {};
+        goodsTotalPages = result.pages || 1;
+        listEl.innerHTML = '';
+
+        if (result.noResult || !result.items || result.items.length === 0) {
+          listEl.innerHTML = '<div class="cim-drawer-empty">No products found.</div>';
+          return;
+        }
+
+        visibleGoodsIds = result.items.map((g) => g.goodsId);
+        result.items.forEach((goods) => listEl.appendChild(buildGoodsCard(goods)));
+        syncToolbar();
+
+        if (goodsTotalPages > 1) {
+          const prevBtn = document.createElement('button');
+          prevBtn.type = 'button';
+          prevBtn.className = 'cim-goods-pager-btn';
+          prevBtn.textContent = '‹ Prev';
+          prevBtn.disabled = goodsPage <= 1;
+          prevBtn.addEventListener('click', () => doSearch(goodsKeyword, goodsPage - 1));
+          const pageInfo = document.createElement('span');
+          pageInfo.className = 'cim-goods-pager-info';
+          pageInfo.textContent = `${goodsPage} / ${goodsTotalPages}`;
+          const nextBtn = document.createElement('button');
+          nextBtn.type = 'button';
+          nextBtn.className = 'cim-goods-pager-btn';
+          nextBtn.textContent = 'Next ›';
+          nextBtn.disabled = goodsPage >= goodsTotalPages;
+          nextBtn.addEventListener('click', () => doSearch(goodsKeyword, goodsPage + 1));
+          pagerEl.append(prevBtn, pageInfo, nextBtn);
+        }
+      });
+    };
+
+    // Smart search (POST, parallel fan-out per comma-segment)
+    const doSmartSearch = (sentence) => {
+      const segments = sentence.split(/[，,]/).map((s) => s.trim()).filter(Boolean);
+      if (!segments.length) return;
+
+      goodsSelectedIds.clear();
+      visibleGoodsIds = [];
+      syncToolbar();
+      listEl.innerHTML = '<div class="cim-drawer-loading">Searching…</div>';
+
+      let completed = 0;
+      const results = new Array(segments.length).fill(null);
+
+      segments.forEach((seg, i) => {
+        const words = seg.split(/\s+/).filter(Boolean);
+        chrome.runtime.sendMessage({ type: 'SMART_SEARCH_GOODS', words }, (res) => {
+          results[i] = { seg, res };
+          completed++;
+          if (completed < segments.length) return;
+
+          listEl.innerHTML = '';
+          results.forEach(({ seg: segLabel, res: segRes }) => {
+            const group = document.createElement('div');
+            group.className = 'cim-smart-group';
+
+            const groupHeader = document.createElement('div');
+            groupHeader.className = 'cim-smart-group-header';
+            const queryLabel = document.createElement('span');
+            queryLabel.className = 'cim-smart-group-query';
+            queryLabel.textContent = segLabel;
+            const countBadge = document.createElement('span');
+            countBadge.className = 'cim-smart-group-count';
+
+            if (!segRes?.ok) {
+              countBadge.textContent = 'Error';
+              countBadge.classList.add('cim-smart-group-count--error');
+            } else {
+              const total = segRes.total || 0;
+              countBadge.textContent = total === 0 ? 'No match' : String(total);
+              if (total === 0) countBadge.classList.add('cim-smart-group-count--empty');
+              else countBadge.classList.add('cim-smart-group-count--found');
+            }
+
+            groupHeader.append(queryLabel, countBadge);
+            group.appendChild(groupHeader);
+
+            if (segRes?.ok && segRes.items?.length > 0) {
+              segRes.items.forEach((goods) => {
+                visibleGoodsIds.push(goods.goodsId);
+                group.appendChild(buildGoodsCard(goods));
+              });
+            }
+
+            listEl.appendChild(group);
+          });
+          syncToolbar();
+        });
+      });
+    };
+
+    const triggerSearch = () => {
+      const val = searchInput.value.trim();
+      if (goodsSearchMode === 'smart') doSmartSearch(val);
+      else doSearch(val, 1);
+    };
+
+    searchBtn.addEventListener('click', triggerSearch);
+    // !e.isComposing prevents Chinese IME Enter (character confirmation) from firing search
+    searchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) triggerSearch(); });
+
+    if (goodsSearchMode === 'normal') doSearch(goodsKeyword, goodsPage);
+  }
+
+  // ── Copy cart view ──────────────────────────────────────────────────────────
+
+  function showCopyCartView(psid) {
+    copySourceId = '';
+    const modal = ensureCartModal();
+    const body = modal.querySelector('.cim-drawer-body');
+    setCartHeaderMode('copy');
+    renderCopyCartView(body, psid);
+  }
+
+  function buildCopySection(title, count, variant) {
+    const section = document.createElement('div');
+    section.className = `cim-copy-section cim-copy-section--${variant}`;
+    const header = document.createElement('div');
+    header.className = 'cim-copy-section-header';
+    const titleEl = document.createElement('span');
+    titleEl.className = 'cim-copy-section-title';
+    titleEl.textContent = title;
+    const badge = document.createElement('span');
+    badge.className = 'cim-copy-section-badge';
+    badge.textContent = String(count);
+    header.append(titleEl, badge);
+    const list = document.createElement('div');
+    list.className = 'cim-copy-section-list';
+    section.append(header, list);
+    return section;
+  }
+
+  function renderCopyCartView(body, psid) {
+    body.innerHTML = '';
+
+    const helpText = document.createElement('p');
+    helpText.className = 'cim-copy-help';
+    helpText.textContent = 'Copy all items from another customer\'s cart into this one. Quantities merge if the same product already exists.';
+    body.appendChild(helpText);
+
+    const labelEl = document.createElement('label');
+    labelEl.className = 'cim-copy-label';
+    labelEl.textContent = 'Source Customer ID (fbUserId)';
+    body.appendChild(labelEl);
+
+    const inputRow = document.createElement('div');
+    inputRow.className = 'cim-copy-input-row';
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'cim-copy-input';
+    input.placeholder = 'e.g. 1234567890…';
+    input.value = copySourceId;
+    const previewBtn = document.createElement('button');
+    previewBtn.type = 'button';
+    previewBtn.className = 'cim-copy-preview-btn';
+    previewBtn.textContent = 'Preview';
+    inputRow.append(input, previewBtn);
+    body.appendChild(inputRow);
+
+    const expiredRow = document.createElement('label');
+    expiredRow.className = 'cim-copy-expired-row';
+    const expiredChk = document.createElement('input');
+    expiredChk.type = 'checkbox';
+    expiredChk.className = 'cim-copy-expired-chk';
+    const expiredSpan = document.createElement('span');
+    expiredSpan.textContent = 'Include expired items';
+    expiredRow.append(expiredChk, expiredSpan);
+    body.appendChild(expiredRow);
+
+    const resultsEl = document.createElement('div');
+    resultsEl.className = 'cim-copy-results';
+    body.appendChild(resultsEl);
+
+    const confirmRow = document.createElement('div');
+    confirmRow.className = 'cim-copy-confirm-row';
+    confirmRow.style.display = 'none';
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'cim-copy-cancel-btn';
+    cancelBtn.textContent = 'Cancel';
+    const confirmBtn = document.createElement('button');
+    confirmBtn.type = 'button';
+    confirmBtn.className = 'cim-copy-confirm-btn';
+    confirmBtn.textContent = '✓ Confirm Copy';
+    confirmRow.append(cancelBtn, confirmBtn);
+    body.appendChild(confirmRow);
+
+    let previewData = null;
+
+    function renderPreviewResults(data) {
+      previewData = data;
+      resultsEl.innerHTML = '';
+
+      const hasItems = data.added.length > 0 || data.skipped.length > 0;
+
+      if (!hasItems) {
+        const empty = document.createElement('div');
+        empty.className = 'cim-drawer-empty';
+        empty.textContent = 'Source cart is empty or has no items to copy.';
+        resultsEl.appendChild(empty);
+        confirmRow.style.display = 'none';
+        return;
+      }
+
+      if (data.added.length > 0) {
+        const section = buildCopySection('✓ Will be added', data.added.length, 'added');
+        const list = section.querySelector('.cim-copy-section-list');
+        data.added.forEach((item) => {
+          const row = document.createElement('div');
+          row.className = 'cim-copy-item';
+          row.textContent = `${item.name || item.goodsId} × ${item.qty}`;
+          list.appendChild(row);
+        });
+        resultsEl.appendChild(section);
+      }
+
+      if (data.skipped.length > 0) {
+        const section = buildCopySection('⏭ Will be skipped', data.skipped.length, 'skipped');
+        const list = section.querySelector('.cim-copy-section-list');
+        data.skipped.forEach((item) => {
+          const row = document.createElement('div');
+          row.className = 'cim-copy-item';
+          row.textContent = `${item.name || item.goodsId} × ${item.qty}${item.reason ? ` — ${item.reason}` : ''}`;
+          list.appendChild(row);
+        });
+        resultsEl.appendChild(section);
+      }
+
+      confirmRow.style.display = data.added.length > 0 ? '' : 'none';
+    }
+
+    function renderCopySuccess(data) {
+      resultsEl.innerHTML = '';
+      confirmRow.style.display = 'none';
+
+      const banner = document.createElement('div');
+      banner.className = 'cim-copy-success-banner';
+      const parts = [`Added ${data.added.length}`];
+      if (data.skipped.length) parts.push(`skipped ${data.skipped.length}`);
+      if (data.failed.length) parts.push(`failed ${data.failed.length}`);
+      banner.textContent = `✓ Copy complete — ${parts.join(' · ')}`;
+      resultsEl.appendChild(banner);
+
+      if (data.failed.length > 0) {
+        const section = buildCopySection('⚠ Failed to add', data.failed.length, 'failed');
+        const list = section.querySelector('.cim-copy-section-list');
+        data.failed.forEach((item) => {
+          const row = document.createElement('div');
+          row.className = 'cim-copy-item';
+          row.textContent = `${item.name || item.goodsId} × ${item.qty}${item.error ? ` — ${item.error}` : ''}`;
+          list.appendChild(row);
+        });
+        resultsEl.appendChild(section);
+      }
+
+      const viewBtn = document.createElement('button');
+      viewBtn.type = 'button';
+      viewBtn.className = 'cim-copy-view-cart-btn';
+      viewBtn.textContent = 'View Cart';
+      viewBtn.addEventListener('click', () => showCartView(psid));
+      resultsEl.appendChild(viewBtn);
+    }
+
+    function doPreview() {
+      const sourceId = input.value.trim();
+      if (!sourceId) { input.focus(); return; }
+      copySourceId = sourceId;
+      previewBtn.disabled = true;
+      previewBtn.textContent = '…';
+      resultsEl.innerHTML = '<div class="cim-drawer-loading">Checking source cart…</div>';
+      confirmRow.style.display = 'none';
+      previewData = null;
+      chrome.runtime.sendMessage(
+        { type: 'CART_COPY_ITEMS', fbUserId: psid, sourceFbUserId: sourceId, dryRun: true, includeExpired: expiredChk.checked },
+        (res) => {
+          previewBtn.disabled = false;
+          previewBtn.textContent = 'Preview';
+          if (!res?.ok) {
+            resultsEl.innerHTML = `<div class="cim-drawer-error">${res?.error || 'Preview failed.'}</div>`;
+            return;
+          }
+          renderPreviewResults(res);
+        }
+      );
+    }
+
+    previewBtn.addEventListener('click', doPreview);
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') doPreview(); });
+
+    cancelBtn.addEventListener('click', () => {
+      resultsEl.innerHTML = '';
+      confirmRow.style.display = 'none';
+      previewData = null;
+    });
+
+    confirmBtn.addEventListener('click', () => {
+      if (!previewData || previewData.added.length === 0) return;
+      const sourceId = input.value.trim();
+      confirmBtn.disabled = true;
+      cancelBtn.disabled = true;
+      confirmBtn.textContent = '…';
+      chrome.runtime.sendMessage(
+        { type: 'CART_COPY_ITEMS', fbUserId: psid, sourceFbUserId: sourceId, includeExpired: expiredChk.checked },
+        (res) => {
+          confirmBtn.disabled = false;
+          cancelBtn.disabled = false;
+          confirmBtn.textContent = '✓ Confirm Copy';
+          if (!res?.ok) {
+            showCartError(document.getElementById(CART_MODAL_ID), res?.error || 'Copy failed.');
+            return;
+          }
+          renderCopySuccess(res);
+        }
+      );
+    });
+
+    input.focus();
+  }
+
+  // ── Order list modal ────────────────────────────────────────────────────────
+
+  function ensureOrderListModal() {
+    if (document.getElementById(ORDER_LIST_MODAL_ID)) return document.getElementById(ORDER_LIST_MODAL_ID);
+
+    const overlay = document.createElement('div');
+    overlay.id = ORDER_LIST_OVERLAY_ID;
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) closeOrderListModal(); });
+
+    const modal = document.createElement('div');
+    modal.id = ORDER_LIST_MODAL_ID;
+    modal.setAttribute('role', 'dialog');
+
+    const header = document.createElement('div');
+    header.className = 'cim-drawer-header';
+
+    const backBtn = document.createElement('button');
+    backBtn.type = 'button';
+    backBtn.className = 'cim-ol-back-btn';
+    backBtn.setAttribute('aria-label', 'Back to list');
+    backBtn.textContent = '← Back';
+    backBtn.hidden = true;
+    backBtn.addEventListener('click', () => {
+      setOrderListHeaderMode('list', modal);
+      showOrderList(orderListModalPsid);
+    });
+
+    const titleWrap = document.createElement('div');
+    titleWrap.className = 'cim-drawer-title-wrap';
+    const title = document.createElement('span');
+    title.className = 'cim-drawer-title';
+    title.textContent = 'Orders';
+    const subtitle = document.createElement('span');
+    subtitle.className = 'cim-drawer-subtitle';
+    titleWrap.append(title, subtitle);
+
+    const headerRight = document.createElement('div');
+    headerRight.className = 'cim-cart-header-right';
+
+    const refreshBtn = document.createElement('button');
+    refreshBtn.type = 'button';
+    refreshBtn.className = 'cim-cart-refresh-btn';
+    refreshBtn.setAttribute('aria-label', 'Refresh');
+    refreshBtn.textContent = '↻';
+    refreshBtn.addEventListener('click', () => showOrderList(orderListModalPsid));
+
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'cim-drawer-close';
+    closeBtn.setAttribute('aria-label', 'Close');
+    closeBtn.textContent = '✕';
+    closeBtn.addEventListener('click', closeOrderListModal);
+
+    headerRight.append(refreshBtn, closeBtn);
+    header.append(backBtn, titleWrap, headerRight);
+
+    const drawerBody = document.createElement('div');
+    drawerBody.className = 'cim-drawer-body';
+
+    const footer = document.createElement('div');
+    footer.className = 'cim-drawer-footer';
+
+    const footerActions = document.createElement('div');
+    footerActions.className = 'cim-ol-footer-actions';
+
+    const footerClose = document.createElement('button');
+    footerClose.type = 'button';
+    footerClose.className = 'cim-drawer-footer-close';
+    footerClose.textContent = 'Close';
+    footerClose.addEventListener('click', closeOrderListModal);
+    footer.append(footerActions, footerClose);
+
+    modal.append(header, drawerBody, footer);
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && overlay.classList.contains('cim-order-list-overlay--visible')) {
+        closeOrderListModal();
+      }
+    });
+
+    return modal;
+  }
+
+  function setOrderListHeaderMode(mode, modal) {
+    const backBtn = modal.querySelector('.cim-ol-back-btn');
+    const refreshBtn = modal.querySelector('.cim-cart-refresh-btn');
+    if (mode === 'list') {
+      if (backBtn) backBtn.hidden = true;
+      if (refreshBtn) refreshBtn.hidden = false;
+    } else {
+      if (backBtn) backBtn.hidden = false;
+      if (refreshBtn) refreshBtn.hidden = true;
+    }
+  }
+
+  function openOrderListModal(psid) {
+    orderListModalPsid = psid;
+    ensureOrderListModal();
+    document.getElementById(ORDER_LIST_OVERLAY_ID).classList.add('cim-order-list-overlay--visible');
+    showOrderList(psid);
+  }
+
+  function closeOrderListModal() {
+    const overlay = document.getElementById(ORDER_LIST_OVERLAY_ID);
+    if (overlay) overlay.classList.remove('cim-order-list-overlay--visible');
+  }
+
+  function mapShippingLabel(method) {
+    if (!method) return null;
+    if (method.includes('西马')) return '西马';
+    if (method.includes('东马')) return '东马';
+    if (method.includes('新加坡')) return '新加坡';
+    if (/system|自取/i.test(method)) return '自取';
+    return method;
+  }
+
+  function formatOrderDate(dateStr) {
+    if (!dateStr) return null;
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return dateStr;
+    return `${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}`;
+  }
+
+  function showOrderList(psid) {
+    const modal = ensureOrderListModal();
+    setOrderListHeaderMode('list', modal);
+    const footerActions = modal.querySelector('.cim-ol-footer-actions');
+    if (footerActions) footerActions.innerHTML = '';
+    const body = modal.querySelector('.cim-drawer-body');
+    modal.querySelector('.cim-drawer-title').textContent = sessionState.name || 'Orders';
+    modal.querySelector('.cim-drawer-subtitle').textContent = '';
+    body.innerHTML = '<div class="cim-drawer-loading">Loading orders…</div>';
+
+    chrome.runtime.sendMessage({ type: 'GET_ORDER_LIST', psid }, (res) => {
+      const liveModal = document.getElementById(ORDER_LIST_MODAL_ID);
+      if (!liveModal) return;
+      const liveBody = liveModal.querySelector('.cim-drawer-body');
+      if (!res?.ok) {
+        liveBody.innerHTML = `<div class="cim-drawer-error">${res?.error || 'Failed to load orders.'}</div>`;
+        return;
+      }
+      const orders = res.orders || [];
+      liveModal.querySelector('.cim-drawer-subtitle').textContent = `${orders.length} order${orders.length !== 1 ? 's' : ''}`;
+      if (!orders.length) {
+        liveBody.innerHTML = '<div class="cim-drawer-empty">No orders found.</div>';
+        return;
+      }
+      liveBody.innerHTML = '';
+      orders.forEach((order) => {
+        const card = document.createElement('div');
+        card.className = 'cim-ol-card cim-ol-card--clickable';
+        card.addEventListener('click', () => openOrderDetail(order.orderId));
+
+        const topRow = document.createElement('div');
+        topRow.className = 'cim-ol-top';
+        const sn = document.createElement('span');
+        sn.className = 'cim-ol-sn';
+        sn.textContent = 'F' + order.orderSn;
+        const amount = document.createElement('span');
+        amount.className = 'cim-ol-amount';
+        amount.textContent = order.amount ? `RM ${parseFloat(order.amount).toFixed(2)}` : '—';
+        topRow.append(sn, amount);
+
+        const midRow = document.createElement('div');
+        midRow.className = 'cim-ol-mid';
+        const parts = [order.consignee, order.mobile].filter(Boolean);
+        midRow.textContent = parts.join(' · ');
+
+        const infoRow = document.createElement('div');
+        infoRow.className = 'cim-ol-info';
+        const infoParts = [
+          formatOrderDate(order.orderTime),
+          mapShippingLabel(order.shippingMethod),
+        ].filter(Boolean);
+        if (infoParts.length) infoRow.textContent = infoParts.join(' · ');
+
+        const botRow = document.createElement('div');
+        botRow.className = 'cim-ol-bot';
+        if (order.statusParts) {
+          ['confirm', 'payment', 'shipping'].forEach((key) => {
+            const val = order.statusParts[key];
+            if (!val) return;
+            const badge = document.createElement('span');
+            badge.className = 'cim-ol-status-badge';
+            if (val.startsWith('已')) badge.classList.add('cim-ol-status--done');
+            else if (val.startsWith('未')) badge.classList.add('cim-ol-status--pending');
+            else if (val.startsWith('待')) badge.classList.add('cim-ol-status--waiting');
+            badge.textContent = val;
+            botRow.appendChild(badge);
+          });
+        } else if (order.statusText) {
+          const badge = document.createElement('span');
+          badge.className = 'cim-ol-status-badge';
+          badge.textContent = order.statusText;
+          botRow.appendChild(badge);
+        }
+
+        card.append(topRow, midRow);
+        if (infoParts.length) card.appendChild(infoRow);
+        card.appendChild(botRow);
+        liveBody.appendChild(card);
+      });
+    });
+  }
+
+  // ── Order detail view ───────────────────────────────────────────────────────
+
+  function openOrderDetail(orderId) {
+    ensureOrderListModal();
+    document.getElementById(ORDER_LIST_OVERLAY_ID).classList.add('cim-order-list-overlay--visible');
+    showOrderDetail(orderId);
+  }
+
+  function showOrderDetail(orderId) {
+    orderDetailOrderId = orderId;
+    const modal = ensureOrderListModal();
+    setOrderListHeaderMode('detail', modal);
+    const body = modal.querySelector('.cim-drawer-body');
+    body.innerHTML = '<div class="cim-drawer-loading">Loading order…</div>';
+    modal.querySelector('.cim-drawer-title').textContent = 'Loading…';
+    modal.querySelector('.cim-drawer-subtitle').textContent = '';
+    const footerActions = modal.querySelector('.cim-ol-footer-actions');
+    if (footerActions) footerActions.innerHTML = '';
+
+    chrome.runtime.sendMessage({ type: 'GET_ORDER_DETAIL', orderId }, (res) => {
+      const liveModal = document.getElementById(ORDER_LIST_MODAL_ID);
+      if (!liveModal || orderDetailOrderId !== orderId) return;
+      const liveBody = liveModal.querySelector('.cim-drawer-body');
+      if (!res?.ok) {
+        liveBody.innerHTML = `<div class="cim-drawer-error">${res?.error || 'Failed to load order.'}</div>`;
+        return;
+      }
+      renderOrderDetail(liveBody, liveModal, res);
+    });
+  }
+
+  function renderOrderDetail(body, modal, data) {
+    body.innerHTML = '';
+    modal.querySelector('.cim-drawer-title').textContent = 'F' + data.orderSn;
+    modal.querySelector('.cim-drawer-subtitle').textContent = data.statusText || '';
+
+    function mkEl(tag, cls, txt) {
+      const el = document.createElement(tag);
+      if (cls) el.className = cls;
+      if (txt != null) el.textContent = txt;
+      return el;
+    }
+
+    function mkInfoCard(rows) {
+      const card = mkEl('div', 'cim-drawer-info-card');
+      rows.forEach(([label, value]) => {
+        if (!value) return;
+        const row = mkEl('div', 'cim-drawer-info-row');
+        row.append(mkEl('span', 'cim-drawer-info-label', label), mkEl('span', 'cim-drawer-info-value', value));
+        card.appendChild(row);
+      });
+      return card;
+    }
+
+    function mkSection(titleText) {
+      const sect = mkEl('div', 'cim-od-section');
+      const hdr = mkEl('div', 'cim-od-section-header');
+      hdr.appendChild(mkEl('span', 'cim-od-section-title', titleText));
+      sect.appendChild(hdr);
+      return { sect, hdr };
+    }
+
+    // Status badges
+    if (data.statusParts) {
+      const statusRow = mkEl('div', 'cim-od-status-row');
+      ['confirm', 'payment', 'shipping'].forEach((key) => {
+        const val = data.statusParts[key];
+        if (!val) return;
+        const badge = mkEl('span', 'cim-ol-status-badge', val);
+        if (val.startsWith('已')) badge.classList.add('cim-ol-status--done');
+        else if (val.startsWith('未')) badge.classList.add('cim-ol-status--pending');
+        else badge.classList.add('cim-ol-status--waiting');
+        statusRow.appendChild(badge);
+      });
+      body.appendChild(statusRow);
+    }
+
+    // Order meta info
+    const metaCard = mkInfoCard([
+      ['Order Time', data.orderTime ? formatOrderDate(data.orderTime) : null],
+      ['Payment', data.paymentMethod],
+      ['Pay Time', data.payTime && data.payTime !== '未付款' ? data.payTime : null],
+      ['Shipping', data.shippingMethod ? (mapShippingLabel(data.shippingMethod) || data.shippingMethod) : null],
+      ['Ship Time', data.shipTime && data.shipTime !== '未出货' ? data.shipTime : null],
+      ['Buyer', data.buyer?.name],
+    ]);
+    if (metaCard.children.length) body.appendChild(metaCard);
+
+    // Recipient
+    const { sect: recipSect, hdr: recipHdr } = mkSection('Recipient');
+    const editBtn = mkEl('button', 'cim-od-edit-btn', 'Edit');
+    editBtn.type = 'button';
+    editBtn.addEventListener('click', () => showEditConsigneeDialog(modal, data.orderId, data));
+    recipHdr.appendChild(editBtn);
+    const recip = data.recipient || {};
+    recipSect.appendChild(mkInfoCard([
+      ['Name', recip.consignee],
+      ['Mobile', recip.mobile],
+      ['Email', recip.email],
+      ['Address', recip.address],
+    ]));
+    body.appendChild(recipSect);
+
+    // Items
+    if (data.items && data.items.length) {
+      const { sect: itemsSect, hdr: itemsHdr } = mkSection(`Items · ${data.itemsCount || data.items.length} pcs`);
+      const list = mkEl('div', 'cim-od-items-list');
+      data.items.forEach((item) => {
+        const row = mkEl('div', 'cim-od-item-row');
+        const imgWrap = mkEl('div', 'cim-od-item-img-wrap');
+        if (item.img) {
+          const img = mkEl('img', 'cim-od-item-img');
+          img.src = item.img;
+          img.alt = item.name || '';
+          imgWrap.appendChild(img);
+        }
+        const info = mkEl('div', 'cim-od-item-info');
+        info.appendChild(mkEl('span', 'cim-od-item-name', item.name));
+        const meta = mkEl('div', 'cim-od-item-meta');
+        if (item.note) meta.appendChild(mkEl('span', 'cim-od-item-code', item.note));
+        if (item.origin && item.origin !== '--') meta.appendChild(mkEl('span', 'cim-od-item-origin', item.origin));
+        if (item.shipState) {
+          const sb = mkEl('span', 'cim-od-item-ship', item.shipState);
+          sb.classList.add(item.shipState.startsWith('已') ? 'cim-od-ship--done' : 'cim-od-ship--pending');
+          meta.appendChild(sb);
+        }
+        info.appendChild(meta);
+        const priceCol = mkEl('div', 'cim-od-item-price-col');
+        priceCol.append(
+          mkEl('span', 'cim-od-item-qty', `× ${item.qty}`),
+          mkEl('span', 'cim-od-item-linetotal', `RM ${parseFloat(item.lineTotal || 0).toFixed(2)}`)
+        );
+        row.append(imgWrap, info, priceCol);
+        list.appendChild(row);
+      });
+      itemsSect.appendChild(list);
+      body.appendChild(itemsSect);
+    }
+
+    // Summary / fees
+    const { sect: sumSect } = mkSection('Summary');
+    const feeList = mkEl('div', 'cim-od-fee-list');
+    const addFee = (label, value, cls) => {
+      const row = mkEl('div', 'cim-od-fee-row' + (cls ? ' ' + cls : ''));
+      row.append(mkEl('span', 'cim-od-fee-label', label), mkEl('span', 'cim-od-fee-value', value));
+      feeList.appendChild(row);
+    };
+    if (data.itemsTotal != null) addFee('Subtotal', `RM ${parseFloat(data.itemsTotal).toFixed(2)}`);
+    if (data.shipping != null) addFee('Shipping', `RM ${parseFloat(data.shipping).toFixed(2)}`);
+    if (data.discount) addFee(`Discount${data.discount.note ? ` (${data.discount.note})` : ''}`, `-RM ${parseFloat(data.discount.amount).toFixed(2)}`, 'cim-od-fee-row--discount');
+    if (data.addAmount) addFee(`Add Amount${data.addAmount.note ? ` (${data.addAmount.note})` : ''}`, `+RM ${parseFloat(data.addAmount.amount).toFixed(2)}`, 'cim-od-fee-row--add');
+    addFee('Payable', `RM ${parseFloat(data.payable || 0).toFixed(2)}`, 'cim-od-fee-row--payable');
+    sumSect.appendChild(feeList);
+    body.appendChild(sumSect);
+
+    // Notes
+    if (data.note || data.csNote) {
+      const { sect: notesSect } = mkSection('Notes');
+      if (data.note) notesSect.appendChild(mkInfoCard([['Order Note', data.note]]));
+      if (data.csNote) notesSect.appendChild(mkInfoCard([['CS Note', data.csNote]]));
+      body.appendChild(notesSect);
+    }
+
+    // Footer action buttons (derive from statusParts)
+    const footerActions = modal.querySelector('.cim-ol-footer-actions');
+    if (footerActions) {
+      footerActions.innerHTML = '';
+      const sp = data.statusParts || {};
+
+      function mkOpBtn(text, cls, onClick) {
+        const btn = mkEl('button', `cim-od-op-btn ${cls}`, text);
+        btn.type = 'button';
+        btn.addEventListener('click', onClick);
+        return btn;
+      }
+
+      if (sp.confirm?.startsWith('待')) {
+        footerActions.append(
+          mkOpBtn('Confirm', 'cim-od-op-btn--confirm', () => doOrderOperations(data.orderId, ['confirm'], modal)),
+          mkOpBtn('Confirm+Paid', 'cim-od-op-btn--confirm-paid', () => doOrderOperations(data.orderId, ['confirm', 'pay'], modal))
+        );
+      } else {
+        const isConfirmed = sp.confirm && !sp.confirm.startsWith('待');
+        if (isConfirmed && sp.payment?.startsWith('未')) {
+          footerActions.appendChild(mkOpBtn('Pay', 'cim-od-op-btn--pay', () => doOrderOperations(data.orderId, ['pay'], modal)));
+        }
+        if (sp.payment?.startsWith('已') && sp.shipping?.startsWith('未')) {
+          footerActions.appendChild(mkOpBtn('Ship', 'cim-od-op-btn--ship', () => doOrderOperations(data.orderId, ['shiped'], modal)));
+        }
+      }
+    }
+  }
+
+  function doOrderOperations(orderId, operations, modal) {
+    const footerActions = modal.querySelector('.cim-ol-footer-actions');
+    const btns = footerActions ? [...footerActions.querySelectorAll('button')] : [];
+    btns.forEach((b) => { b.disabled = true; });
+
+    const runNext = (ops) => {
+      if (!ops.length) {
+        showOrderDetail(orderId);
+        return;
+      }
+      const [op, ...rest] = ops;
+      chrome.runtime.sendMessage({ type: 'ORDER_OPERATION', orderId, operation: op }, (res) => {
+        if (!res?.ok) {
+          btns.forEach((b) => { b.disabled = false; });
+          showOrderDetailToast(modal, res?.error || `Operation "${op}" failed.`);
+          return;
+        }
+        runNext(rest);
+      });
+    };
+    runNext(operations);
+  }
+
+  function showOrderDetailToast(modal, msg) {
+    let toast = modal.querySelector('.cim-od-toast');
+    if (!toast) {
+      toast = document.createElement('div');
+      toast.className = 'cim-od-toast';
+      const body = modal.querySelector('.cim-drawer-body');
+      if (body) body.insertBefore(toast, body.firstChild);
+    }
+    toast.textContent = msg;
+    toast.style.display = 'block';
+    setTimeout(() => { if (toast) toast.style.display = 'none'; }, 4000);
+  }
+
+  function showEditConsigneeDialog(modal, orderId, detailData) {
+    const body = modal.querySelector('.cim-drawer-body');
+    body.innerHTML = '<div class="cim-drawer-loading">Loading form…</div>';
+    modal.querySelector('.cim-drawer-title').textContent = 'Edit Recipient';
+    modal.querySelector('.cim-drawer-subtitle').textContent = '';
+    const footerActions = modal.querySelector('.cim-ol-footer-actions');
+    if (footerActions) footerActions.innerHTML = '';
+
+    chrome.runtime.sendMessage({ type: 'GET_ORDER_CONSIGNEE', orderId }, (res) => {
+      const liveModal = document.getElementById(ORDER_LIST_MODAL_ID);
+      if (!liveModal) return;
+      const liveBody = liveModal.querySelector('.cim-drawer-body');
+      if (!res?.ok) {
+        liveBody.innerHTML = `<div class="cim-drawer-error">${res?.error || 'Failed to load form.'}</div>`;
+        return;
+      }
+      renderEditConsigneeForm(liveBody, liveModal, orderId, res.form, detailData);
+    });
+  }
+
+  function renderEditConsigneeForm(body, modal, orderId, form, detailData) {
+    body.innerHTML = '';
+
+    function mkInput(val, placeholder) {
+      const inp = document.createElement('input');
+      inp.type = 'text';
+      inp.className = 'cim-od-form-input';
+      inp.value = val || '';
+      if (placeholder) inp.placeholder = placeholder;
+      return inp;
+    }
+
+    function mkTextarea(val, placeholder, rows) {
+      const ta = document.createElement('textarea');
+      ta.className = 'cim-od-form-textarea';
+      ta.value = val || '';
+      ta.rows = rows || 2;
+      if (placeholder) ta.placeholder = placeholder;
+      return ta;
+    }
+
+    function mkGroup(labelText, input) {
+      const grp = document.createElement('div');
+      grp.className = 'cim-od-form-group';
+      const lbl = document.createElement('label');
+      lbl.className = 'cim-od-form-label';
+      lbl.textContent = labelText;
+      grp.append(lbl, input);
+      return grp;
+    }
+
+    const consigneeInp = mkInput(form.consignee, 'Required');
+    const mobileInp = mkInput(form.mobile, 'Required');
+    const emailInp = mkInput(form.email, 'Optional');
+    const addressInp = mkTextarea(form.address, 'Required', 2);
+    const postcodeInp = mkInput(form.regionCode, 'Postcode');
+    const noteInp = mkTextarea(form.note, '', 2);
+    const csNoteInp = mkTextarea(form.serviceNote, '', 2);
+
+    body.append(
+      mkGroup('Consignee *', consigneeInp),
+      mkGroup('Mobile *', mobileInp),
+      mkGroup('Email', emailInp),
+      mkGroup('Address *', addressInp),
+      mkGroup('Postcode *', postcodeInp),
+      mkGroup('Order Note', noteInp),
+      mkGroup('CS Note', csNoteInp)
+    );
+
+    const footerActions = modal.querySelector('.cim-ol-footer-actions');
+    if (!footerActions) return;
+    footerActions.innerHTML = '';
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'cim-od-op-btn cim-od-op-btn--cancel';
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.addEventListener('click', () => renderOrderDetail(modal.querySelector('.cim-drawer-body'), modal, detailData));
+
+    const saveBtn = document.createElement('button');
+    saveBtn.type = 'button';
+    saveBtn.className = 'cim-od-op-btn cim-od-op-btn--save';
+    saveBtn.textContent = 'Save';
+    saveBtn.addEventListener('click', () => {
+      const consignee = consigneeInp.value.trim();
+      const mobile = mobileInp.value.trim();
+      const address = addressInp.value.trim();
+      const regionCode = postcodeInp.value.trim();
+      if (!consignee || !mobile || !address || !regionCode) {
+        showOrderDetailToast(modal, 'Consignee, Mobile, Address and Postcode are required.');
+        return;
+      }
+      saveBtn.disabled = true;
+      cancelBtn.disabled = true;
+      saveBtn.textContent = 'Saving…';
+
+      const payload = {
+        consignee, mobile, address,
+        regionCity: form.regionCity,
+        regionArea: form.regionArea,
+        regionCode,
+      };
+      if (form.regionCountry) payload.regionCountry = form.regionCountry;
+      const email = emailInp.value.trim();
+      if (email) payload.email = email;
+      const note = noteInp.value.trim();
+      if (note) payload.note = note;
+      const serviceNote = csNoteInp.value.trim();
+      if (serviceNote) payload.serviceNote = serviceNote;
+
+      chrome.runtime.sendMessage({ type: 'UPDATE_ORDER_CONSIGNEE', orderId, data: payload }, (res) => {
+        if (!res?.ok) {
+          saveBtn.disabled = false;
+          cancelBtn.disabled = false;
+          saveBtn.textContent = 'Save';
+          showOrderDetailToast(modal, res?.error || 'Update failed.');
+          return;
+        }
+        showOrderDetail(orderId);
+      });
+    });
+
+    footerActions.append(cancelBtn, saveBtn);
   }
 
   // ── Parcel photo drawer ─────────────────────────────────────────────────────
@@ -1530,17 +3170,12 @@
         const heading = document.createElement('div');
         heading.className = 'cim-orders-heading';
 
-        const headingLink = document.createElement('a');
-        headingLink.textContent = 'Recent Orders';
-        headingLink.href =
-          'https://ec2.full2house.com/Ent/index.php?order_sn=&fb_user_id=' +
-          encodeURIComponent(view.psid) +
-          '&consignee=&mobile=&user_name=&shipping_id=-1&first_letter=&composite_status=-1' +
-          '&fromMode=&more_cart_id=-1&pay_id=-1&print_status_shipment=0&date_type=order_time' +
-          '&start_time=&end_time=&a=EntMall&m=orderList&name_sort=&new_status=0&no_cancel=on';
-        headingLink.target = '_blank';
-        headingLink.rel = 'noopener noreferrer';
-        heading.appendChild(headingLink);
+        const headingBtn = document.createElement('button');
+        headingBtn.type = 'button';
+        headingBtn.className = 'cim-orders-heading-btn';
+        headingBtn.textContent = 'Recent Orders ↗';
+        headingBtn.addEventListener('click', () => openOrderListModal(view.psid));
+        heading.appendChild(headingBtn);
         body.appendChild(heading);
 
         if (!data.recentOrders.length) {
