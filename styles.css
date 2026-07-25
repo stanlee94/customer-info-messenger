@@ -487,9 +487,8 @@
 }
 
 #cim-purchase-panel .cim-body .cim-orders-list li {
-  display: flex;
-  justify-content: space-between;
-  gap: 4px;
+  display: block;
+  overflow: hidden;
   padding: 3px 0;
   margin-bottom: 0;
   border-bottom: 1px solid #f0f2f5;
@@ -621,13 +620,22 @@
 
 /* ── Order rows ──────────────────────────────────────────────────────────── */
 #cim-purchase-panel .cim-order-id {
+  cursor: pointer;
   color: #0a7cff;
-  text-decoration: none;
   font-variant-numeric: tabular-nums;
 }
 
 #cim-purchase-panel .cim-order-id:hover {
   color: #0060d6;
+  text-decoration: underline;
+}
+
+#cim-purchase-panel .cim-order-id--baserow {
+  color: #555;
+}
+
+#cim-purchase-panel .cim-order-id--baserow:hover {
+  color: #333;
   text-decoration: underline;
 }
 
@@ -679,8 +687,9 @@
 }
 
 #cim-purchase-panel .cim-order-amount {
+  float: right;
+  margin-left: 6px;
   font-weight: 600;
-  flex-shrink: 0;
   color: #050505;
   font-variant-numeric: tabular-nums;
 }
@@ -1725,6 +1734,16 @@
 }
 
 /* Total row */
+.cim-cart-total-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  border-top: 1px solid #e4e6eb;
+  background: #f9fafb;
+  flex-shrink: 0;
+}
+
 .cim-cart-total-row {
   display: flex;
   align-items: center;
@@ -2834,4 +2853,250 @@
 .cim-od-form-textarea {
   resize: vertical;
   min-height: 48px;
+}
+
+/* ── Checkout view ────────────────────────────────────────────────────────── */
+.cim-cart-bulk-btn--order {
+  background: #dcfce7;
+  color: #15803d;
+  border-color: #86efac;
+}
+.cim-cart-bulk-btn--order:not(:disabled):hover {
+  background: #bbf7d0;
+}
+
+.cim-checkout-summary {
+  font-size: 13px;
+  font-weight: 600;
+  color: #050505;
+  background: #f0f2f5;
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+}
+
+.cim-checkout-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.cim-checkout-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #65676b;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.cim-checkout-input,
+.cim-checkout-textarea,
+.cim-checkout-select {
+  font-size: 13px;
+  color: #050505;
+  background: #fff;
+  border: 1px solid #e4e6eb;
+  border-radius: 8px;
+  padding: 7px 10px;
+  outline: none;
+  transition: border-color 0.15s;
+  font-family: inherit;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.cim-checkout-input:focus,
+.cim-checkout-textarea:focus,
+.cim-checkout-select:focus {
+  border-color: #0a7cff;
+}
+
+.cim-checkout-textarea {
+  resize: vertical;
+  min-height: 52px;
+}
+
+.cim-checkout-select {
+  cursor: pointer;
+}
+
+.cim-checkout-shipping {
+  margin-bottom: 10px;
+}
+
+.cim-checkout-shipping-opt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #050505;
+  padding: 5px 0;
+  cursor: pointer;
+}
+
+.cim-checkout-shipping-opt input[type="radio"] {
+  accent-color: #0a7cff;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.cim-checkout-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-top: 4px;
+  margin-top: 4px;
+}
+
+.cim-checkout-btn {
+  height: 34px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+  white-space: nowrap;
+}
+
+.cim-checkout-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.cim-checkout-btn--create {
+  background: #0a7cff;
+  color: #fff;
+}
+.cim-checkout-btn--create:not(:disabled):hover { background: #0060d6; }
+
+.cim-checkout-btn--confirm {
+  background: #0a7cff;
+  color: #fff;
+}
+.cim-checkout-btn--confirm:not(:disabled):hover { background: #0060d6; }
+
+.cim-checkout-btn--paid {
+  background: #15803d;
+  color: #fff;
+}
+.cim-checkout-btn--paid:not(:disabled):hover { background: #166534; }
+
+.cim-checkout-btn--adj {
+  background: #f0f2f5;
+  color: #050505;
+  border: 1px solid #e4e6eb;
+  margin-top: 6px;
+}
+.cim-checkout-btn--adj:not(:disabled):hover { background: #e4e6eb; }
+
+.cim-checkout-btn--view {
+  background: #f0f2f5;
+  color: #050505;
+  border: 1px solid #e4e6eb;
+}
+.cim-checkout-btn--view:not(:disabled):hover { background: #e4e6eb; }
+
+/* Success panel */
+.cim-checkout-success-header {
+  font-size: 15px;
+  font-weight: 700;
+  color: #15803d;
+  margin-bottom: 10px;
+}
+
+.cim-checkout-sn-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+
+.cim-checkout-sn {
+  font-size: 18px;
+  font-weight: 700;
+  color: #050505;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.3px;
+}
+
+.cim-checkout-via {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 20px;
+}
+.cim-checkout-via--safe {
+  background: #dcfce7;
+  color: #15803d;
+}
+.cim-checkout-via--warn {
+  background: #fef3c7;
+  color: #92400e;
+  cursor: help;
+}
+
+.cim-checkout-status {
+  font-size: 12px;
+  color: #65676b;
+  margin-bottom: 6px;
+}
+
+.cim-checkout-payable {
+  font-size: 14px;
+  font-weight: 700;
+  color: #050505;
+  margin-bottom: 14px;
+}
+
+@keyframes cim-payable-flash {
+  0%   { color: #050505; }
+  40%  { color: #0a7cff; }
+  100% { color: #050505; }
+}
+
+.cim-payable--flash {
+  animation: cim-payable-flash 0.7s ease;
+}
+
+/* Adjustment */
+.cim-checkout-adj {
+  border: 1px solid #e4e6eb;
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cim-checkout-adj-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #65676b;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  margin-bottom: 2px;
+}
+
+.cim-checkout-adj-type {
+  display: flex;
+  gap: 14px;
+  font-size: 13px;
+  color: #050505;
+}
+
+.cim-checkout-adj-type label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+}
+
+.cim-checkout-adj-type input[type="radio"] {
+  accent-color: #0a7cff;
+  cursor: pointer;
 }

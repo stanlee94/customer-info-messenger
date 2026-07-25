@@ -28,6 +28,7 @@ No `manifest.json` changes needed — the API gateway host is already in `host_p
 | `.cim-cart-add-btn` | visible (→ goods) | hidden | hidden | hidden |
 | `.cim-cart-refresh-btn` | visible (→ cart) | hidden | hidden | hidden |
 | `.cim-drawer-title` | customer name | "Add Product" | "Create Order" | "Copy Cart" |
+| `.cim-cart-total-bar` | visible | hidden | hidden | hidden |
 
 ## Cart view
 
@@ -36,10 +37,10 @@ No `manifest.json` changes needed — the API gateway host is already in `host_p
 `GET_CART_ITEMS { psid }` → `background.js` → `GET /api/cart?fbUserId=<psid>` → `{ ok, items:[{recId, goodsId, name, qty, price, origin, expired}], userId, ecUserId }`.
 
 Rendered elements:
-- **Modal header subtitle** — starts at `0 items · RM0.00`; updated live by `syncBulkButtons()` on every checkbox change to show the selected count and sum of selected line totals. Uses `itemLineTotals` (`Map<recId, lineTotal>`) built once in `renderCartContent`. The bottom total row always shows the full cart total.
+- **Modal header subtitle** — starts at `0 items · RM0.00`; updated live by `syncBulkButtons()` on every checkbox change to show the selected count and sum of selected line totals. Uses `itemLineTotals` (`Map<recId, lineTotal>`) built once in `renderCartContent`.
 - **Toolbar** (`.cim-cart-toolbar`) — `☐ All` select-all checkbox (indeterminate when partial); `Delete` and `Renew Expiry` bulk buttons (disabled when `cartSelectedRecIds` is empty).
 - **Item rows** (`.cim-cart-item-row`, `--expired` variant) — checkbox feeding `cartSelectedRecIds`; name + LIVE/SYS badge + ⚠ Expired badge; `RM X.xx/ea` price; `[−][qty][+]` stepper with editable `<input type="text">` in the middle (digit-only filter on `input` event; Enter/blur commits; Escape restores; input disabled during in-flight API call); line total; per-item `Renew` button (expired items only); `🗑` delete button.
-- **Total row** (`.cim-cart-total-row`) — sum of all line totals (static, always shows the full cart total regardless of selection).
+- **Sticky total bar** (`.cim-cart-total-bar`) — sits between the scrollable body and the footer; always visible. Shows the full cart total (sum of all line totals) regardless of selection. Written by `renderCartContent`; shown/hidden by `setCartHeaderMode` (visible only in `'cart'` mode).
 
 `setCartBodyBusy(true/false)` adds `pointer-events:none; opacity:0.55` to the body during bulk operations. `renderCartContent` calls `setCartBodyBusy(false)` at its very start so the busy overlay is always cleared when the cart reloads — this fixes a freeze where `Renew Expiry` (or bulk `Delete`) on a successful API response would leave the modal permanently grayed.
 
@@ -85,8 +86,8 @@ Triggered by selecting cart items and clicking **"+ Order"** in the bulk-action 
 **Step 2 — Success panel** (`renderCheckoutSuccess`):
 - `✓ Order Created` header.
 - `F{orderSn}` in large bold. `via` badge: `🔒 exact` (green) / `⚠ multi-newest` or `⚠ fallback — verify` (amber, `cursor:help` with tooltip).
-- Current status text; payable fetched via `GET_ORDER_DETAIL` (`Payable: RM X.XX`).
-- **Adjustment section** — type radio (Discount type=1 / Add Amount type=2), amount input, note input, "Apply" button → `ORDER_ADJUSTMENT { orderId, price, type, note? }` → `POST /api/orders/:orderId/adjustments`. Re-fetches detail after success.
+- Current status text; payable fetched via `GET_ORDER_DETAIL` (`Payable: RM X.XX`). After any update, the payable element pulses blue (`.cim-payable--flash` CSS animation) to confirm the change landed.
+- **Adjustment section** — type radio (Discount type=1 / Add Amount type=2), amount input, note input, "Apply" button → `ORDER_ADJUSTMENT { orderId, price, adjType, note? }` → `POST /api/orders/:orderId/adjustments`. Re-fetches detail after success and triggers the payable flash.
 - **Action buttons**: "Confirm" → `ORDER_OPERATION confirm`; "Confirm+Paid" → confirm then pay (sequential). Both hidden after order is no longer `待确认`. "View Order" → closes cart modal, opens order detail.
 
 **`POST /api/orders` response shape:**

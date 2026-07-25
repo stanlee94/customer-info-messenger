@@ -281,7 +281,7 @@ function fetchOrderList(psid) {
 function getOrderDetail(orderId) {
   return fetch(`${CART_API_BASE}/api/orders/${encodeURIComponent(orderId)}`)
     .then((res) => res.json())
-    .then((json) => json.ok ? { ok: true, ...json } : { ok: false, error: json.msg || 'Failed to load order.' })
+    .then((json) => json.ok ? { ok: true, ...json, orderSn: 'F' + json.orderSn } : { ok: false, error: json.msg || 'Failed to load order.' })
     .catch((err) => ({ ok: false, error: err.message }));
 }
 
@@ -321,6 +321,61 @@ function getParcelPhotoOrder(orderId) {
       return res.json();
     })
     .then((json) => ({ ok: true, ...json }))
+    .catch((err) => ({ ok: false, error: err.message }));
+}
+
+function getCheckoutForm(fbUserId, userId, recIds, goodsNumbers) {
+  const params = new URLSearchParams({
+    fbUserId,
+    userId: String(userId || ''),
+    recIds: recIds.join(','),
+    goodsNumbers: goodsNumbers.join(','),
+  });
+  return fetch(`${CART_API_BASE}/api/checkout?${params}`)
+    .then((res) => res.json())
+    .then((json) => (json.ok ? { ok: true, customer: json.customer } : { ok: false, error: json.msg || 'Failed to load checkout.' }))
+    .catch((err) => ({ ok: false, error: err.message }));
+}
+
+function createOrder(fbUserId, userId, items, customer, shippingIdType, confirm, pay) {
+  return fetch(`${CART_API_BASE}/api/orders`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fbUserId, userId, items, customer, shippingIdType, confirm, pay }),
+  })
+    .then((res) => res.json())
+    .then((json) =>
+      json.ok
+        ? { ok: true, orderId: json.orderId, orderSn: 'F' + json.orderSn, status: json.status, via: json.via }
+        : { ok: false, error: json.msg || 'Order creation failed.' }
+    )
+    .catch((err) => ({ ok: false, error: err.message }));
+}
+
+function orderAdjustment(orderId, price, type, note) {
+  const body = { price, type };
+  if (note) body.note = note;
+  return fetch(`${CART_API_BASE}/api/orders/${encodeURIComponent(orderId)}/adjustments`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+    .then((res) => res.json())
+    .then((json) => (json.ok ? { ok: true } : { ok: false, error: json.msg || 'Adjustment failed.' }))
+    .catch((err) => ({ ok: false, error: err.message }));
+}
+
+function getRegionAreas(stateId) {
+  return fetch(`${CART_API_BASE}/api/regions/areas?stateId=${encodeURIComponent(stateId)}`)
+    .then((res) => res.json())
+    .then((json) => (json.ok ? { ok: true, areas: json.areas || [] } : { ok: false, error: json.msg || 'Failed to load areas.' }))
+    .catch((err) => ({ ok: false, error: err.message }));
+}
+
+function getRegionPostcode(areaId) {
+  return fetch(`${CART_API_BASE}/api/regions/postcode?areaId=${encodeURIComponent(areaId)}`)
+    .then((res) => res.json())
+    .then((json) => (json.ok ? { ok: true, postcode: json.postcode } : { ok: false, error: json.msg || 'Failed to load postcode.' }))
     .catch((err) => ({ ok: false, error: err.message }));
 }
 
@@ -468,30 +523,6 @@ function unlinkBaserowUid(psid) {
   );
 }
 
-function fetchRecentOrders(config, psid) {
-  const filters = JSON.stringify({
-    filter_type: 'AND',
-    filters: [{ field: 'PSID', type: 'link_row_contains', value: psid }],
-  });
-  const url =
-    `${config.baserowBaseUrl}/api/database/rows/table/${config.baserowOrdersTableId}/` +
-    `?user_field_names=true&filters=${encodeURIComponent(filters)}&order_by=-Date&size=5`;
-
-  return fetch(url, {
-    headers: { Authorization: `Token ${config.baserowToken}` },
-  })
-    .then((res) => {
-      if (!res.ok) return throwBaserowError(res);
-      return res.json();
-    })
-    .then((json) =>
-      (json?.results || []).map((row) => ({
-        orderId: row.Order_ID,
-        totalAmount: row.Total_Amount,
-        orderDate: row.Date,
-      }))
-    );
-}
 
 function findBaserowOrderRowByOrderId(config, orderId) {
   const url =
@@ -560,29 +591,66 @@ function searchBaserowUsersByPsid(psid) {
   );
 }
 
+function fetchBaserowRecentOrders(config, psid) {
+  if (!config.baserowOrdersTableId) return Promise.resolve([]);
+  const filters = JSON.stringify({
+    filter_type: 'AND',
+    filters: [{ field: 'PSID', type: 'link_row_contains', value: psid }],
+  });
+  const url =
+    `${config.baserowBaseUrl}/api/database/rows/table/${config.baserowOrdersTableId}/` +
+    `?user_field_names=true&filters=${encodeURIComponent(filters)}&order_by=-Date&size=5`;
+  return fetch(url, { headers: { Authorization: `Token ${config.baserowToken}` } })
+    .then((res) => (res.ok ? res.json() : { results: [] }))
+    .then((json) =>
+      (json?.results || []).map((row) => ({
+        orderId: row.Order_ID,
+        orderSn: row.Order_ID,
+        totalAmount: row.Total_Amount,
+        orderDate: row.Date,
+      }))
+    )
+    .catch(() => []);
+}
+
 function getCustomerSummaryByPsid(psid) {
   return withBaserowConfig((config) => {
-    if (!config.baserowOrdersTableId) {
-      return Promise.reject(
-        new Error('Baserow Orders table ID is not configured - set it up in extension options.')
-      );
-    }
-
     return findBaserowUserRowByPsid(config, psid).then((row) => {
       if (!row) return { notFound: true };
 
-      return fetchRecentOrders(config, psid).then((recentOrders) => ({
-        data: {
-          totalSpending: row['Sum of Order'],
-          totalPurchase: row['Order Count'],
-          lastOrderDate: row['Last Order Date'],
-          rawRecency: row['Raw_Recency'],
-          yearsActive: row['Years_Active'],
-          rank: row['RFM_Score'],
-          address: row['Address'],
-          recentOrders,
-        },
-      }));
+      return fetchOrderList(psid).then((res) => {
+        const allOrders = (res.ok ? res.orders : []).map((o) => ({ ...o, orderSn: 'F' + o.orderSn }));
+        const ec2Recent = allOrders.slice(0, 5).map((o) => ({
+          orderId: o.orderId,
+          orderSn: o.orderSn,
+          totalAmount: o.amount,
+          orderDate: o.orderTime,
+        }));
+
+        const buildResult = (recentOrders) => ({
+          data: {
+            totalSpending: row['Sum of Order'],
+            totalPurchase: row['Order Count'],
+            lastOrderDate: row['Last Order Date'],
+            rawRecency: row['Raw_Recency'],
+            yearsActive: row['Years_Active'],
+            rank: row['RFM_Score'],
+            address: row['Address'],
+            recentOrders,
+            allOrders,
+          },
+        });
+
+        if (allOrders.length >= 5) return buildResult(ec2Recent);
+
+        return fetchBaserowRecentOrders(config, psid).then((baserowOrders) => {
+          const ec2Sns = new Set(ec2Recent.map((o) => String(o.orderSn)).filter(Boolean));
+          const fill = baserowOrders
+            .filter((o) => !ec2Sns.has(String(o.orderSn)))
+            .slice(0, 5 - ec2Recent.length);
+          return buildResult([...ec2Recent, ...fill]);
+        });
+      });
     });
   });
 }
@@ -694,7 +762,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === 'GET_ORDER_LIST') {
-    fetchOrderList(message.psid).then(sendResponse);
+    fetchOrderList(message.psid).then((res) => {
+      if (res.ok) res.orders = res.orders.map((o) => ({ ...o, orderSn: 'F' + o.orderSn }));
+      sendResponse(res);
+    });
     return true;
   }
 
@@ -720,6 +791,31 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.type === 'GET_PARCEL_PHOTO_ORDER') {
     getParcelPhotoOrder(message.orderId).then(sendResponse);
+    return true;
+  }
+
+  if (message?.type === 'GET_CHECKOUT_FORM') {
+    getCheckoutForm(message.fbUserId, message.userId, message.recIds || [], message.goodsNumbers || []).then(sendResponse);
+    return true;
+  }
+
+  if (message?.type === 'CREATE_ORDER') {
+    createOrder(message.fbUserId, message.userId, message.items || [], message.customer, message.shippingIdType, !!message.confirm, !!message.pay).then(sendResponse);
+    return true;
+  }
+
+  if (message?.type === 'ORDER_ADJUSTMENT') {
+    orderAdjustment(message.orderId, message.price, message.adjType, message.note).then(sendResponse);
+    return true;
+  }
+
+  if (message?.type === 'GET_REGION_AREAS') {
+    getRegionAreas(message.stateId).then(sendResponse);
+    return true;
+  }
+
+  if (message?.type === 'GET_REGION_POSTCODE') {
+    getRegionPostcode(message.areaId).then(sendResponse);
     return true;
   }
 

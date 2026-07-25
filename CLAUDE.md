@@ -20,12 +20,29 @@ Plain JS/HTML/CSS, no build step, package manager, or test suite — loaded dire
 
 ## Module docs
 
-@import ./docs/core-architecture.md
-@import ./docs/ui-panel.md
-@import ./docs/ai-rewrite.md
-@import ./docs/manychat.md
-@import ./docs/baserow.md
-@import ./docs/cart-summary-buttons.md
-@import ./docs/cart-modal.md
-@import ./docs/order-modal.md
-@import ./docs/parcel-photos.md
+### [core-architecture.md](./docs/core-architecture.md)
+Three-piece architecture: `content.js` (DOM + UI), `background.js` (cross-origin fetch), `options.html/js` (config). State machine `sessionState` drives customer lookup via `check()` on every `MutationObserver` tick. Covers: UID→PSID lookup flow, `uidPsidMap` storage, `rehydrate()`, `proceedWithLookup()` stale-DOM guard, and fragile DOM selectors (`findContactDetailsAnchor`, `getCustomerNameFromDom`, `findMessengerReplyBox`).
+
+### [ui-panel.md](./docs/ui-panel.md)
+Panel visual theme (blue `#0a7cff`, light background, tight sidebar margins). Draggable panel lifecycle: sidebar-docked vs. floating (`panelPosition`, `.cim-floating`). Close/restore button visibility logic (`syncCloseBtnVisibility`, `.cim-sidebar-visible`). Name row → opens cart modal; PSID row → clipboard copy. Language tag toggle (Chinese `35385444` / English `35385464`): visual states, click sequence (remove-then-add), error handling.
+
+### [ai-rewrite.md](./docs/ai-rewrite.md)
+`#cim-ai-buttons` bar injected into Facebook's composer (not the panel). Health-check gate (`GET /ai/health`, cached in `aiHealthy`). Button layout: ↩ back | ✨ AI Rewrite | 华语/English toggle. Covers: Lexical editor empty/filled detection, `clearReplyBox()` char-by-char backspace loop, `insertTextIntoMessenger()` via paste ClipboardEvent, `injectTextIntoReplyBox()` for prepend. Backend contract: `POST /ai/reply { messages, mode:"quick", language }`.
+
+### [manychat.md](./docs/manychat.md)
+ManyChat API calls (all via `background.js`): `searchManyChatByName` (find by name → candidate cards), `getManyChatInfo` (phone/email/WhatsApp/tags, cached in `sessionState.manychatInfo`), `manyChatTagAction` (add/remove tag). Manual candidate search bar: empty → re-search by name, "F…" → Baserow order ID lookup, numeric → Baserow PSID lookup.
+
+### [baserow.md](./docs/baserow.md)
+Two tables: Users (`749`) and Orders (`750`). `findBaserowUserRowByPsid`, `updateBaserowRowUid` (PATCH), `createBaserowUserRow` (POST). Summary panel fields (Total Spending, Total Purchase, Last Order via `formatRecency()`, Years Active, Rank, Address with copy button). Recent orders: EC2 primary (`fetchOrderList`), Baserow fallback-only when EC2 < 5 orders, deduped by `orderSn`. EC2 orders (blue `<span role="button">`) open order detail via `openOrderDetailNoBack`; Baserow-only orders (grey `<a>`) link to `ddherbs.com.my/track/<orderSn>`. Layout: float-based (amount float:right, inline text flow so date is continuous after SN). Status colouring: `GET_ORDER_STATUSES` → AWS Lambda → `WAIT_AUDIT` = orange.
+
+### [cart-summary-buttons.md](./docs/cart-summary-buttons.md)
+Cart API base: `https://yxch9n4n6e.execute-api.ap-southeast-1.amazonaws.com/latest`. Session check on load (`CHECK_SESSION`). `probeCartAndShowButtons()`: `GET /checkSession` → if valid, GET cart summary option 1. Three buttons: ALL (option 1), 🇲🇾 MYR (option 2, green, shows `RM X`), 🇸🇬 SGD (option 3, amber, shows `S$ X`). Expired items → amber pill. Cart prefix textarea (bilingual livestream reminder, persists within page session). Copy-to-clipboard with "Copied!" tooltip.
+
+### [cart-modal.md](./docs/cart-modal.md)
+Full EC2 cart management modal (`#cim-cart-modal`, 480 px, 78 vh). Opened by clicking customer name. Four header modes: `cart` / `goods` / `checkout` / `copy`. Cart view: item rows with checkbox, qty stepper (inline input, Enter/blur commits), per-item delete (popover confirm), bulk Delete + Renew Expiry, sticky total bar. Goods picker: Normal mode (keyword search, pagination) + Smart mode (comma-split → parallel `SMART_SEARCH_GOODS` per segment, labeled groups). Multi-select toolbar with Add Selected. Checkout (2-step: form prefill → success panel with adjustment + Confirm/Pay buttons). Copy cart (source fbUserId → dry-run preview → confirm → green/amber/red result sections). Lists all `background.js` message handlers with API calls.
+
+### [order-modal.md](./docs/order-modal.md)
+Order list + detail inside one modal (`#cim-order-list-modal`, 480 px, 78 vh). List triggered by "Recent Orders ↗" heading — passes already-fetched `allOrders` so no second API call is made. Refresh button (↻) re-fetches via `GET_ORDER_LIST` and updates both the modal and the panel's top-5 from the same data. All `orderSn` values are F-prefixed at the `background.js` boundary. Detail view: status row, order meta, recipient + Edit, items, fee breakdown, adjustment (hidden when `statusParts.shipping` starts with `已`), notes, and async Parcel Photos section (reuses `buildWmsContent`, keyed by `data.orderSn`). Action buttons from `statusParts`: Confirm, Confirm+Paid, Pay, Ship. `openOrderDetailNoBack` sets `modal._noBack = true` so the back button is suppressed when opening from the panel. Delegating `_backAction`/`_refreshAction` pattern.
+
+### [parcel-photos.md](./docs/parcel-photos.md)
+After orders render, `CHECK_PARCEL_PHOTOS` batch-probes all order IDs (`GET /parcelPhotos/check?ids=…` → booleans). Camera icon appended to orders with photos. Clicking opens centered modal (`#cim-parcel-drawer`). Single WMS: flat info card + meta + photo sections (Internal lavender / Customer green / Other grey). Multiple WMS: collapsible sections, first expanded. Gallery modal: full-screen dark overlay, ‹/› nav, thumbnail strip, keyboard (←/→/Escape). Detail endpoint: `GET /parcelPhotos/order/:orderId`.

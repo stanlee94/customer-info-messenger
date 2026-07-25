@@ -1036,6 +1036,7 @@
   // ── Cart modal ──────────────────────────────────────────────────────────────
 
   let cartModalPsid = null;
+  let cartUserId = null;
   let cartSelectedRecIds = new Set();
   let goodsKeyword = '';
   let goodsPage = 1;
@@ -1121,7 +1122,17 @@
     footerClose.addEventListener('click', closeCartModal);
     footer.appendChild(footerClose);
 
-    modal.append(header, drawerBody, footer);
+    const totalBar = document.createElement('div');
+    totalBar.className = 'cim-cart-total-bar';
+    totalBar.style.display = 'none';
+    const totalBarLabel = document.createElement('span');
+    totalBarLabel.className = 'cim-cart-total-label';
+    totalBarLabel.textContent = 'Total';
+    const totalBarValue = document.createElement('span');
+    totalBarValue.className = 'cim-cart-total-value';
+    totalBar.append(totalBarLabel, totalBarValue);
+
+    modal.append(header, drawerBody, totalBar, footer);
     overlay.appendChild(modal);
     document.body.appendChild(overlay);
 
@@ -1167,13 +1178,16 @@
     if (!modal) return;
     const isGoods = mode === 'goods';
     const isCopy = mode === 'copy';
+    const isCheckout = mode === 'checkout';
     const isCart = mode === 'cart';
-    modal.querySelector('.cim-cart-back-btn').style.display = (isGoods || isCopy) ? '' : 'none';
+    modal.querySelector('.cim-cart-back-btn').style.display = (isGoods || isCopy || isCheckout) ? '' : 'none';
     modal.querySelector('.cim-cart-add-btn').style.display = isCart ? '' : 'none';
     modal.querySelector('.cim-cart-copy-btn').style.display = isCart ? '' : 'none';
     modal.querySelector('.cim-cart-refresh-btn').style.display = isCart ? '' : 'none';
-    modal.querySelector('.cim-drawer-title').textContent = isGoods ? 'Add Product' : isCopy ? 'Copy Cart' : (sessionState.name || 'Cart');
+    modal.querySelector('.cim-drawer-title').textContent = isGoods ? 'Add Product' : isCopy ? 'Copy Cart' : isCheckout ? 'Create Order' : (sessionState.name || 'Cart');
     modal.querySelector('.cim-drawer-subtitle').textContent = '';
+    const totalBar = modal.querySelector('.cim-cart-total-bar');
+    if (totalBar) totalBar.style.display = isCart ? '' : 'none';
   }
 
   function setCartBodyBusy(busy) {
@@ -1205,6 +1219,7 @@
         liveBody.innerHTML = `<div class="cim-drawer-error">${res?.error || 'Failed to load cart.'}</div>`;
         return;
       }
+      cartUserId = res.userId || null;
       renderCartContent(liveBody, liveModal, res, psid);
     });
   }
@@ -1276,7 +1291,12 @@
     bulkRenewBtn.className = 'cim-cart-bulk-btn cim-cart-bulk-btn--renew';
     bulkRenewBtn.textContent = 'Renew Expiry';
     bulkRenewBtn.disabled = true;
-    bulkActions.append(bulkDeleteBtn, bulkRenewBtn);
+    const bulkOrderBtn = document.createElement('button');
+    bulkOrderBtn.type = 'button';
+    bulkOrderBtn.className = 'cim-cart-bulk-btn cim-cart-bulk-btn--order';
+    bulkOrderBtn.textContent = '+ Order';
+    bulkOrderBtn.disabled = true;
+    bulkActions.append(bulkDeleteBtn, bulkRenewBtn, bulkOrderBtn);
     toolbar.append(selectAllLabel, bulkActions);
     body.appendChild(toolbar);
 
@@ -1285,6 +1305,7 @@
       const checked = body.querySelectorAll('.cim-cart-item-check:checked').length;
       bulkDeleteBtn.disabled = cartSelectedRecIds.size === 0;
       bulkRenewBtn.disabled = cartSelectedRecIds.size === 0;
+      bulkOrderBtn.disabled = cartSelectedRecIds.size === 0;
       selectAllChk.indeterminate = checked > 0 && checked < allChks.length;
       selectAllChk.checked = allChks.length > 0 && checked === allChks.length;
       const selTotal = [...cartSelectedRecIds].reduce((sum, id) => sum + (itemLineTotals.get(id) || 0), 0);
@@ -1321,6 +1342,14 @@
         if (res?.ok) { showCartView(psid); }
         else { setCartBodyBusy(false); showCartError(modal, res?.error || 'Renew failed.'); }
       });
+    });
+
+    bulkOrderBtn.addEventListener('click', () => {
+      if (!cartSelectedRecIds.size) return;
+      const selectedItems = items
+        .filter((it) => cartSelectedRecIds.has(it.recId))
+        .map((it) => ({ recId: it.recId, qty: parseInt(it.qty, 10) || 1, price: parseFloat(it.price) || 0 }));
+      showCheckoutView(psid, selectedItems);
     });
 
     // ── Item rows ─────────────────────────────────────────────────────────────
@@ -1471,17 +1500,9 @@
       body.appendChild(row);
     });
 
-    // Total
-    const totalRow = document.createElement('div');
-    totalRow.className = 'cim-cart-total-row';
-    const totalLabel = document.createElement('span');
-    totalLabel.className = 'cim-cart-total-label';
-    totalLabel.textContent = 'Total';
-    const totalValue = document.createElement('span');
-    totalValue.className = 'cim-cart-total-value';
-    totalValue.textContent = `RM ${total.toFixed(2)}`;
-    totalRow.append(totalLabel, totalValue);
-    body.appendChild(totalRow);
+    // Update the sticky total bar (outside the scroll body)
+    const totalBarValue = modal.querySelector('.cim-cart-total-bar .cim-cart-total-value');
+    if (totalBarValue) totalBarValue.textContent = `RM ${total.toFixed(2)}`;
   }
 
   // ── Goods picker ─────────────────────────────────────────────────────────────
@@ -2102,6 +2123,367 @@
     input.focus();
   }
 
+  // ── Checkout view ───────────────────────────────────────────────────────────
+
+  function showCheckoutView(psid, selectedItems) {
+    const modal = ensureCartModal();
+    const body = modal.querySelector('.cim-drawer-body');
+    setCartHeaderMode('checkout');
+    body.innerHTML = '<div class="cim-drawer-loading">Loading checkout…</div>';
+    const recIds = selectedItems.map((it) => it.recId);
+    const goodsNumbers = selectedItems.map((it) => it.qty);
+    chrome.runtime.sendMessage(
+      { type: 'GET_CHECKOUT_FORM', fbUserId: psid, userId: cartUserId, recIds, goodsNumbers },
+      (res) => {
+        const liveModal = document.getElementById(CART_MODAL_ID);
+        if (!liveModal) return;
+        const liveBody = liveModal.querySelector('.cim-drawer-body');
+        if (!res?.ok) {
+          liveBody.innerHTML = `<div class="cim-drawer-error">${res?.error || 'Failed to load checkout form.'}</div>`;
+          return;
+        }
+        renderCheckoutForm(liveBody, liveModal, psid, res.customer, selectedItems);
+      }
+    );
+  }
+
+  function renderCheckoutForm(body, modal, psid, customer, selectedItems) {
+    body.innerHTML = '';
+
+    const itemTotal = selectedItems.reduce((s, it) => s + it.price * it.qty, 0);
+    const summary = document.createElement('div');
+    summary.className = 'cim-checkout-summary';
+    summary.textContent = `${selectedItems.length} item${selectedItems.length === 1 ? '' : 's'} · RM${itemTotal.toFixed(2)}`;
+    body.appendChild(summary);
+
+    function makeField(labelText, input, required) {
+      const row = document.createElement('div');
+      row.className = 'cim-checkout-field';
+      const lbl = document.createElement('label');
+      lbl.className = 'cim-checkout-label';
+      lbl.textContent = labelText + (required ? ' *' : '');
+      row.append(lbl, input);
+      return row;
+    }
+
+    const consigneeInput = document.createElement('input');
+    consigneeInput.type = 'text';
+    consigneeInput.className = 'cim-checkout-input';
+    consigneeInput.value = customer.consignee || '';
+    body.appendChild(makeField('Name', consigneeInput, true));
+
+    const mobileInput = document.createElement('input');
+    mobileInput.type = 'text';
+    mobileInput.className = 'cim-checkout-input';
+    mobileInput.value = customer.mobile || '';
+    body.appendChild(makeField('Mobile', mobileInput, true));
+
+    const addressInput = document.createElement('textarea');
+    addressInput.className = 'cim-checkout-textarea';
+    addressInput.rows = 2;
+    addressInput.value = customer.address || '';
+    body.appendChild(makeField('Address', addressInput, true));
+
+    const emailInput = document.createElement('input');
+    emailInput.type = 'email';
+    emailInput.className = 'cim-checkout-input';
+    emailInput.value = customer.email || '';
+    body.appendChild(makeField('Email', emailInput, false));
+
+    const stateSelect = document.createElement('select');
+    stateSelect.className = 'cim-checkout-select';
+    (customer.stateOptions || []).forEach((opt) => {
+      const o = document.createElement('option');
+      o.value = opt.id;
+      o.textContent = opt.name;
+      if (String(opt.id) === String(customer.regionCity)) o.selected = true;
+      stateSelect.appendChild(o);
+    });
+    body.appendChild(makeField('State', stateSelect, true));
+
+    const areaSelect = document.createElement('select');
+    areaSelect.className = 'cim-checkout-select';
+    (customer.areaOptions || []).forEach((opt) => {
+      const o = document.createElement('option');
+      o.value = opt.id;
+      o.textContent = opt.name;
+      if (String(opt.id) === String(customer.regionArea)) o.selected = true;
+      areaSelect.appendChild(o);
+    });
+    body.appendChild(makeField('Area', areaSelect, true));
+
+    const postcodeInput = document.createElement('input');
+    postcodeInput.type = 'text';
+    postcodeInput.className = 'cim-checkout-input';
+    postcodeInput.value = customer.regionCode || '';
+    body.appendChild(makeField('Postcode', postcodeInput, true));
+
+    stateSelect.addEventListener('change', () => {
+      areaSelect.innerHTML = '<option>Loading…</option>';
+      chrome.runtime.sendMessage({ type: 'GET_REGION_AREAS', stateId: stateSelect.value }, (res) => {
+        areaSelect.innerHTML = '';
+        if (res?.ok && res.areas?.length) {
+          res.areas.forEach((a) => {
+            const o = document.createElement('option');
+            o.value = a.id;
+            o.textContent = a.name;
+            areaSelect.appendChild(o);
+          });
+          postcodeInput.value = res.areas[0].code || '';
+        }
+      });
+    });
+
+    areaSelect.addEventListener('change', () => {
+      chrome.runtime.sendMessage({ type: 'GET_REGION_POSTCODE', areaId: areaSelect.value }, (res) => {
+        if (res?.ok && res.postcode) postcodeInput.value = res.postcode;
+      });
+    });
+
+    const shippingSection = document.createElement('div');
+    shippingSection.className = 'cim-checkout-shipping';
+    const shippingLbl = document.createElement('div');
+    shippingLbl.className = 'cim-checkout-label';
+    shippingLbl.textContent = 'Shipping *';
+    shippingSection.appendChild(shippingLbl);
+    let selectedShippingId = null;
+    (customer.shippingOptions || []).forEach((opt) => {
+      const optRow = document.createElement('label');
+      optRow.className = 'cim-checkout-shipping-opt';
+      const radio = document.createElement('input');
+      radio.type = 'radio';
+      radio.name = 'cim-checkout-shipping';
+      radio.value = opt.id;
+      if (opt.checked) { radio.checked = true; selectedShippingId = opt.id; }
+      radio.addEventListener('change', () => { if (radio.checked) selectedShippingId = opt.id; });
+      optRow.append(radio, document.createTextNode(' ' + opt.label));
+      shippingSection.appendChild(optRow);
+    });
+    body.appendChild(shippingSection);
+
+    const btnRow = document.createElement('div');
+    btnRow.className = 'cim-checkout-actions';
+    const createBtn = document.createElement('button');
+    createBtn.type = 'button';
+    createBtn.className = 'cim-checkout-btn cim-checkout-btn--create';
+    createBtn.textContent = 'Create Order';
+    btnRow.appendChild(createBtn);
+    body.appendChild(btnRow);
+
+    function collectCustomer() {
+      return {
+        consignee: consigneeInput.value.trim(),
+        mobile: mobileInput.value.trim(),
+        address: addressInput.value.trim(),
+        email: emailInput.value.trim() || undefined,
+        regionCity: stateSelect.value,
+        regionArea: areaSelect.value,
+        regionCode: postcodeInput.value.trim(),
+        paymentId: customer.paymentId,
+      };
+    }
+
+    createBtn.addEventListener('click', () => {
+      const c = collectCustomer();
+      if (!c.consignee) { showCartError(modal, 'Name is required.'); return; }
+      if (!c.mobile) { showCartError(modal, 'Mobile is required.'); return; }
+      if (!c.address) { showCartError(modal, 'Address is required.'); return; }
+      if (!c.regionCity) { showCartError(modal, 'State is required.'); return; }
+      if (!c.regionArea) { showCartError(modal, 'Area is required.'); return; }
+      if (!selectedShippingId) { showCartError(modal, 'Shipping method is required.'); return; }
+      createBtn.disabled = true;
+      createBtn.textContent = 'Creating…';
+      const orderItems = selectedItems.map((it) => ({ recId: it.recId, qty: it.qty, price: it.price }));
+      chrome.runtime.sendMessage(
+        { type: 'CREATE_ORDER', fbUserId: psid, userId: cartUserId, items: orderItems, customer: c, shippingIdType: selectedShippingId, confirm: false, pay: false },
+        (res) => {
+          const liveModal = document.getElementById(CART_MODAL_ID);
+          if (!liveModal) return;
+          if (!res?.ok) {
+            createBtn.disabled = false;
+            createBtn.textContent = 'Create Order';
+            showCartError(liveModal, res?.error || 'Order creation failed.');
+            return;
+          }
+          renderCheckoutSuccess(liveModal.querySelector('.cim-drawer-body'), liveModal, psid, res);
+        }
+      );
+    });
+  }
+
+  function renderCheckoutSuccess(body, modal, psid, result) {
+    body.innerHTML = '';
+
+    const successHeader = document.createElement('div');
+    successHeader.className = 'cim-checkout-success-header';
+    successHeader.textContent = '✓ Order Created';
+    body.appendChild(successHeader);
+
+    const snRow = document.createElement('div');
+    snRow.className = 'cim-checkout-sn-row';
+    const snEl = document.createElement('span');
+    snEl.className = 'cim-checkout-sn';
+    snEl.textContent = result.orderSn;
+    snRow.appendChild(snEl);
+    if (result.via === 'exact') {
+      const viaBadge = document.createElement('span');
+      viaBadge.className = 'cim-checkout-via cim-checkout-via--safe';
+      viaBadge.textContent = '🔒 exact';
+      snRow.appendChild(viaBadge);
+    } else if (result.via) {
+      const viaBadge = document.createElement('span');
+      viaBadge.className = 'cim-checkout-via cim-checkout-via--warn';
+      viaBadge.title = result.via === 'fallback' ? 'ID may be wrong — verify in Orders before trusting.' : 'Two simultaneous orders; newest taken.';
+      viaBadge.textContent = result.via === 'fallback' ? '⚠ fallback — verify' : '⚠ multi-newest';
+      snRow.appendChild(viaBadge);
+    }
+    body.appendChild(snRow);
+
+    const statusEl = document.createElement('div');
+    statusEl.className = 'cim-checkout-status';
+    statusEl.textContent = result.status || '待确认';
+    body.appendChild(statusEl);
+
+    const payableEl = document.createElement('div');
+    payableEl.className = 'cim-checkout-payable';
+    payableEl.textContent = 'Loading amount…';
+    body.appendChild(payableEl);
+
+    // Adjustment section
+    const adjSection = document.createElement('div');
+    adjSection.className = 'cim-checkout-adj';
+    const adjTitle = document.createElement('div');
+    adjTitle.className = 'cim-checkout-adj-title';
+    adjTitle.textContent = 'Adjustment (optional)';
+    adjSection.appendChild(adjTitle);
+
+    const adjTypeRow = document.createElement('div');
+    adjTypeRow.className = 'cim-checkout-adj-type';
+    const discountLabel = document.createElement('label');
+    const discountRadio = document.createElement('input');
+    discountRadio.type = 'radio';
+    discountRadio.name = 'cim-adj-type-' + result.orderId;
+    discountRadio.value = '1';
+    discountRadio.checked = true;
+    discountLabel.append(discountRadio, document.createTextNode(' Discount (−)'));
+    const addLabel = document.createElement('label');
+    const addRadio = document.createElement('input');
+    addRadio.type = 'radio';
+    addRadio.name = 'cim-adj-type-' + result.orderId;
+    addRadio.value = '2';
+    addLabel.append(addRadio, document.createTextNode(' Add Amount (+)'));
+    adjTypeRow.append(discountLabel, addLabel);
+    adjSection.appendChild(adjTypeRow);
+
+    const adjAmountInput = document.createElement('input');
+    adjAmountInput.type = 'number';
+    adjAmountInput.min = '0';
+    adjAmountInput.step = '0.01';
+    adjAmountInput.className = 'cim-checkout-input';
+    adjAmountInput.placeholder = 'Amount (RM)';
+    adjSection.appendChild(adjAmountInput);
+
+    const adjNoteInput = document.createElement('input');
+    adjNoteInput.type = 'text';
+    adjNoteInput.className = 'cim-checkout-input';
+    adjNoteInput.placeholder = 'Note (optional)';
+    adjSection.appendChild(adjNoteInput);
+
+    const adjApplyBtn = document.createElement('button');
+    adjApplyBtn.type = 'button';
+    adjApplyBtn.className = 'cim-checkout-btn cim-checkout-btn--adj';
+    adjApplyBtn.textContent = 'Apply';
+    adjSection.appendChild(adjApplyBtn);
+    body.appendChild(adjSection);
+
+    // Action buttons
+    const actRow = document.createElement('div');
+    actRow.className = 'cim-checkout-actions';
+    const confirmBtn = document.createElement('button');
+    confirmBtn.type = 'button';
+    confirmBtn.className = 'cim-checkout-btn cim-checkout-btn--confirm';
+    confirmBtn.textContent = 'Confirm';
+    const confirmPaidBtn = document.createElement('button');
+    confirmPaidBtn.type = 'button';
+    confirmPaidBtn.className = 'cim-checkout-btn cim-checkout-btn--paid';
+    confirmPaidBtn.textContent = 'Confirm+Paid';
+    const viewOrderBtn = document.createElement('button');
+    viewOrderBtn.type = 'button';
+    viewOrderBtn.className = 'cim-checkout-btn cim-checkout-btn--view';
+    viewOrderBtn.textContent = 'View Order';
+    actRow.append(confirmBtn, confirmPaidBtn, viewOrderBtn);
+    body.appendChild(actRow);
+
+    const orderId = result.orderId;
+
+    function refreshPayable() {
+      chrome.runtime.sendMessage({ type: 'GET_ORDER_DETAIL', orderId }, (res) => {
+        if (!res?.ok) return;
+        payableEl.textContent = `Payable: RM${parseFloat(res.payable || 0).toFixed(2)}`;
+        payableEl.classList.remove('cim-payable--flash');
+        void payableEl.offsetWidth;
+        payableEl.classList.add('cim-payable--flash');
+        statusEl.textContent = res.statusText || res.status || '';
+        const parts = res.statusParts || {};
+        const confirmedAlready = !parts.confirm?.startsWith('待');
+        confirmBtn.style.display = confirmedAlready ? 'none' : '';
+        confirmPaidBtn.style.display = confirmedAlready ? 'none' : '';
+      });
+    }
+    refreshPayable();
+
+    adjApplyBtn.addEventListener('click', () => {
+      const amount = parseFloat(adjAmountInput.value);
+      if (!amount || amount <= 0) { showCartError(modal, 'Enter a valid amount.'); return; }
+      const adjType = parseInt(adjTypeRow.querySelector('input[type="radio"]:checked')?.value || '1', 10);
+      const note = adjNoteInput.value.trim() || undefined;
+      adjApplyBtn.disabled = true;
+      chrome.runtime.sendMessage({ type: 'ORDER_ADJUSTMENT', orderId, price: amount, adjType, note }, (res) => {
+        adjApplyBtn.disabled = false;
+        if (!res?.ok) { showCartError(modal, res?.error || 'Adjustment failed.'); return; }
+        adjAmountInput.value = '';
+        adjNoteInput.value = '';
+        refreshPayable();
+      });
+    });
+
+    confirmBtn.addEventListener('click', () => {
+      confirmBtn.disabled = true;
+      confirmPaidBtn.disabled = true;
+      chrome.runtime.sendMessage({ type: 'ORDER_OPERATION', orderId, operation: 'confirm' }, (res) => {
+        if (!res?.ok) {
+          confirmBtn.disabled = false;
+          confirmPaidBtn.disabled = false;
+          showCartError(modal, res?.error || 'Confirm failed.');
+          return;
+        }
+        refreshPayable();
+      });
+    });
+
+    confirmPaidBtn.addEventListener('click', () => {
+      confirmBtn.disabled = true;
+      confirmPaidBtn.disabled = true;
+      chrome.runtime.sendMessage({ type: 'ORDER_OPERATION', orderId, operation: 'confirm' }, (res1) => {
+        if (!res1?.ok) {
+          confirmBtn.disabled = false;
+          confirmPaidBtn.disabled = false;
+          showCartError(modal, res1?.error || 'Confirm failed.');
+          return;
+        }
+        chrome.runtime.sendMessage({ type: 'ORDER_OPERATION', orderId, operation: 'pay' }, (res2) => {
+          if (!res2?.ok) showCartError(modal, res2?.error || 'Pay failed.');
+          refreshPayable();
+        });
+      });
+    });
+
+    viewOrderBtn.addEventListener('click', () => {
+      closeCartModal();
+      openOrderDetail(orderId);
+    });
+  }
+
   // ── Order list modal ────────────────────────────────────────────────────────
 
   function ensureOrderListModal() {
@@ -2125,8 +2507,7 @@
     backBtn.textContent = '← Back';
     backBtn.hidden = true;
     backBtn.addEventListener('click', () => {
-      setOrderListHeaderMode('list', modal);
-      showOrderList(orderListModalPsid);
+      if (modal._backAction) modal._backAction();
     });
 
     const titleWrap = document.createElement('div');
@@ -2146,7 +2527,9 @@
     refreshBtn.className = 'cim-cart-refresh-btn';
     refreshBtn.setAttribute('aria-label', 'Refresh');
     refreshBtn.textContent = '↻';
-    refreshBtn.addEventListener('click', () => showOrderList(orderListModalPsid));
+    refreshBtn.addEventListener('click', () => {
+      if (modal._refreshAction) modal._refreshAction();
+    });
 
     const closeBtn = document.createElement('button');
     closeBtn.type = 'button';
@@ -2199,11 +2582,19 @@
     }
   }
 
-  function openOrderListModal(psid) {
+  function openOrderListModal(psid, preloadedOrders) {
     orderListModalPsid = psid;
-    ensureOrderListModal();
+    const modal = ensureOrderListModal();
+    modal._noBack = false;
     document.getElementById(ORDER_LIST_OVERLAY_ID).classList.add('cim-order-list-overlay--visible');
-    showOrderList(psid);
+    showOrderList(psid, preloadedOrders);
+  }
+
+  function openOrderDetailNoBack(orderId) {
+    const modal = ensureOrderListModal();
+    modal._noBack = true;
+    document.getElementById(ORDER_LIST_OVERLAY_ID).classList.add('cim-order-list-overlay--visible');
+    showOrderDetail(orderId);
   }
 
   function closeOrderListModal() {
@@ -2227,32 +2618,9 @@
     return `${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}`;
   }
 
-  function showOrderList(psid) {
-    const modal = ensureOrderListModal();
-    setOrderListHeaderMode('list', modal);
-    const footerActions = modal.querySelector('.cim-ol-footer-actions');
-    if (footerActions) footerActions.innerHTML = '';
-    const body = modal.querySelector('.cim-drawer-body');
-    modal.querySelector('.cim-drawer-title').textContent = sessionState.name || 'Orders';
-    modal.querySelector('.cim-drawer-subtitle').textContent = '';
-    body.innerHTML = '<div class="cim-drawer-loading">Loading orders…</div>';
-
-    chrome.runtime.sendMessage({ type: 'GET_ORDER_LIST', psid }, (res) => {
-      const liveModal = document.getElementById(ORDER_LIST_MODAL_ID);
-      if (!liveModal) return;
-      const liveBody = liveModal.querySelector('.cim-drawer-body');
-      if (!res?.ok) {
-        liveBody.innerHTML = `<div class="cim-drawer-error">${res?.error || 'Failed to load orders.'}</div>`;
-        return;
-      }
-      const orders = res.orders || [];
-      liveModal.querySelector('.cim-drawer-subtitle').textContent = `${orders.length} order${orders.length !== 1 ? 's' : ''}`;
-      if (!orders.length) {
-        liveBody.innerHTML = '<div class="cim-drawer-empty">No orders found.</div>';
-        return;
-      }
-      liveBody.innerHTML = '';
-      orders.forEach((order) => {
+  function renderOrderCards(orders, body) {
+    body.innerHTML = '';
+    orders.forEach((order) => {
         const card = document.createElement('div');
         card.className = 'cim-ol-card cim-ol-card--clickable';
         card.addEventListener('click', () => openOrderDetail(order.orderId));
@@ -2261,7 +2629,7 @@
         topRow.className = 'cim-ol-top';
         const sn = document.createElement('span');
         sn.className = 'cim-ol-sn';
-        sn.textContent = 'F' + order.orderSn;
+        sn.textContent = order.orderSn;
         const amount = document.createElement('span');
         amount.className = 'cim-ol-amount';
         amount.textContent = order.amount ? `RM ${parseFloat(order.amount).toFixed(2)}` : '—';
@@ -2304,8 +2672,144 @@
         card.append(topRow, midRow);
         if (infoParts.length) card.appendChild(infoRow);
         card.appendChild(botRow);
-        liveBody.appendChild(card);
+        body.appendChild(card);
+    });
+  }
+
+  function renderRecentOrdersInPanel(orders) {
+    const panel = document.getElementById(PANEL_ID);
+    if (!panel) return;
+    const section = panel.querySelector('.cim-recent-orders-section');
+    if (!section) return;
+    section.innerHTML = '';
+
+    if (!orders.length) {
+      const empty = document.createElement('div');
+      empty.className = 'cim-orders-empty';
+      empty.textContent = 'No orders found.';
+      section.appendChild(empty);
+      return;
+    }
+
+    const list = document.createElement('ul');
+    list.className = 'cim-orders-list';
+    orders.forEach((order) => {
+      const li = document.createElement('li');
+
+      // Amount floats right — must be first in DOM for float to work
+      const amountEl = document.createElement('span');
+      amountEl.className = 'cim-order-amount';
+      amountEl.textContent = formatCurrency(order.totalAmount ?? order.amount);
+      li.appendChild(amountEl);
+
+      // Baserow-only orders: orderId is the F-prefixed string (same as orderSn).
+      // EC2 orders: orderId is a numeric id distinct from orderSn.
+      const isBaserow = !order.orderId || String(order.orderId) === String(order.orderSn);
+      const displaySn = order.orderSn || order.orderId;
+
+      let idEl;
+      if (isBaserow) {
+        idEl = document.createElement('a');
+        idEl.href = `https://ddherbs.com.my/track/${encodeURIComponent(displaySn)}`;
+        idEl.target = '_blank';
+        idEl.rel = 'noopener noreferrer';
+        idEl.className = 'cim-order-id cim-order-id--baserow';
+      } else {
+        idEl = document.createElement('span');
+        idEl.className = 'cim-order-id';
+        idEl.setAttribute('role', 'button');
+        idEl.tabIndex = 0;
+        idEl.addEventListener('click', () => openOrderDetailNoBack(order.orderId));
+        idEl.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') openOrderDetailNoBack(order.orderId); });
+      }
+      idEl.dataset.orderId = displaySn;
+      idEl.textContent = displaySn;
+      li.appendChild(idEl);
+
+      const dateVal = order.orderDate || order.orderTime;
+      if (dateVal) {
+        const d = new Date(dateVal);
+        const dateEl = document.createElement('span');
+        dateEl.className = 'cim-order-date';
+        dateEl.textContent = ` (${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()})`;
+        li.appendChild(dateEl);
+      }
+
+      li.appendChild(buildCopyButton(displaySn));
+      list.appendChild(li);
+    });
+    section.appendChild(list);
+
+    const orderIds = orders.map((o) => o.orderSn || o.orderId).filter(Boolean);
+    if (!orderIds.length) return;
+    const capturedUid = sessionState.uid;
+    chrome.runtime.sendMessage({ type: 'GET_ORDER_STATUSES', orderIds }, (response) => {
+      if (getUserIdFromUrl() !== capturedUid) return;
+      if (!response?.ok || !response.statuses) return;
+      const livePanel = document.getElementById(PANEL_ID);
+      if (!livePanel) return;
+      livePanel.querySelectorAll('.cim-order-id').forEach((el) => {
+        if (response.statuses[el.dataset.orderId] === 'WAIT_AUDIT') el.style.color = 'orange';
       });
+    });
+    chrome.runtime.sendMessage({ type: 'CHECK_PARCEL_PHOTOS', orderIds }, (photoRes) => {
+      if (getUserIdFromUrl() !== capturedUid) return;
+      if (!photoRes?.ok || !photoRes.results) return;
+      const livePanel = document.getElementById(PANEL_ID);
+      if (!livePanel) return;
+      Object.entries(photoRes.results).forEach(([orderId, info]) => {
+        if (!info.hasPhotos) return;
+        const idEl = livePanel.querySelector(`.cim-order-id[data-order-id="${CSS.escape(orderId)}"]`);
+        if (!idEl) return;
+        const li = idEl.closest('li');
+        if (!li || li.querySelector('.cim-photo-icon')) return;
+        li.appendChild(buildPhotoIconBtn(orderId));
+      });
+    });
+  }
+
+  function showOrderList(psid, preloadedOrders) {
+    const modal = ensureOrderListModal();
+    modal._refreshAction = () => showOrderList(psid);
+    setOrderListHeaderMode('list', modal);
+    const footerActions = modal.querySelector('.cim-ol-footer-actions');
+    if (footerActions) footerActions.innerHTML = '';
+    const body = modal.querySelector('.cim-drawer-body');
+    modal.querySelector('.cim-drawer-title').textContent = sessionState.name || 'Orders';
+
+    if (preloadedOrders) {
+      modal.querySelector('.cim-drawer-subtitle').textContent = `${preloadedOrders.length} order${preloadedOrders.length !== 1 ? 's' : ''}`;
+      if (!preloadedOrders.length) {
+        body.innerHTML = '<div class="cim-drawer-empty">No orders found.</div>';
+      } else {
+        renderOrderCards(preloadedOrders, body);
+      }
+      return;
+    }
+
+    modal.querySelector('.cim-drawer-subtitle').textContent = '';
+    body.innerHTML = '<div class="cim-drawer-loading">Loading orders…</div>';
+    chrome.runtime.sendMessage({ type: 'GET_ORDER_LIST', psid }, (res) => {
+      const liveModal = document.getElementById(ORDER_LIST_MODAL_ID);
+      if (!liveModal) return;
+      const liveBody = liveModal.querySelector('.cim-drawer-body');
+      if (!res?.ok) {
+        liveBody.innerHTML = `<div class="cim-drawer-error">${res?.error || 'Failed to load orders.'}</div>`;
+        return;
+      }
+      const orders = res.orders || [];
+      liveModal.querySelector('.cim-drawer-subtitle').textContent = `${orders.length} order${orders.length !== 1 ? 's' : ''}`;
+      if (!orders.length) {
+        liveBody.innerHTML = '<div class="cim-drawer-empty">No orders found.</div>';
+        return;
+      }
+      renderOrderCards(orders, liveBody);
+      renderRecentOrdersInPanel(orders.slice(0, 5).map((o) => ({
+        orderId: o.orderId,
+        orderSn: o.orderSn,
+        totalAmount: o.amount,
+        orderDate: o.orderTime,
+      })));
     });
   }
 
@@ -2320,7 +2824,15 @@
   function showOrderDetail(orderId) {
     orderDetailOrderId = orderId;
     const modal = ensureOrderListModal();
+    if (!modal._noBack) {
+      modal._backAction = () => { setOrderListHeaderMode('list', modal); showOrderList(orderListModalPsid); };
+    }
+    modal._refreshAction = () => showOrderDetail(orderId);
     setOrderListHeaderMode('detail', modal);
+    if (modal._noBack) {
+      const backBtn = modal.querySelector('.cim-ol-back-btn');
+      if (backBtn) backBtn.hidden = true;
+    }
     const body = modal.querySelector('.cim-drawer-body');
     body.innerHTML = '<div class="cim-drawer-loading">Loading order…</div>';
     modal.querySelector('.cim-drawer-title').textContent = 'Loading…';
@@ -2342,7 +2854,7 @@
 
   function renderOrderDetail(body, modal, data) {
     body.innerHTML = '';
-    modal.querySelector('.cim-drawer-title').textContent = 'F' + data.orderSn;
+    modal.querySelector('.cim-drawer-title').textContent = data.orderSn;
     modal.querySelector('.cim-drawer-subtitle').textContent = data.statusText || '';
 
     function mkEl(tag, cls, txt) {
@@ -2464,6 +2976,60 @@
     sumSect.appendChild(feeList);
     body.appendChild(sumSect);
 
+    // Adjustment section — hidden once order is shipped (已出货)
+    if (!data.statusParts?.shipping?.startsWith('已')) {
+      const adjSect = mkEl('div', 'cim-checkout-adj');
+      const adjTitle = mkEl('div', 'cim-checkout-adj-title', 'Adjustment (optional)');
+      adjSect.appendChild(adjTitle);
+
+      const adjTypeRow = mkEl('div', 'cim-checkout-adj-type');
+      const discountLabel = document.createElement('label');
+      const discountRadio = document.createElement('input');
+      discountRadio.type = 'radio';
+      discountRadio.name = 'cim-od-adj-type-' + data.orderId;
+      discountRadio.value = '1';
+      discountRadio.checked = true;
+      discountLabel.append(discountRadio, document.createTextNode(' Discount (−)'));
+      const addLabel = document.createElement('label');
+      const addRadio = document.createElement('input');
+      addRadio.type = 'radio';
+      addRadio.name = 'cim-od-adj-type-' + data.orderId;
+      addRadio.value = '2';
+      addLabel.append(addRadio, document.createTextNode(' Add Amount (+)'));
+      adjTypeRow.append(discountLabel, addLabel);
+      adjSect.appendChild(adjTypeRow);
+
+      const adjAmountInput = mkEl('input', 'cim-checkout-input');
+      adjAmountInput.type = 'number';
+      adjAmountInput.min = '0';
+      adjAmountInput.step = '0.01';
+      adjAmountInput.placeholder = 'Amount (RM)';
+      adjSect.appendChild(adjAmountInput);
+
+      const adjNoteInput = mkEl('input', 'cim-checkout-input');
+      adjNoteInput.type = 'text';
+      adjNoteInput.placeholder = 'Note (optional)';
+      adjSect.appendChild(adjNoteInput);
+
+      const adjApplyBtn = mkEl('button', 'cim-checkout-btn cim-checkout-btn--adj', 'Apply');
+      adjApplyBtn.type = 'button';
+      adjSect.appendChild(adjApplyBtn);
+      body.appendChild(adjSect);
+
+      adjApplyBtn.addEventListener('click', () => {
+        const amount = parseFloat(adjAmountInput.value);
+        if (!amount || amount <= 0) { showOrderDetailToast(modal, 'Enter a valid amount.'); return; }
+        const adjType = parseInt(adjTypeRow.querySelector('input[type="radio"]:checked')?.value || '1', 10);
+        const note = adjNoteInput.value.trim() || undefined;
+        adjApplyBtn.disabled = true;
+        chrome.runtime.sendMessage({ type: 'ORDER_ADJUSTMENT', orderId: data.orderId, price: amount, adjType, note }, (res) => {
+          adjApplyBtn.disabled = false;
+          if (!res?.ok) { showOrderDetailToast(modal, res?.error || 'Adjustment failed.'); return; }
+          showOrderDetail(data.orderId);
+        });
+      });
+    }
+
     // Notes
     if (data.note || data.csNote) {
       const { sect: notesSect } = mkSection('Notes');
@@ -2471,6 +3037,44 @@
       if (data.csNote) notesSect.appendChild(mkInfoCard([['CS Note', data.csNote]]));
       body.appendChild(notesSect);
     }
+
+    // Parcel Photos (async)
+    const capturedOdId = data.orderId;
+    const photoPlaceholder = mkEl('div', 'cim-od-photo-placeholder');
+    body.appendChild(photoPlaceholder);
+    chrome.runtime.sendMessage({ type: 'GET_PARCEL_PHOTO_ORDER', orderId: data.orderSn }, (photoRes) => {
+      if (orderDetailOrderId !== capturedOdId) return;
+      const liveBody = modal.querySelector('.cim-drawer-body');
+      if (!liveBody) return;
+      const livePh = liveBody.querySelector('.cim-od-photo-placeholder');
+      if (!livePh) return;
+      if (!photoRes?.ok || !photoRes.found || !photoRes.orders?.length) { livePh.remove(); return; }
+      const { sect: photoSect } = mkSection('Parcel Photos');
+      const singleWms = photoRes.orders.length === 1;
+      photoRes.orders.forEach((wmsOrder, wmsIdx) => {
+        const contentEls = buildWmsContent(wmsOrder);
+        if (singleWms) {
+          contentEls.forEach((el) => photoSect.appendChild(el));
+        } else {
+          const wmsSection = mkEl('div', 'cim-parcel-section');
+          const wmsHeader = mkEl('div', 'cim-parcel-section-header');
+          const wmsTitle = mkEl('span', 'cim-parcel-section-title', wmsOrder.wmsId || `Parcel ${wmsIdx + 1}`);
+          const chevron = mkEl('span', 'cim-parcel-section-chevron', '▸');
+          wmsHeader.append(wmsTitle, chevron);
+          const wmsBody = mkEl('div', 'cim-parcel-section-body');
+          contentEls.forEach((el) => wmsBody.appendChild(el));
+          if (wmsIdx === 0) { wmsBody.style.display = 'flex'; chevron.style.transform = 'rotate(90deg)'; }
+          wmsHeader.addEventListener('click', () => {
+            const open = wmsBody.style.display === 'none' || wmsBody.style.display === '';
+            wmsBody.style.display = open ? 'flex' : 'none';
+            chevron.style.transform = open ? 'rotate(90deg)' : '';
+          });
+          wmsSection.append(wmsHeader, wmsBody);
+          photoSect.appendChild(wmsSection);
+        }
+      });
+      livePh.replaceWith(photoSect);
+    });
 
     // Footer action buttons (derive from statusParts)
     const footerActions = modal.querySelector('.cim-ol-footer-actions');
@@ -2539,6 +3143,7 @@
   }
 
   function showEditConsigneeDialog(modal, orderId, detailData) {
+    modal._backAction = () => showOrderDetail(orderId);
     const body = modal.querySelector('.cim-drawer-body');
     body.innerHTML = '<div class="cim-drawer-loading">Loading form…</div>';
     modal.querySelector('.cim-drawer-title').textContent = 'Edit Recipient';
@@ -3174,85 +3779,14 @@
         headingBtn.type = 'button';
         headingBtn.className = 'cim-orders-heading-btn';
         headingBtn.textContent = 'Recent Orders ↗';
-        headingBtn.addEventListener('click', () => openOrderListModal(view.psid));
+        headingBtn.addEventListener('click', () => openOrderListModal(view.psid, data.allOrders));
         heading.appendChild(headingBtn);
         body.appendChild(heading);
 
-        if (!data.recentOrders.length) {
-          const empty = document.createElement('div');
-          empty.className = 'cim-orders-empty';
-          empty.textContent = 'No orders found.';
-          body.appendChild(empty);
-        } else {
-          const list = document.createElement('ul');
-          list.className = 'cim-orders-list';
-
-          data.recentOrders.forEach((order) => {
-            const li = document.createElement('li');
-
-            const idWrap = document.createElement('span');
-            idWrap.className = 'cim-order-id-wrap';
-
-            const idEl = document.createElement('a');
-            idEl.className = 'cim-order-id';
-            idEl.dataset.orderId = order.orderId || '';
-            idEl.textContent = formatValue(order.orderId);
-            idEl.href = `https://ddherbs.com.my/track/${encodeURIComponent(order.orderId)}`;
-            idEl.target = '_blank';
-            idEl.rel = 'noopener noreferrer';
-
-            if (order.orderDate) {
-              const d = new Date(order.orderDate);
-              const dateStr = `(${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()})`;
-              const dateEl = document.createElement('span');
-              dateEl.className = 'cim-order-date';
-              dateEl.textContent = ' ' + dateStr;
-              idWrap.append(idEl, dateEl, buildCopyButton(order.orderId));
-            } else {
-              idWrap.append(idEl, buildCopyButton(order.orderId));
-            }
-
-            const amountEl = document.createElement('span');
-            amountEl.className = 'cim-order-amount';
-            amountEl.textContent = formatCurrency(order.totalAmount);
-
-            li.append(idWrap, amountEl);
-            list.appendChild(li);
-          });
-
-          body.appendChild(list);
-
-          const orderIds = data.recentOrders.map((o) => o.orderId).filter(Boolean);
-          if (orderIds.length) {
-            const capturedUid = sessionState.uid;
-            chrome.runtime.sendMessage({ type: 'GET_ORDER_STATUSES', orderIds }, (response) => {
-              if (getUserIdFromUrl() !== capturedUid) return;
-              if (!response?.ok || !response.statuses) return;
-              const livePanel = document.getElementById(PANEL_ID);
-              if (!livePanel) return;
-              livePanel.querySelectorAll('.cim-order-id').forEach((el) => {
-                if (response.statuses[el.textContent] === 'WAIT_AUDIT') {
-                  el.style.color = 'orange';
-                }
-              });
-            });
-
-            chrome.runtime.sendMessage({ type: 'CHECK_PARCEL_PHOTOS', orderIds }, (photoRes) => {
-              if (getUserIdFromUrl() !== capturedUid) return;
-              if (!photoRes?.ok || !photoRes.results) return;
-              const livePanel = document.getElementById(PANEL_ID);
-              if (!livePanel) return;
-              Object.entries(photoRes.results).forEach(([orderId, info]) => {
-                if (!info.hasPhotos) return;
-                const idEl = livePanel.querySelector(`.cim-order-id[data-order-id="${CSS.escape(orderId)}"]`);
-                if (!idEl) return;
-                const wrap = idEl.closest('.cim-order-id-wrap');
-                if (!wrap || wrap.querySelector('.cim-photo-icon')) return;
-                wrap.appendChild(buildPhotoIconBtn(orderId));
-              });
-            });
-          }
-        }
+        const ordersSection = document.createElement('div');
+        ordersSection.className = 'cim-recent-orders-section';
+        body.appendChild(ordersSection);
+        renderRecentOrdersInPanel(data.recentOrders);
         break;
       }
       case 'new-customer': {
