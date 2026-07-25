@@ -12,6 +12,10 @@ No `manifest.json` changes needed — the API gateway host is already in `host_p
 - `cartModalPsid` — PSID of the customer whose cart is open; set by `openCartModal(psid)`.
 - `cartSelectedRecIds` — `Set` of `recId` strings currently checked; reset on every `showCartView()` call.
 - `cartTotalItemCount` — total number of items in the current cart load; set by `renderCartContent`; used by `syncBulkButtons` to determine partial vs. full selection for the List button.
+- `cartGroups` — `Map<groupId, { color, recIds: Set<recId> }>` tracking visual-only item groups. Persists across re-renders for the same customer; reset when `openCartModal` is called with a different psid. No API calls — display only.
+- `cartGroupsNextId` — monotonic integer used to generate unique `groupId` keys (`g1`, `g2`, …). Never reset; provides stable keys even after ungrouping.
+- `cartGroupsPsid` — psid of the customer whose groups are stored; used to detect a customer switch and clear `cartGroups`.
+- `GROUP_COLORS` — constant array of 5 hex colors (violet, cyan, amber, green, red) cycled by `cartGroups.size % 5` at group-creation time.
 - `cartUserId` — `userId` returned by `GET /api/cart`, stored on every cart load; passed to checkout and order-create calls.
 - `goodsKeyword`, `goodsPage`, `goodsTotalPages` — goods-picker pagination state; reset when `showGoodsPicker()` is called.
 - `goodsQtys` — `{ [goodsId]: qty }` map persisting per-product stepper values across searches within one picker session; reset on `openCartModal`.
@@ -40,14 +44,20 @@ No `manifest.json` changes needed — the API gateway host is already in `host_p
 
 Rendered elements:
 - **Modal header subtitle** — starts at `0 items · RM0.00`; updated live by `syncBulkButtons()` on every checkbox change to show the selected count and sum of selected line totals. Uses `itemLineTotals` (`Map<recId, lineTotal>`) built once in `renderCartContent`.
-- **Toolbar** (`.cim-cart-toolbar`) — `☐ All` select-all checkbox (indeterminate when partial); `Delete`, `Renew`, and `+ Order` bulk buttons (disabled when `cartSelectedRecIds` is empty).
-- **Item rows** (`.cim-cart-item-row`, `--expired` variant) — checkbox feeding `cartSelectedRecIds`; name + LIVE/SYS badge + ⚠ Expired badge; `RM X.xx/ea` price; `[−][qty][+]` stepper with editable `<input type="text">` in the middle (digit-only filter on `input` event; Enter/blur commits; Escape restores; input disabled during in-flight API call); line total; per-item `Renew` button (expired items only); `🗑` delete button.
+- **Toolbar** (`.cim-cart-toolbar`) — `☐ All` select-all checkbox (indeterminate when partial); `Delete`, `Renew`, `+ Order`, and **⊞ Group** bulk buttons. `Delete`/`Renew`/`+ Order` are disabled when `cartSelectedRecIds` is empty; `⊞ Group` is disabled when fewer than 2 items are selected.
+- **Item rows** (`.cim-cart-item-row`, `--expired` variant) — checkbox feeding `cartSelectedRecIds`; name + LIVE/SYS badge + ⚠ Expired badge; `RM X.xx/ea` price; `[−][qty][+]` stepper with editable `<input type="text">` in the middle (digit-only filter on `input` event; Enter/blur commits; Escape restores; input disabled during in-flight API call); line total; per-item `Renew` button (expired items only); **Split** button (qty > 1 only); `🗑` delete button.
 - **Sticky total bar** (`.cim-cart-total-bar`) — sits between the scrollable body and the footer; always visible. Shows the full cart total (sum of all line totals) regardless of selection, plus a **List button** on the right. Written by `renderCartContent`; shown/hidden by `setCartHeaderMode` (visible only in `'cart'` mode).
   - **List button** (`.cim-cart-list-btn`) — label switches between **"All List"** (blue, `#0a7cff`) and **"Partial List"** (amber, `#f59e0b`) driven by `syncBulkButtons`: partial when `cartSelectedRecIds.size > 0 && < cartTotalItemCount`, otherwise all. Clicking opens `showListOptionsPopup(triggerEl, showTooltip)` — a small fixed-position popup above the button with **All / 🇲🇾 MYR / 🇸🇬 SGD** options. Partial selection → `GET_SELECTED_CART_SUMMARY { psid, recIds, option }` → `POST /users/:psid/selected`; no/full selection → `GET_CART_SUMMARY { psid, option }` → `GET /users/:psid?option=N`. Both paths copy the resulting text to clipboard and show "Copied!" as a tooltip on the button. The tooltip is styled directly under `.cim-cart-list-btn .cim-copy-tooltip` (not under `#cim-purchase-panel`) so it is absolutely positioned correctly within the cart modal.
+
+**Item grouping** — selecting 2+ items and clicking **⊞ Group** creates a visual cluster (`.cim-cart-group`) stored in `cartGroups`. Groups always render at the top; ungrouped items follow in their original API order. Each group has a colored left-border accent (color cycled from `GROUP_COLORS`), a header row with a **group select-all checkbox** + label `"Group (Total: N items)"` + **Ungroup** button. The group select-all goes indeterminate when only some items in the group are checked; `syncBulkButtons` keeps it in sync with individual checkboxes. Clicking Ungroup removes the group from `cartGroups` and re-renders. Groups survive cart refreshes (qty edits, renew, split, delete) within the same customer session — stale recIds are cleaned from `cartGroups` at the start of every `renderCartContent`. Groups are purely front-end: no API calls, not shared between browser sessions.
 
 `setCartBodyBusy(true/false)` adds `pointer-events:none; opacity:0.55` to the body during bulk operations. `renderCartContent` calls `setCartBodyBusy(false)` at its very start so the busy overlay is always cleared when the cart reloads — this fixes a freeze where `Renew Expiry` (or bulk `Delete`) on a successful API response would leave the modal permanently grayed.
 
 **Delete confirmation** — clicking `🗑` (per-item) or the bulk `Delete` button calls `showDeleteConfirm(triggerEl, onConfirm)` instead of invoking the API directly. The helper creates a fixed-position popover ("Delete? · Yes · No") above the trigger via `getBoundingClientRect`, appended to `document.body` at `z-index:2147483647`. Yes proceeds with the API call; No or click-outside dismisses. Any existing popover is removed before a new one is shown.
+
+**Split** — `showSplitPopup(triggerEl, item, psid)` appears only on rows where `qty > 1`. Clicking opens a small fixed-position popover (`.cim-split-popup`) above the button containing a label (`Split off (1–N):`) and a row with an integer input (`.cim-split-input`, 54 px wide) + blue "Split" confirm button. The confirm button is disabled until the input holds a valid integer in `[1, qty-1]`; values outside that range or non-digits are rejected via the `input` event handler. Enter confirms; Escape or click-outside dismisses. Clicking inside the popup does not propagate to the outside-click dismissal listener (`pop.addEventListener('click', e => e.stopPropagation())`).
+
+On confirm, `CART_SPLIT_ITEM { recId, goodsId, originalQty, splitQty, fbUserId }` is sent. `background.js` runs the two calls sequentially: `updateCartQty(recId, originalQty - splitQty)` then `addCartItem(fbUserId, goodsId, splitQty)`. If the first call fails the second is not made. On success the cart reloads — the original row now has its reduced qty and a new row appears for the split-off portion with its own recId.
 
 **Closing the modal** — `closeCartModal()` additionally strips `.cim-cart-section`, `.cim-cart-empty`, and `.cim-expired-notice` from the panel, resets `sessionState.{cartHasItems,myrSum,sgdSum,expiredAvailable}` to `null`, and calls `probeCartAndShowButtons()` so the MYR/SGD price sub-labels on the panel buttons refresh immediately after the modal is closed.
 
@@ -104,13 +114,17 @@ Triggered by selecting cart items and clicking **"+ Order"** in the bulk-action 
 
 ## Copy cart view
 
-Triggered by the **"↙ Copy"** button in the cart header. Lets the operator copy all items from another customer's cart into the currently open one. Quantities merge if the same product already exists.
+Triggered by the **"↙ Copy"** button in the cart header. Lets the operator copy all items from another customer's cart into the currently open one.
 
 **Flow (preview → confirm):**
 1. Operator types the source customer's `fbUserId` and clicks **Preview** (or presses Enter). A dry-run call (`dryRun: true`) is made; nothing is written.
 2. Results appear as color-coded sections:
    - **✓ Will be added** (green) — items that would be copied.
    - **⏭ Will be skipped** (amber) — items not even attempted, with reason. The only current reason is `"expired"`: expired lines are skipped by default unless **Include expired items** is checked.
+
+Two option checkboxes appear below the source ID input:
+- **Include expired items** — if checked, passes `includeExpired: true` to the API.
+- **Merge duplicate quantities** — if checked, passes `mergeDuplicates: true`; the backend should add source qty onto any existing row with the same `goodsId`. Default (unchecked): duplicate products are added as new separate rows. The backend must implement this flag — see `merge-duplicates-handoff.md`.
 3. **Confirm Copy** button appears only when `added.length > 0`. Clicking it sends the real (non-dry-run) copy request.
 4. After copy, results show:
    - Green success banner: `✓ Copy complete — Added X · skipped Y · failed Z`.
@@ -134,9 +148,10 @@ Triggered by the **"↙ Copy"** button in the cart header. Lets the operator cop
 | `CART_REFRESH_VALIDITY { recIds }` | `POST /api/cart/refresh-validity` |
 | `CART_UPDATE_QTY { recId, qty }` | `POST /api/cart/quantity` |
 | `CART_ADD_ITEM { fbUserId, goodsId, qty }` | `POST /api/cart/items` |
+| `CART_SPLIT_ITEM { recId, goodsId, originalQty, splitQty, fbUserId }` | `POST /api/cart/quantity` then `POST /api/cart/items` |
 | `SEARCH_GOODS { keyword, page }` | `GET /api/goods?keyword=&page=` |
 | `SMART_SEARCH_GOODS { words }` | `POST /api/goods/search` |
-| `CART_COPY_ITEMS { fbUserId, sourceFbUserId, dryRun?, includeExpired? }` | `POST /api/cart/copy` |
+| `CART_COPY_ITEMS { fbUserId, sourceFbUserId, dryRun?, includeExpired?, mergeDuplicates? }` | `POST /api/cart/copy` |
 | `GET_CHECKOUT_FORM { fbUserId, userId, recIds, goodsNumbers }` | `GET /api/checkout?...` |
 | `CREATE_ORDER { fbUserId, userId, items, customer, shippingIdType, confirm, pay }` | `POST /api/orders` |
 | `ORDER_ADJUSTMENT { orderId, price, type, note? }` | `POST /api/orders/:orderId/adjustments` |

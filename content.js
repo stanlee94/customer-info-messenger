@@ -1039,6 +1039,10 @@
   let cartUserId = null;
   let cartSelectedRecIds = new Set();
   let cartTotalItemCount = 0;
+  let cartGroups = new Map(); // groupId → { color, label, recIds: Set<recId> }
+  let cartGroupsNextId = 1;
+  let cartGroupsPsid = null;
+  const GROUP_COLORS = ['#7c3aed', '#0891b2', '#d97706', '#059669', '#e11d48'];
   let goodsKeyword = '';
   let goodsPage = 1;
   let goodsTotalPages = 1;
@@ -1170,6 +1174,11 @@
     cartModalPsid = psid;
     cartSelectedRecIds = new Set();
     goodsQtys = {};
+    if (cartGroupsPsid !== psid) {
+      cartGroups = new Map();
+      cartGroupsNextId = 1;
+      cartGroupsPsid = psid;
+    }
     ensureCartModal();
     document.getElementById(CART_MODAL_OVERLAY_ID).classList.add('cim-cart-modal-overlay--visible');
     showCartView(psid);
@@ -1267,6 +1276,72 @@
     setTimeout(() => document.addEventListener('click', dismiss, { once: true }), 0);
   }
 
+  function showSplitPopup(triggerEl, item, psid) {
+    document.querySelector('.cim-split-popup')?.remove();
+    const originalQty = parseInt(item.qty, 10);
+    const modal = ensureCartModal();
+
+    const pop = document.createElement('div');
+    pop.className = 'cim-split-popup';
+    pop.addEventListener('click', (e) => e.stopPropagation());
+
+    const labelEl = document.createElement('div');
+    labelEl.className = 'cim-split-label';
+    labelEl.textContent = `Split off (1–${originalQty - 1}):`;
+
+    const row = document.createElement('div');
+    row.className = 'cim-split-row';
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.inputMode = 'numeric';
+    input.className = 'cim-split-input';
+    input.placeholder = '1';
+    input.autocomplete = 'off';
+
+    const confirmBtn = document.createElement('button');
+    confirmBtn.type = 'button';
+    confirmBtn.className = 'cim-split-confirm-btn';
+    confirmBtn.textContent = 'Split';
+    confirmBtn.disabled = true;
+
+    const validate = () => {
+      input.value = input.value.replace(/\D/g, '').replace(/^0+(\d)/, '$1');
+      const v = parseInt(input.value, 10);
+      confirmBtn.disabled = !v || v < 1 || v >= originalQty;
+    };
+    input.addEventListener('input', validate);
+
+    const doSplit = () => {
+      const splitQty = parseInt(input.value, 10);
+      if (!splitQty || splitQty < 1 || splitQty >= originalQty) return;
+      pop.remove();
+      setCartBodyBusy(true);
+      chrome.runtime.sendMessage(
+        { type: 'CART_SPLIT_ITEM', recId: item.recId, goodsId: item.goodsId, originalQty, splitQty, fbUserId: psid },
+        (res) => {
+          if (res?.ok) { showCartView(psid); }
+          else { setCartBodyBusy(false); showCartError(modal, res?.error || 'Split failed.'); }
+        }
+      );
+    };
+
+    confirmBtn.addEventListener('click', doSplit);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); doSplit(); }
+      if (e.key === 'Escape') { e.preventDefault(); pop.remove(); }
+    });
+
+    row.append(input, confirmBtn);
+    pop.append(labelEl, row);
+    document.body.appendChild(pop);
+
+    const rect = triggerEl.getBoundingClientRect();
+    pop.style.cssText = `position:fixed;left:${rect.left + rect.width / 2}px;top:${rect.top - 6}px;transform:translate(-50%,-100%);z-index:2147483647`;
+    requestAnimationFrame(() => input.focus());
+    setTimeout(() => document.addEventListener('click', () => pop.remove(), { once: true }), 0);
+  }
+
   function showListOptionsPopup(triggerEl, showTooltip) {
     document.querySelector('.cim-list-options-popup')?.remove();
 
@@ -1325,6 +1400,13 @@
     const subtitleEl = modal.querySelector('.cim-drawer-subtitle');
     const items = data.items || [];
 
+    // Clean stale recIds from groups (items may have been deleted/renewed away)
+    const existingRecIds = new Set(items.map((it) => it.recId));
+    for (const [gid, g] of cartGroups) {
+      for (const rid of [...g.recIds]) { if (!existingRecIds.has(rid)) g.recIds.delete(rid); }
+      if (g.recIds.size === 0) cartGroups.delete(gid);
+    }
+
     if (items.length === 0) {
       if (subtitleEl) subtitleEl.textContent = 'Empty cart';
       const empty = document.createElement('div');
@@ -1376,7 +1458,12 @@
     bulkOrderBtn.className = 'cim-cart-bulk-btn cim-cart-bulk-btn--order';
     bulkOrderBtn.textContent = '+ Order';
     bulkOrderBtn.disabled = true;
-    bulkActions.append(bulkDeleteBtn, bulkRenewBtn, bulkOrderBtn);
+    const bulkGroupBtn = document.createElement('button');
+    bulkGroupBtn.type = 'button';
+    bulkGroupBtn.className = 'cim-cart-bulk-btn cim-cart-bulk-btn--group';
+    bulkGroupBtn.textContent = '⊞ Group';
+    bulkGroupBtn.disabled = true;
+    bulkActions.append(bulkDeleteBtn, bulkRenewBtn, bulkOrderBtn, bulkGroupBtn);
     toolbar.append(selectAllLabel, bulkActions);
     body.appendChild(toolbar);
 
@@ -1386,6 +1473,7 @@
       bulkDeleteBtn.disabled = cartSelectedRecIds.size === 0;
       bulkRenewBtn.disabled = cartSelectedRecIds.size === 0;
       bulkOrderBtn.disabled = cartSelectedRecIds.size === 0;
+      bulkGroupBtn.disabled = cartSelectedRecIds.size < 2;
       selectAllChk.indeterminate = checked > 0 && checked < allChks.length;
       selectAllChk.checked = allChks.length > 0 && checked === allChks.length;
       const selTotal = [...cartSelectedRecIds].reduce((sum, id) => sum + (itemLineTotals.get(id) || 0), 0);
@@ -1397,6 +1485,15 @@
         lbl.textContent = isPartial ? 'Partial List' : 'All List';
         lbl.closest('.cim-cart-list-btn')?.classList.toggle('cim-cart-list-btn--partial', isPartial);
       }
+      body.querySelectorAll('.cim-cart-group').forEach((groupEl) => {
+        const groupChk = groupEl.querySelector('.cim-cart-group-select-chk');
+        if (!groupChk) return;
+        const itemChks = groupEl.querySelectorAll('.cim-cart-item-check');
+        const total = itemChks.length;
+        const checkedInGroup = [...itemChks].filter((c) => c.checked).length;
+        groupChk.indeterminate = checkedInGroup > 0 && checkedInGroup < total;
+        groupChk.checked = total > 0 && checkedInGroup === total;
+      });
     }
 
     selectAllChk.addEventListener('change', () => {
@@ -1438,7 +1535,21 @@
       showCheckoutView(psid, selectedItems);
     });
 
+    bulkGroupBtn.addEventListener('click', () => {
+      if (cartSelectedRecIds.size < 2) return;
+      const currentCount = cartGroups.size;
+      const groupId = `g${cartGroupsNextId}`;
+      cartGroups.set(groupId, {
+        color: GROUP_COLORS[currentCount % GROUP_COLORS.length],
+        recIds: new Set(cartSelectedRecIds),
+      });
+      cartGroupsNextId++;
+      cartSelectedRecIds = new Set();
+      renderCartContent(body, modal, data, psid);
+    });
+
     // ── Item rows ─────────────────────────────────────────────────────────────
+    const rowMap = new Map(); // recId → DOM row element
     items.forEach((item) => {
       const row = document.createElement('div');
       row.className = 'cim-cart-item-row' + (item.expired ? ' cim-cart-item-row--expired' : '');
@@ -1564,6 +1675,15 @@
         actions.appendChild(renewBtn);
       }
 
+      if (parseInt(item.qty, 10) > 1) {
+        const splitBtn = document.createElement('button');
+        splitBtn.type = 'button';
+        splitBtn.className = 'cim-cart-item-split-btn';
+        splitBtn.textContent = 'Split';
+        splitBtn.addEventListener('click', () => showSplitPopup(splitBtn, item, psid));
+        actions.appendChild(splitBtn);
+      }
+
       const deleteBtn = document.createElement('button');
       deleteBtn.type = 'button';
       deleteBtn.className = 'cim-cart-item-delete-btn';
@@ -1583,7 +1703,69 @@
       bottom.append(priceEl, stepper, lineTotalEl, actions);
       content.append(top, bottom);
       row.append(chkLabel, content);
-      body.appendChild(row);
+      rowMap.set(item.recId, row);
+    });
+
+    // ── Render rows: groups first (top), then ungrouped items ────────────────
+    const groupedRecIds = new Set();
+    for (const g of cartGroups.values()) g.recIds.forEach((rid) => groupedRecIds.add(rid));
+
+    // Pass 1: render all group wrappers in creation order
+    for (const [gid, group] of cartGroups) {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'cim-cart-group';
+      wrapper.style.setProperty('--group-color', group.color);
+
+      const groupHeader = document.createElement('div');
+      groupHeader.className = 'cim-cart-group-header';
+
+      const groupSelectLabel = document.createElement('label');
+      groupSelectLabel.className = 'cim-cart-group-select-label';
+      const groupSelectChk = document.createElement('input');
+      groupSelectChk.type = 'checkbox';
+      groupSelectChk.className = 'cim-cart-checkbox cim-cart-group-select-chk';
+      const groupRecIds = [...group.recIds];
+      const initChecked = groupRecIds.filter((rid) => cartSelectedRecIds.has(rid)).length;
+      groupSelectChk.checked = initChecked === groupRecIds.length;
+      groupSelectChk.indeterminate = initChecked > 0 && initChecked < groupRecIds.length;
+      groupSelectChk.addEventListener('change', () => {
+        groupRecIds.forEach((rid) => {
+          if (groupSelectChk.checked) cartSelectedRecIds.add(rid);
+          else cartSelectedRecIds.delete(rid);
+        });
+        groupHeader.closest('.cim-cart-group').querySelectorAll('.cim-cart-item-check').forEach((c) => {
+          c.checked = groupSelectChk.checked;
+        });
+        syncBulkButtons();
+      });
+      groupSelectLabel.appendChild(groupSelectChk);
+
+      const groupLabel = document.createElement('span');
+      groupLabel.className = 'cim-cart-group-label';
+      groupLabel.textContent = `Group (Total: ${group.recIds.size} items)`;
+      const ungroupBtn = document.createElement('button');
+      ungroupBtn.type = 'button';
+      ungroupBtn.className = 'cim-cart-group-ungroup-btn';
+      ungroupBtn.textContent = 'Ungroup';
+      ungroupBtn.addEventListener('click', () => {
+        cartGroups.delete(gid);
+        renderCartContent(body, modal, data, psid);
+      });
+      groupHeader.append(groupSelectLabel, groupLabel, ungroupBtn);
+
+      const groupItems = document.createElement('div');
+      groupItems.className = 'cim-cart-group-items';
+      items.filter((it) => group.recIds.has(it.recId)).forEach((it) => {
+        groupItems.appendChild(rowMap.get(it.recId));
+      });
+
+      wrapper.append(groupHeader, groupItems);
+      body.appendChild(wrapper);
+    }
+
+    // Pass 2: render ungrouped items in their original order
+    items.forEach((item) => {
+      if (!groupedRecIds.has(item.recId)) body.appendChild(rowMap.get(item.recId));
     });
 
     // Update the sticky total bar (outside the scroll body)
@@ -2056,7 +2238,7 @@
 
     const helpText = document.createElement('p');
     helpText.className = 'cim-copy-help';
-    helpText.textContent = 'Copy all items from another customer\'s cart into this one. Quantities merge if the same product already exists.';
+    helpText.textContent = 'Copy all items from another customer\'s cart into this one. Duplicate products are added as separate rows by default.';
     body.appendChild(helpText);
 
     const labelEl = document.createElement('label');
@@ -2087,6 +2269,16 @@
     expiredSpan.textContent = 'Include expired items';
     expiredRow.append(expiredChk, expiredSpan);
     body.appendChild(expiredRow);
+
+    const mergeRow = document.createElement('label');
+    mergeRow.className = 'cim-copy-expired-row';
+    const mergeChk = document.createElement('input');
+    mergeChk.type = 'checkbox';
+    mergeChk.className = 'cim-copy-expired-chk';
+    const mergeSpan = document.createElement('span');
+    mergeSpan.textContent = 'Merge duplicate quantities';
+    mergeRow.append(mergeChk, mergeSpan);
+    body.appendChild(mergeRow);
 
     const resultsEl = document.createElement('div');
     resultsEl.className = 'cim-copy-results';
@@ -2192,7 +2384,7 @@
       confirmRow.style.display = 'none';
       previewData = null;
       chrome.runtime.sendMessage(
-        { type: 'CART_COPY_ITEMS', fbUserId: psid, sourceFbUserId: sourceId, dryRun: true, includeExpired: expiredChk.checked },
+        { type: 'CART_COPY_ITEMS', fbUserId: psid, sourceFbUserId: sourceId, dryRun: true, includeExpired: expiredChk.checked, mergeDuplicates: mergeChk.checked },
         (res) => {
           previewBtn.disabled = false;
           previewBtn.textContent = 'Preview';
@@ -2221,7 +2413,7 @@
       cancelBtn.disabled = true;
       confirmBtn.textContent = '…';
       chrome.runtime.sendMessage(
-        { type: 'CART_COPY_ITEMS', fbUserId: psid, sourceFbUserId: sourceId, includeExpired: expiredChk.checked },
+        { type: 'CART_COPY_ITEMS', fbUserId: psid, sourceFbUserId: sourceId, includeExpired: expiredChk.checked, mergeDuplicates: mergeChk.checked },
         (res) => {
           confirmBtn.disabled = false;
           cancelBtn.disabled = false;

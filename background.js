@@ -272,10 +272,11 @@ function smartSearchGoods(words) {
     .catch((err) => ({ ok: false, error: err.message }));
 }
 
-function copyCart(fbUserId, sourceFbUserId, dryRun, includeExpired) {
+function copyCart(fbUserId, sourceFbUserId, dryRun, includeExpired, mergeDuplicates) {
   const body = { fbUserId, sourceFbUserId };
   if (dryRun) body.dryRun = true;
   if (includeExpired) body.includeExpired = true;
+  if (mergeDuplicates) body.mergeDuplicates = true;
   return fetch(`${CART_API_BASE}/api/cart/copy`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -769,6 +770,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message?.type === 'CART_SPLIT_ITEM') {
+    const { recId, goodsId, originalQty, splitQty, fbUserId } = message;
+    updateCartQty(recId, originalQty - splitQty)
+      .then((res) => res.ok ? addCartItem(fbUserId, goodsId, splitQty) : res)
+      .then(sendResponse)
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+
   if (message?.type === 'SEARCH_GOODS') {
     searchGoods(message.keyword || '', message.page || 1).then(sendResponse);
     return true;
@@ -780,7 +790,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === 'CART_COPY_ITEMS') {
-    copyCart(message.fbUserId, message.sourceFbUserId, message.dryRun || false, message.includeExpired || false).then(sendResponse);
+    copyCart(message.fbUserId, message.sourceFbUserId, message.dryRun || false, message.includeExpired || false, message.mergeDuplicates || false).then(sendResponse);
     return true;
   }
 
