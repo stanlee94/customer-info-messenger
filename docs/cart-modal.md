@@ -11,11 +11,13 @@ No `manifest.json` changes needed — the API gateway host is already in `host_p
 - `CART_MODAL_ID`, `CART_MODAL_OVERLAY_ID` — element IDs.
 - `cartModalPsid` — PSID of the customer whose cart is open; set by `openCartModal(psid)`.
 - `cartSelectedRecIds` — `Set` of `recId` strings currently checked; reset on every `showCartView()` call.
+- `cartTotalItemCount` — total number of items in the current cart load; set by `renderCartContent`; used by `syncBulkButtons` to determine partial vs. full selection for the List button.
 - `cartUserId` — `userId` returned by `GET /api/cart`, stored on every cart load; passed to checkout and order-create calls.
 - `goodsKeyword`, `goodsPage`, `goodsTotalPages` — goods-picker pagination state; reset when `showGoodsPicker()` is called.
 - `goodsQtys` — `{ [goodsId]: qty }` map persisting per-product stepper values across searches within one picker session; reset on `openCartModal`.
 - `goodsSearchMode` — `'normal'` | `'smart'`; reset to `'normal'` on every `showGoodsPicker()` call.
 - `goodsSelectedIds` — `Set<goodsId>` of items checked in the multi-select toolbar; reset on `showGoodsPicker()`, on every new search, and on mode switch.
+- `goodsDataMap` — `{ [goodsId]: { name, price } }` populated by `buildGoodsCard` as cards render; used by the Quote button to format copy text without re-querying the DOM. Reset on `showGoodsPicker()`.
 - `copySourceId` — the last-typed source fbUserId for copy cart; persists within the same page session.
 
 ## Header modes
@@ -38,9 +40,10 @@ No `manifest.json` changes needed — the API gateway host is already in `host_p
 
 Rendered elements:
 - **Modal header subtitle** — starts at `0 items · RM0.00`; updated live by `syncBulkButtons()` on every checkbox change to show the selected count and sum of selected line totals. Uses `itemLineTotals` (`Map<recId, lineTotal>`) built once in `renderCartContent`.
-- **Toolbar** (`.cim-cart-toolbar`) — `☐ All` select-all checkbox (indeterminate when partial); `Delete` and `Renew Expiry` bulk buttons (disabled when `cartSelectedRecIds` is empty).
+- **Toolbar** (`.cim-cart-toolbar`) — `☐ All` select-all checkbox (indeterminate when partial); `Delete`, `Renew`, and `+ Order` bulk buttons (disabled when `cartSelectedRecIds` is empty).
 - **Item rows** (`.cim-cart-item-row`, `--expired` variant) — checkbox feeding `cartSelectedRecIds`; name + LIVE/SYS badge + ⚠ Expired badge; `RM X.xx/ea` price; `[−][qty][+]` stepper with editable `<input type="text">` in the middle (digit-only filter on `input` event; Enter/blur commits; Escape restores; input disabled during in-flight API call); line total; per-item `Renew` button (expired items only); `🗑` delete button.
-- **Sticky total bar** (`.cim-cart-total-bar`) — sits between the scrollable body and the footer; always visible. Shows the full cart total (sum of all line totals) regardless of selection. Written by `renderCartContent`; shown/hidden by `setCartHeaderMode` (visible only in `'cart'` mode).
+- **Sticky total bar** (`.cim-cart-total-bar`) — sits between the scrollable body and the footer; always visible. Shows the full cart total (sum of all line totals) regardless of selection, plus a **List button** on the right. Written by `renderCartContent`; shown/hidden by `setCartHeaderMode` (visible only in `'cart'` mode).
+  - **List button** (`.cim-cart-list-btn`) — label switches between **"All List"** (blue, `#0a7cff`) and **"Partial List"** (amber, `#f59e0b`) driven by `syncBulkButtons`: partial when `cartSelectedRecIds.size > 0 && < cartTotalItemCount`, otherwise all. Clicking opens `showListOptionsPopup(triggerEl, showTooltip)` — a small fixed-position popup above the button with **All / 🇲🇾 MYR / 🇸🇬 SGD** options. Partial selection → `GET_SELECTED_CART_SUMMARY { psid, recIds, option }` → `POST /users/:psid/selected`; no/full selection → `GET_CART_SUMMARY { psid, option }` → `GET /users/:psid?option=N`. Both paths copy the resulting text to clipboard and show "Copied!" as a tooltip on the button. The tooltip is styled directly under `.cim-cart-list-btn .cim-copy-tooltip` (not under `#cim-purchase-panel`) so it is absolutely positioned correctly within the cart modal.
 
 `setCartBodyBusy(true/false)` adds `pointer-events:none; opacity:0.55` to the body during bulk operations. `renderCartContent` calls `setCartBodyBusy(false)` at its very start so the busy overlay is always cleared when the cart reloads — this fixes a freeze where `Renew Expiry` (or bulk `Delete`) on a successful API response would leave the modal permanently grayed.
 
@@ -58,13 +61,17 @@ Rendered elements:
 
 `SMART_SEARCH_GOODS { words }` → `background.js` `smartSearchGoods(words)` → `POST /api/goods/search` with body `{ words: string[] }` → `{ ok, items, total }`. Same item shape as `GET /api/goods`. No match → `total: 0, items: []` (never `noResult`). Error → `{ ok: false, msg }`.
 
-**Shared card layout** (`buildGoodsCard(goods)` — closure inside `renderGoodsPicker`): checkbox (`.cim-goods-item-cb`, `data-goods-id` attribute) + 48 × 48 px thumbnail + name + `RM X.xx · Stock: N` meta + `OFF` badge + qty stepper + `Add` button. Both modes use the same builder.
+**Shared card layout** (`buildGoodsCard(goods)` — closure inside `renderGoodsPicker`): checkbox (`.cim-goods-item-cb`, `data-goods-id` attribute) + 48 × 48 px thumbnail + name + `RM X.xx · Stock: N` meta + `OFF` badge + qty stepper + `Add` button. Both modes use the same builder. `buildGoodsCard` also writes `goodsDataMap[goods.goodsId] = { name, price }` so the Quote button can format copy text without reading the DOM.
+
+**Thumbnail zoom** — if `goods.img` exists the thumb div gets `.cim-goods-thumb--clickable` (`cursor: zoom-in`; image scales 12% on hover). Clicking it calls `openGalleryModal([{ url, id, label }], 0)` to show the full-screen gallery for that one product. Escape inside the gallery only closes the gallery (capture-phase `stopImmediatePropagation` prevents the cart modal's Escape handler from firing).
 
 **Multi-select toolbar** (`.cim-goods-toolbar`) sits between the search row and the list:
 - `☐ All` select-all label+checkbox (`selectAllCb`) — goes indeterminate on partial selection.
-- `Add Selected (N)` button (`addSelectedBtn`) — disabled at 0; shows count when > 0.
+- Button group (`.cim-goods-btn-group`, flex row) containing two buttons:
+  - **Quote** (`quoteBtn`, outlined blue) — disabled at 0 selections. On click: formats every selected item as `"{name} - RM {price}"`, joins with `\n`, copies to clipboard, shows `"Copied!"` for 1.8 s then reverts. Uses a cleared-and-reset `quoteBtn._resetTimer` so rapid re-clicks always revert correctly.
+  - **Add Selected (N)** (`addSelectedBtn`, filled blue) — disabled at 0; shows count when > 0.
 
-`goodsSelectedIds` (module-level `Set`) tracks checked goodsIds. `visibleGoodsIds` (closure array, reset on every render) lists all goodsIds currently in the list — used for select-all logic. `syncToolbar()` keeps both the select-all state and the button text/enabled state in sync.
+`goodsSelectedIds` (module-level `Set`) tracks checked goodsIds. `visibleGoodsIds` (closure array, reset on every render) lists all goodsIds currently in the list — used for select-all logic. `syncToolbar()` keeps both the select-all state and both button enabled states in sync.
 
 Switching modes or running a new search clears `goodsSelectedIds` and `visibleGoodsIds` and calls `syncToolbar()`. Switching back to Normal from Smart re-runs `doSearch('', 1)` to restore the initial list.
 
@@ -122,6 +129,7 @@ Triggered by the **"↙ Copy"** button in the cart header. Lets the operator cop
 | Message type | API call |
 |---|---|
 | `GET_CART_ITEMS { psid }` | `GET /api/cart?fbUserId=<psid>` |
+| `GET_SELECTED_CART_SUMMARY { psid, recIds, option }` | `POST /users/:psid/selected` |
 | `CART_DELETE_ITEMS { recIds }` | `POST /api/cart/delete` |
 | `CART_REFRESH_VALIDITY { recIds }` | `POST /api/cart/refresh-validity` |
 | `CART_UPDATE_QTY { recId, qty }` | `POST /api/cart/quantity` |

@@ -1038,12 +1038,14 @@
   let cartModalPsid = null;
   let cartUserId = null;
   let cartSelectedRecIds = new Set();
+  let cartTotalItemCount = 0;
   let goodsKeyword = '';
   let goodsPage = 1;
   let goodsTotalPages = 1;
   let goodsQtys = {};
   let goodsSearchMode = 'normal'; // 'normal' | 'smart'
   let goodsSelectedIds = new Set();
+  let goodsDataMap = {}; // goodsId → { name, price }
   let copySourceId = '';
 
   function ensureCartModal() {
@@ -1130,7 +1132,26 @@
     totalBarLabel.textContent = 'Total';
     const totalBarValue = document.createElement('span');
     totalBarValue.className = 'cim-cart-total-value';
-    totalBar.append(totalBarLabel, totalBarValue);
+
+    const listBtn = document.createElement('button');
+    listBtn.type = 'button';
+    listBtn.className = 'cim-cart-list-btn';
+    const listBtnLabel = document.createElement('span');
+    listBtnLabel.className = 'cim-cart-list-btn-label';
+    listBtnLabel.textContent = 'All List';
+    const listBtnTooltip = document.createElement('span');
+    listBtnTooltip.className = 'cim-copy-tooltip';
+    listBtn.append(listBtnLabel, listBtnTooltip);
+    let listBtnHideTimer = null;
+    const showListBtnTooltip = (text) => {
+      listBtnTooltip.textContent = text;
+      listBtnTooltip.classList.add('cim-copy-tooltip--visible');
+      clearTimeout(listBtnHideTimer);
+      listBtnHideTimer = setTimeout(() => listBtnTooltip.classList.remove('cim-copy-tooltip--visible'), 1500);
+    };
+    listBtn.addEventListener('click', () => showListOptionsPopup(listBtn, showListBtnTooltip));
+
+    totalBar.append(totalBarLabel, totalBarValue, listBtn);
 
     modal.append(header, drawerBody, totalBar, footer);
     overlay.appendChild(modal);
@@ -1224,12 +1245,12 @@
     });
   }
 
-  function showDeleteConfirm(triggerEl, onConfirm) {
+  function showDeleteConfirm(triggerEl, onConfirm, labelText = 'Delete?') {
     document.querySelector('.cim-delete-confirm')?.remove();
     const pop = document.createElement('div');
     pop.className = 'cim-delete-confirm';
     const label = document.createElement('span');
-    label.textContent = 'Delete?';
+    label.textContent = labelText;
     const yesBtn = document.createElement('button');
     yesBtn.className = 'cim-delete-confirm-yes';
     yesBtn.textContent = 'Yes';
@@ -1246,6 +1267,58 @@
     setTimeout(() => document.addEventListener('click', dismiss, { once: true }), 0);
   }
 
+  function showListOptionsPopup(triggerEl, showTooltip) {
+    document.querySelector('.cim-list-options-popup')?.remove();
+
+    const isPartial = cartSelectedRecIds.size > 0 && cartSelectedRecIds.size < cartTotalItemCount;
+    const recIds = isPartial ? [...cartSelectedRecIds] : [];
+    const psid = cartModalPsid;
+    const uid = sessionState.uid;
+
+    const pop = document.createElement('div');
+    pop.className = 'cim-list-options-popup';
+
+    CART_OPTIONS.forEach(({ option, label }) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'cim-list-option-btn';
+      btn.textContent = label;
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        pop.remove();
+
+        const handleResponse = (response) => {
+          if (getUserIdFromUrl() !== uid) return;
+          if (chrome.runtime.lastError || !response || !response.ok) {
+            showTooltip(response?.error || 'Failed.');
+            return;
+          }
+          if (response.text.includes(EMPTY_CART_MARKER)) {
+            showTooltip('Empty Cart!');
+            return;
+          }
+          const customPrefix = document.getElementById(PANEL_ID)?.querySelector('.cim-cart-prefix')?.value.trim() || '';
+          const textToCopy = customPrefix
+            ? response.text.replace(DEFAULT_CART_PREFIX, customPrefix)
+            : response.text;
+          copyToClipboard(textToCopy).then(() => showTooltip('Copied!'));
+        };
+
+        if (isPartial) {
+          chrome.runtime.sendMessage({ type: 'GET_SELECTED_CART_SUMMARY', psid, recIds, option }, handleResponse);
+        } else {
+          chrome.runtime.sendMessage({ type: 'GET_CART_SUMMARY', psid, option }, handleResponse);
+        }
+      });
+      pop.appendChild(btn);
+    });
+
+    document.body.appendChild(pop);
+    const rect = triggerEl.getBoundingClientRect();
+    pop.style.cssText = `position:fixed;right:${window.innerWidth - rect.right}px;bottom:${window.innerHeight - rect.top + 6}px;z-index:2147483647`;
+    setTimeout(() => document.addEventListener('click', () => pop.remove(), { once: true }), 0);
+  }
+
   function renderCartContent(body, modal, data, psid) {
     setCartBodyBusy(false);
     body.innerHTML = '';
@@ -1259,6 +1332,13 @@
       empty.textContent = '🛒 Cart is empty';
       body.appendChild(empty);
       return;
+    }
+
+    cartTotalItemCount = items.length;
+    const listBtnLabelEl = modal.querySelector('.cim-cart-list-btn-label');
+    if (listBtnLabelEl) {
+      listBtnLabelEl.textContent = 'All List';
+      listBtnLabelEl.closest('.cim-cart-list-btn')?.classList.remove('cim-cart-list-btn--partial');
     }
 
     const total = items.reduce((sum, it) => sum + (parseFloat(it.price) || 0) * (parseInt(it.qty, 10) || 0), 0);
@@ -1289,7 +1369,7 @@
     const bulkRenewBtn = document.createElement('button');
     bulkRenewBtn.type = 'button';
     bulkRenewBtn.className = 'cim-cart-bulk-btn cim-cart-bulk-btn--renew';
-    bulkRenewBtn.textContent = 'Renew Expiry';
+    bulkRenewBtn.textContent = 'Renew';
     bulkRenewBtn.disabled = true;
     const bulkOrderBtn = document.createElement('button');
     bulkOrderBtn.type = 'button';
@@ -1311,6 +1391,12 @@
       const selTotal = [...cartSelectedRecIds].reduce((sum, id) => sum + (itemLineTotals.get(id) || 0), 0);
       const n = cartSelectedRecIds.size;
       if (subtitleEl) subtitleEl.textContent = `${n} item${n === 1 ? '' : 's'} · RM${selTotal.toFixed(2)}`;
+      const lbl = modal.querySelector('.cim-cart-list-btn-label');
+      if (lbl) {
+        const isPartial = n > 0 && n < cartTotalItemCount;
+        lbl.textContent = isPartial ? 'Partial List' : 'All List';
+        lbl.closest('.cim-cart-list-btn')?.classList.toggle('cim-cart-list-btn--partial', isPartial);
+      }
     }
 
     selectAllChk.addEventListener('change', () => {
@@ -1512,8 +1598,9 @@
     goodsPage = 1;
     goodsTotalPages = 1;
     goodsQtys = {};
-    goodsSearchMode = 'normal';
+    goodsSearchMode = 'smart';
     goodsSelectedIds = new Set();
+    goodsDataMap = {};
     const modal = ensureCartModal();
     setCartHeaderMode('goods');
     renderGoodsPicker(modal.querySelector('.cim-drawer-body'), psid);
@@ -1572,12 +1659,20 @@
     const selectAllText = document.createElement('span');
     selectAllText.textContent = 'All';
     selectAllLabel.append(selectAllCb, selectAllText);
+    const quoteBtn = document.createElement('button');
+    quoteBtn.type = 'button';
+    quoteBtn.className = 'cim-goods-quote-btn';
+    quoteBtn.textContent = 'Quote';
+    quoteBtn.disabled = true;
     const addSelectedBtn = document.createElement('button');
     addSelectedBtn.type = 'button';
     addSelectedBtn.className = 'cim-goods-add-selected-btn';
     addSelectedBtn.textContent = 'Add Selected';
     addSelectedBtn.disabled = true;
-    toolbarRow.append(selectAllLabel, addSelectedBtn);
+    const btnGroup = document.createElement('div');
+    btnGroup.className = 'cim-goods-btn-group';
+    btnGroup.append(quoteBtn, addSelectedBtn);
+    toolbarRow.append(selectAllLabel, btnGroup);
     body.appendChild(toolbarRow);
 
     const listEl = document.createElement('div');
@@ -1593,6 +1688,7 @@
       const count = goodsSelectedIds.size;
       addSelectedBtn.disabled = count === 0;
       addSelectedBtn.textContent = count === 0 ? 'Add Selected' : `Add Selected (${count})`;
+      quoteBtn.disabled = count === 0;
       const allChecked = visibleGoodsIds.length > 0 && visibleGoodsIds.every((id) => goodsSelectedIds.has(id));
       const someChecked = visibleGoodsIds.some((id) => goodsSelectedIds.has(id));
       selectAllCb.checked = allChecked;
@@ -1606,6 +1702,19 @@
         cb.checked = goodsSelectedIds.has(cb.dataset.goodsId);
       });
       syncToolbar();
+    });
+
+    quoteBtn.addEventListener('click', () => {
+      const lines = [...goodsSelectedIds].map((id) => {
+        const d = goodsDataMap[id];
+        return d ? `${d.name} - RM ${d.price.toFixed(2)}` : null;
+      }).filter(Boolean);
+      if (!lines.length) return;
+      navigator.clipboard.writeText(lines.join('\n')).then(() => {
+        quoteBtn.textContent = 'Copied!';
+        clearTimeout(quoteBtn._resetTimer);
+        quoteBtn._resetTimer = setTimeout(() => { quoteBtn.textContent = 'Quote'; }, 1800);
+      });
     });
 
     addSelectedBtn.addEventListener('click', () => {
@@ -1674,6 +1783,7 @@
       checkbox.className = 'cim-goods-item-cb cim-goods-checkbox';
       checkbox.dataset.goodsId = goods.goodsId;
       checkbox.checked = goodsSelectedIds.has(goods.goodsId);
+      goodsDataMap[goods.goodsId] = { name: goods.name || '(Unknown)', price: parseFloat(goods.price) || 0 };
       checkbox.addEventListener('change', () => {
         if (checkbox.checked) goodsSelectedIds.add(goods.goodsId);
         else goodsSelectedIds.delete(goods.goodsId);
@@ -1689,6 +1799,11 @@
         img.alt = '';
         img.addEventListener('error', () => { img.style.display = 'none'; thumb.classList.add('cim-goods-thumb--empty'); });
         thumb.appendChild(img);
+        thumb.classList.add('cim-goods-thumb--clickable');
+        thumb.addEventListener('click', (e) => {
+          e.stopPropagation();
+          openGalleryModal([{ url: goods.img, id: String(goods.goodsId), label: goods.name }], 0);
+        });
       } else {
         thumb.classList.add('cim-goods-thumb--empty');
       }
@@ -2306,6 +2421,16 @@
             return;
           }
           renderCheckoutSuccess(liveModal.querySelector('.cim-drawer-body'), liveModal, psid, res);
+          chrome.runtime.sendMessage({ type: 'GET_ORDER_LIST', psid }, (r) => {
+            if (r?.ok && r.orders?.length) {
+              renderRecentOrdersInPanel(r.orders.slice(0, 5).map((o) => ({
+                orderId: o.orderId,
+                orderSn: o.orderSn,
+                totalAmount: o.amount,
+                orderDate: o.orderTime,
+              })));
+            }
+          });
         }
       );
     });
@@ -2928,6 +3053,8 @@
     if (data.items && data.items.length) {
       const { sect: itemsSect, hdr: itemsHdr } = mkSection(`Items · ${data.itemsCount || data.items.length} pcs`);
       const list = mkEl('div', 'cim-od-items-list');
+      const itemImgList = data.items.filter((it) => it.img).map((it, i) => ({ url: it.img, id: `item-${i}`, label: it.name }));
+      let imgCounter = 0;
       data.items.forEach((item) => {
         const row = mkEl('div', 'cim-od-item-row');
         const imgWrap = mkEl('div', 'cim-od-item-img-wrap');
@@ -2935,6 +3062,12 @@
           const img = mkEl('img', 'cim-od-item-img');
           img.src = item.img;
           img.alt = item.name || '';
+          const capturedIdx = imgCounter++;
+          imgWrap.classList.add('cim-od-item-img-wrap--clickable');
+          imgWrap.addEventListener('click', (e) => {
+            e.stopPropagation();
+            openGalleryModal(itemImgList, capturedIdx);
+          });
           imgWrap.appendChild(img);
         }
         const info = mkEl('div', 'cim-od-item-info');
@@ -3054,7 +3187,10 @@
       photoRes.orders.forEach((wmsOrder, wmsIdx) => {
         const contentEls = buildWmsContent(wmsOrder);
         if (singleWms) {
-          contentEls.forEach((el) => photoSect.appendChild(el));
+          const wrapper = mkEl('div', 'cim-parcel-section-body');
+          wrapper.style.display = 'flex';
+          contentEls.forEach((el) => wrapper.appendChild(el));
+          photoSect.appendChild(wrapper);
         } else {
           const wmsSection = mkEl('div', 'cim-parcel-section');
           const wmsHeader = mkEl('div', 'cim-parcel-section-header');
@@ -3100,7 +3236,8 @@
           footerActions.appendChild(mkOpBtn('Pay', 'cim-od-op-btn--pay', () => doOrderOperations(data.orderId, ['pay'], modal)));
         }
         if (sp.payment?.startsWith('已') && sp.shipping?.startsWith('未')) {
-          footerActions.appendChild(mkOpBtn('Ship', 'cim-od-op-btn--ship', () => doOrderOperations(data.orderId, ['shiped'], modal)));
+          const shipBtn = mkOpBtn('Ship', 'cim-od-op-btn--ship', () => showDeleteConfirm(shipBtn, () => doOrderOperations(data.orderId, ['shiped'], modal), 'Confirm ship order 确认更改状态至 [已出货] ?'));
+          footerActions.appendChild(shipBtn);
         }
       }
     }
@@ -3611,10 +3748,13 @@
     nextBtn.textContent = '›';
     nextBtn.addEventListener('click', () => galleryStep(1));
 
+    const caption = document.createElement('div');
+    caption.className = 'cim-gallery-caption';
+
     const thumbStrip = document.createElement('div');
     thumbStrip.className = 'cim-gallery-thumbs';
 
-    modal.append(closeBtn, counter, prevBtn, mainArea, nextBtn, thumbStrip);
+    modal.append(closeBtn, counter, prevBtn, mainArea, nextBtn, caption, thumbStrip);
     document.body.appendChild(modal);
     return modal;
   }
@@ -3631,11 +3771,11 @@
     renderGalleryThumbs(modal);
 
     modal._onKeyDown = (e) => {
-      if (e.key === 'ArrowLeft') { e.preventDefault(); galleryStep(-1); }
-      else if (e.key === 'ArrowRight') { e.preventDefault(); galleryStep(1); }
-      else if (e.key === 'Escape') { e.preventDefault(); closeGalleryModal(); }
+      if (e.key === 'ArrowLeft') { e.preventDefault(); e.stopImmediatePropagation(); galleryStep(-1); }
+      else if (e.key === 'ArrowRight') { e.preventDefault(); e.stopImmediatePropagation(); galleryStep(1); }
+      else if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); closeGalleryModal(); }
     };
-    document.addEventListener('keydown', modal._onKeyDown);
+    document.addEventListener('keydown', modal._onKeyDown, true);
   }
 
   function closeGalleryModal() {
@@ -3643,7 +3783,7 @@
     if (!modal) return;
     modal.classList.remove('cim-gallery-modal--open');
     if (modal._onKeyDown) {
-      document.removeEventListener('keydown', modal._onKeyDown);
+      document.removeEventListener('keydown', modal._onKeyDown, true);
       modal._onKeyDown = null;
     }
   }
@@ -3667,6 +3807,8 @@
     const next = modal.querySelector('.cim-gallery-nav--next');
     if (prev) prev.style.display = single ? 'none' : '';
     if (next) next.style.display = single ? 'none' : '';
+    const caption = modal.querySelector('.cim-gallery-caption');
+    if (caption) caption.textContent = galleryImages[galleryIndex]?.label || '';
   }
 
   function renderGalleryThumbs(modal) {

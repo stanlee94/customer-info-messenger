@@ -1346,6 +1346,22 @@
   display: block;
 }
 
+.cim-gallery-caption {
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 13px;
+  font-weight: 500;
+  text-align: center;
+  padding: 0 40px 4px;
+  max-width: 480px;
+  width: 100%;
+  min-height: 20px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  letter-spacing: 0.01em;
+  flex-shrink: 0;
+}
+
 /* ── Cart modal ──────────────────────────────────────────────────────────── */
 #cim-cart-modal-overlay {
   display: none;
@@ -1861,6 +1877,34 @@
   cursor: default;
 }
 
+.cim-goods-btn-group {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.cim-goods-quote-btn {
+  height: 28px;
+  padding: 0 10px;
+  border: 1.5px solid #0a7cff;
+  border-radius: 7px;
+  background: transparent;
+  color: #0a7cff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, opacity 0.15s;
+}
+
+.cim-goods-quote-btn:hover:not(:disabled) {
+  background: rgba(10, 124, 255, 0.08);
+}
+
+.cim-goods-quote-btn:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+
 .cim-goods-item-check {
   display: flex;
   align-items: center;
@@ -2003,6 +2047,30 @@
   content: '—';
   font-size: 12px;
   color: #8a8d91;
+}
+
+.cim-goods-thumb--clickable {
+  cursor: zoom-in;
+  position: relative;
+}
+.cim-goods-thumb--clickable img {
+  transition: transform 0.2s ease;
+}
+.cim-goods-thumb--clickable:hover img {
+  transform: scale(1.12);
+}
+.cim-goods-thumb--clickable::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0);
+  border-radius: 8px;
+  transition: background 0.15s;
+  z-index: 1;
+  pointer-events: none;
+}
+.cim-goods-thumb--clickable:hover::after {
+  background: rgba(0, 0, 0, 0.14);
 }
 
 .cim-goods-info {
@@ -2608,6 +2676,30 @@
   display: block;
 }
 
+.cim-od-item-img-wrap--clickable {
+  cursor: zoom-in;
+  position: relative;
+}
+.cim-od-item-img-wrap--clickable .cim-od-item-img {
+  transition: transform 0.2s ease;
+}
+.cim-od-item-img-wrap--clickable:hover .cim-od-item-img {
+  transform: scale(1.12);
+}
+.cim-od-item-img-wrap--clickable::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0);
+  border-radius: 6px;
+  transition: background 0.15s;
+  z-index: 1;
+  pointer-events: none;
+}
+.cim-od-item-img-wrap--clickable:hover::after {
+  background: rgba(0, 0, 0, 0.14);
+}
+
 .cim-od-item-info {
   flex: 1;
   min-width: 0;
@@ -3100,3 +3192,71 @@
   accent-color: #0a7cff;
   cursor: pointer;
 }
+
+/* ── Cart list button (total bar) ─────────────────────────────────────────── */
+.cim-cart-list-btn .cim-copy-tooltip {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-bottom: 4px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: #1c1e21;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+.cim-cart-list-btn .cim-copy-tooltip--visible { opacity: 1; }
+
+.cim-cart-list-btn {
+  position: relative;
+  height: 32px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 8px;
+  background: #0a7cff;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+.cim-cart-list-btn:hover { background: #0062cc; }
+.cim-cart-list-btn--partial { background: #f59e0b; }
+.cim-cart-list-btn--partial:hover { background: #d97706; }
+
+/* ── List options popup ───────────────────────────────────────────────────── */
+.cim-list-options-popup {
+  background: #fff;
+  border: 1px solid #e4e6eb;
+  border-radius: 10px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.15);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 120px;
+}
+.cim-list-option-btn {
+  width: 100%;
+  padding: 8px 14px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: #050505;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.cim-list-option-btn:hover { background: #f0f2f5; }

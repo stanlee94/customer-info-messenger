@@ -167,6 +167,24 @@ function getCartSummary(psid, option) {
     .catch((err) => ({ ok: false, error: err.message }));
 }
 
+function getSelectedCartSummary(psid, recIds, option) {
+  return fetch(`${CART_API_BASE}/users/${encodeURIComponent(psid)}/selected`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ recIds, option }),
+  })
+    .then((res) => {
+      if (!res.ok) throw new Error(`Cart API error: ${res.status}`);
+      return res.json();
+    })
+    .then((json) => {
+      const text = json?.content?.messages?.[0]?.text;
+      if (typeof text !== 'string') throw new Error('Unexpected cart API response.');
+      return { ok: true, text, expiredAvailable: json.expiredAvailable === true, myrSum: json.myrSum ?? null, sgdSum: json.sgdSum ?? null, matched: json.matched || [], missing: json.missing || [] };
+    })
+    .catch((err) => ({ ok: false, error: err.message }));
+}
+
 function checkParcelPhotos(orderIds) {
   if (!orderIds.length) return Promise.resolve({ ok: true, results: {} });
   return fetch(`${CART_API_BASE}/parcelPhotos/check?ids=${encodeURIComponent(orderIds.join(','))}`)
@@ -281,7 +299,7 @@ function fetchOrderList(psid) {
 function getOrderDetail(orderId) {
   return fetch(`${CART_API_BASE}/api/orders/${encodeURIComponent(orderId)}`)
     .then((res) => res.json())
-    .then((json) => json.ok ? { ok: true, ...json, orderSn: 'F' + json.orderSn } : { ok: false, error: json.msg || 'Failed to load order.' })
+    .then((json) => json.ok ? { ok: true, ...json } : { ok: false, error: json.msg || 'Failed to load order.' })
     .catch((err) => ({ ok: false, error: err.message }));
 }
 
@@ -346,7 +364,7 @@ function createOrder(fbUserId, userId, items, customer, shippingIdType, confirm,
     .then((res) => res.json())
     .then((json) =>
       json.ok
-        ? { ok: true, orderId: json.orderId, orderSn: 'F' + json.orderSn, status: json.status, via: json.via }
+        ? { ok: true, orderId: json.orderId, orderSn: json.orderSn, status: json.status, via: json.via }
         : { ok: false, error: json.msg || 'Order creation failed.' }
     )
     .catch((err) => ({ ok: false, error: err.message }));
@@ -619,7 +637,7 @@ function getCustomerSummaryByPsid(psid) {
       if (!row) return { notFound: true };
 
       return fetchOrderList(psid).then((res) => {
-        const allOrders = (res.ok ? res.orders : []).map((o) => ({ ...o, orderSn: 'F' + o.orderSn }));
+        const allOrders = res.ok ? res.orders : [];
         const ec2Recent = allOrders.slice(0, 5).map((o) => ({
           orderId: o.orderId,
           orderSn: o.orderSn,
@@ -711,6 +729,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message?.type === 'GET_SELECTED_CART_SUMMARY') {
+    getSelectedCartSummary(message.psid, message.recIds || [], message.option).then(sendResponse);
+    return true;
+  }
+
   if (message?.type === 'GET_ORDER_STATUSES') {
     fetchOrderStatuses(message.orderIds || []).then(sendResponse);
     return true;
@@ -763,7 +786,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.type === 'GET_ORDER_LIST') {
     fetchOrderList(message.psid).then((res) => {
-      if (res.ok) res.orders = res.orders.map((o) => ({ ...o, orderSn: 'F' + o.orderSn }));
       sendResponse(res);
     });
     return true;

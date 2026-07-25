@@ -24,7 +24,7 @@ GET /api/orders?fbUserId=<psid>&newStatus=0&noCancel=on
 → { ok, orders: [{ orderId, orderSn, mobile, amount, consignee, statusText,
                    statusParts, orderTime, shippingMethod, paymentMethod }] }
 ```
-`statusParts` is `{ confirm, payment, shipping }`. `background.js` normalizes `orderSn` to be F-prefixed (e.g. `"F12345"`) before responding — consumers never need to add `"F"` themselves.
+`statusParts` is `{ confirm, payment, shipping }`. The EC2 API now returns `orderSn` already F-prefixed (e.g. `"F0955820260113003753"`). `background.js` passes it through verbatim — **never prepend `"F"` on the client.** The leading `0` after `F` is order-dependent and cannot be reconstructed client-side; always use the raw API value.
 
 **Card layout** (`.cim-ol-card`, flex column, `gap: 5px`):
 1. `.cim-ol-top` — `orderSn` (already F-prefixed, bold, `.cim-ol-sn`) + `RM X.XX` (green, `.cim-ol-amount`) — flex row, space-between.
@@ -74,7 +74,7 @@ The header swaps between two modes via `setOrderListHeaderMode(mode, modal)`:
 1. `.cim-od-status-row` — three `.cim-ol-status-badge` pills reusing existing colour classes (`--done` / `--pending` / `--waiting`).
 2. `.cim-drawer-info-card` — order meta: Order Time, Payment, Pay Time (if paid), Shipping, Ship Time (if shipped), Buyer name.
 3. **Recipient** `.cim-od-section` — section header with title + **Edit** button (`.cim-od-edit-btn`); info card with Name / Mobile / Email / Address.
-4. **Items** `.cim-od-section` — `.cim-od-items-list`; each `.cim-od-item-row` has: 44 × 44 px thumbnail (`.cim-od-item-img-wrap`), name + meta line (live code `.cim-od-item-code`, origin `.cim-od-item-origin`, ship state badge `.cim-od-ship--done` / `--pending`), qty × line total column.
+4. **Items** `.cim-od-section` — `.cim-od-items-list`; each `.cim-od-item-row` has: 44 × 44 px thumbnail (`.cim-od-item-img-wrap`), name + meta line (live code `.cim-od-item-code`, origin `.cim-od-item-origin`, ship state badge `.cim-od-ship--done` / `--pending`), qty × line total column. When `item.img` is present, the wrap gets `.cim-od-item-img-wrap--clickable` (`cursor: zoom-in`; image scales 12% on hover). Clicking it calls `openGalleryModal(itemImgList, capturedIdx)` where `itemImgList` is all items-with-images in this order (built before the loop as `[{ url, id, label }]`) and `capturedIdx` is the 0-based index into that list. This lets the operator arrow-key through all product images in the order. Escape inside the gallery only closes the gallery.
 5. **Summary** `.cim-od-section` — `.cim-od-fee-list` rows: Subtotal, Shipping, Discount (green, `--discount`), Add Amount (red, `--add`), **Payable** (bold, `--payable` with top border).
 6. **Adjustment** (`.cim-checkout-adj`) — **hidden when `statusParts.shipping` starts with `已` (order already shipped)**. Otherwise: type radio (Discount type=1 / Add Amount type=2), amount input, note input, "Apply" button → `ORDER_ADJUSTMENT { orderId, price, adjType, note? }`. On success calls `showOrderDetail(orderId)` to re-fetch and re-render. Error via `showOrderDetailToast`.
 7. **Notes** `.cim-od-section` — Order Note and CS Note; omitted when both absent.
