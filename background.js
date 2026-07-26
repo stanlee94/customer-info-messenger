@@ -2,6 +2,13 @@ const MANYCHAT_API_BASE = 'https://api.manychat.com';
 const CART_API_BASE = 'https://yxch9n4n6e.execute-api.ap-southeast-1.amazonaws.com/latest';
 const ORDER_STATUS_API_BASE = 'https://7n881aguj8.execute-api.ap-southeast-1.amazonaws.com';
 
+// Let content scripts read/write chrome.storage.session (default is
+// trusted-contexts only). Used for browser-session prefs like the cart's
+// Simple/Adv mode. Top-level so it runs on every service-worker start.
+try {
+  chrome.storage.session?.setAccessLevel?.({ accessLevel: 'TRUSTED_AND_UNTRUSTED_CONTEXTS' });
+} catch (e) { /* older Chrome — content falls back to in-memory */ }
+
 function getAiHealth() {
   return new Promise((resolve) => {
     chrome.storage.local.get(['aiApiUrl', 'aiApiToken'], ({ aiApiUrl, aiApiToken }) => {
@@ -150,7 +157,10 @@ function manyChatTagAction(action, psid, tagId) {
 function checkSession() {
   return fetch(`${CART_API_BASE}/checkSession`)
     .then((res) => res.json().then((json) => ({ ok: true, valid: res.ok && json?.status === 'ok' })))
-    .catch(() => ({ ok: true, valid: false }));
+    // ok:false = network failure — distinguishable from a genuinely dead
+    // session so the content script can retry instead of hiding the cart
+    // features for the whole tab session.
+    .catch(() => ({ ok: false, valid: false }));
 }
 
 function getCartSummary(psid, option) {
@@ -402,6 +412,10 @@ function fetchOrderStatuses(orderIds) {
   if (!orderIds.length) return Promise.resolve({ ok: true, statuses: {} });
   return fetch(`${ORDER_STATUS_API_BASE}/orders/${orderIds.join(',')}`)
     .then((res) => {
+      // 404 = none of the SNs exist in the ERP yet (e.g. a customer whose
+      // only orders were placed today). That's a valid "all NO DATA" answer,
+      // not an API failure — mixed batches return 200 with notFound entries.
+      if (res.status === 404) return { data: [] };
       if (!res.ok) throw new Error(`Order status API error: ${res.status}`);
       return res.json();
     })
@@ -637,10 +651,16 @@ function fetchBaserowRecentOrders(config, psid) {
 
 function getCustomerSummaryByPsid(psid) {
   return withBaserowConfig((config) => {
-    return findBaserowUserRowByPsid(config, psid).then((row) => {
+    // Baserow row and EC2 order list are independent reads — run them
+    // together. Serial was 300-800ms slower on every conversation switch.
+    // (On notFound the order-list result is discarded — rare and harmless.)
+    return Promise.all([
+      findBaserowUserRowByPsid(config, psid),
+      fetchOrderList(psid),
+    ]).then(([row, res]) => {
       if (!row) return { notFound: true };
 
-      return fetchOrderList(psid).then((res) => {
+      return Promise.resolve().then(() => {
         const allOrders = res.ok ? res.orders : [];
         const ec2Recent = allOrders.slice(0, 5).map((o) => ({
           orderId: o.orderId,

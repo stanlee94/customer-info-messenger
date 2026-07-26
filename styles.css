@@ -619,22 +619,15 @@
 }
 
 /* ── Order rows ──────────────────────────────────────────────────────────── */
+/* SN text is always black (EC2 and Baserow alike); the coloured status tag
+   after the SN carries the legend instead. */
 #cim-purchase-panel .cim-order-id {
   cursor: pointer;
-  color: #0a7cff;
+  color: #111;
   font-variant-numeric: tabular-nums;
 }
 
 #cim-purchase-panel .cim-order-id:hover {
-  color: #0060d6;
-  text-decoration: underline;
-}
-
-#cim-purchase-panel .cim-order-id--baserow {
-  color: #111;
-}
-
-#cim-purchase-panel .cim-order-id--baserow:hover {
   color: #000;
   text-decoration: underline;
 }
@@ -645,7 +638,9 @@
   font-variant-numeric: tabular-nums;
 }
 
-#cim-purchase-panel .cim-copy-btn {
+#cim-purchase-panel .cim-copy-btn,
+#cim-order-list-modal .cim-copy-btn,
+#cim-parcel-drawer .cim-copy-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -660,11 +655,15 @@
   transition: color 0.15s ease;
 }
 
-#cim-purchase-panel .cim-copy-btn:hover {
+#cim-purchase-panel .cim-copy-btn:hover,
+#cim-order-list-modal .cim-copy-btn:hover,
+#cim-parcel-drawer .cim-copy-btn:hover {
   color: #0a7cff;
 }
 
-#cim-purchase-panel .cim-copy-tooltip {
+#cim-purchase-panel .cim-copy-tooltip,
+#cim-order-list-modal .cim-copy-tooltip,
+#cim-parcel-drawer .cim-copy-tooltip {
   position: absolute;
   bottom: 100%;
   left: 50%;
@@ -682,7 +681,9 @@
   transition: opacity 0.15s ease;
 }
 
-#cim-purchase-panel .cim-copy-tooltip--visible {
+#cim-purchase-panel .cim-copy-tooltip--visible,
+#cim-order-list-modal .cim-copy-tooltip--visible,
+#cim-parcel-drawer .cim-copy-tooltip--visible {
   opacity: 1;
 }
 
@@ -828,7 +829,8 @@
 }
 
 /* ── Parcel photo icon (on order rows) ──────────────────────────────────── */
-#cim-purchase-panel .cim-photo-icon {
+#cim-purchase-panel .cim-photo-icon,
+#cim-order-list-modal .cim-photo-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -843,7 +845,8 @@
   transition: color 0.15s ease;
 }
 
-#cim-purchase-panel .cim-photo-icon:hover {
+#cim-purchase-panel .cim-photo-icon:hover,
+#cim-order-list-modal .cim-photo-icon:hover {
   color: #0a7cff;
 }
 
@@ -853,7 +856,9 @@
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.5);
-  z-index: 2147483640;
+  /* Above the cart (…641) and order-list (…642) overlays — the camera icon
+     opens this drawer from inside the order-list modal — below the gallery. */
+  z-index: 2147483643;
   align-items: center;
   justify-content: center;
 }
@@ -1152,6 +1157,33 @@
   background: #f0f2f5;
   border: 1px solid #e4e6eb;
   transition: transform 0.12s ease, box-shadow 0.12s ease;
+  position: relative;
+}
+
+/* Copy-URL overlay on customer-visible (public S3) photo thumbs */
+.cim-drawer-thumb-copy {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  z-index: 1;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s;
+}
+
+.cim-drawer-thumb-copy:hover {
+  background: rgba(0, 0, 0, 0.8);
 }
 
 .cim-drawer-thumb:hover {
@@ -1378,6 +1410,7 @@
 }
 
 #cim-cart-modal {
+  position: relative; /* anchors the undo toast */
   background: #ffffff;
   border-radius: 16px;
   width: 580px;
@@ -1472,6 +1505,11 @@
 
 /* Error toast */
 .cim-cart-error-toast {
+  position: absolute;
+  top: 58px; /* below the header, above the body */
+  left: 16px;
+  right: 16px;
+  z-index: 30;
   background: #fee2e2;
   color: #991b1b;
   border: 1px solid #fca5a5;
@@ -1479,7 +1517,7 @@
   padding: 8px 12px;
   font-size: 12px;
   font-weight: 500;
-  margin-bottom: 10px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
 }
 
 /* Toolbar */
@@ -1491,6 +1529,78 @@
   border-bottom: 1px solid #f0f2f5;
   margin-bottom: 4px;
   flex-shrink: 0;
+  /* Pin to the top of the scrolling item list */
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  background: #fff;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+}
+
+/* ── Simple/Advance mode ─────────────────────────────────────────────────────
+   Simple (default) hides the power features; the modal carries
+   .cim-cart-modal--advanced when the header toggle is on Advance. */
+#cim-cart-modal:not(.cim-cart-modal--advanced) .cim-cart-bulk-btn--merge,
+#cim-cart-modal:not(.cim-cart-modal--advanced) .cim-cart-bulk-btn--group,
+#cim-cart-modal:not(.cim-cart-modal--advanced) .cim-cart-dup-badge,
+#cim-cart-modal:not(.cim-cart-modal--advanced) .cim-cart-item-split-btn {
+  display: none;
+}
+
+/* Segmented Simple|Adv control: grey track, sliding teal pill (Merge's
+   palette), spring-ish ease on the slide. */
+.cim-cart-mode-group {
+  position: relative;
+  display: flex;
+  box-sizing: border-box;
+  height: 28px;
+  padding: 2px;
+  background: #f0f2f5;
+  border: 1px solid #e4e6eb;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+.cim-cart-mode-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: calc(50% - 2px);
+  height: calc(100% - 4px);
+  box-sizing: border-box;
+  border-radius: 6px;
+  background: #d1fae5;
+  border: 1px solid #86efac;
+  box-shadow: 0 1px 2px rgba(21, 128, 61, 0.15);
+  transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.cim-cart-mode-group--advanced .cim-cart-mode-thumb {
+  transform: translateX(100%);
+}
+
+.cim-cart-mode-opt {
+  position: relative;
+  z-index: 1;
+  width: 52px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #8a8d91;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.22s;
+}
+
+.cim-cart-mode-opt:hover:not(.cim-cart-mode-opt--active) {
+  color: #050505;
+}
+
+.cim-cart-mode-opt--active {
+  color: #15803d;
+  cursor: default;
 }
 
 .cim-cart-select-all {
@@ -1555,7 +1665,7 @@
 .cim-cart-item-row {
   border: 1px solid #e4e6eb;
   border-radius: 8px;
-  padding: 7px 10px;
+  padding: 5px 8px;
   display: flex;
   align-items: flex-start;
   gap: 8px;
@@ -1611,7 +1721,7 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
   justify-content: center;
 }
 
@@ -1623,7 +1733,7 @@
 }
 
 .cim-cart-item-name {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
   color: #050505;
   line-height: 1.35;
@@ -1664,6 +1774,17 @@
   color: #dc2626;
 }
 
+/* Duplicate-product marker — same goodsId on 2+ rows */
+.cim-cart-dup-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: #fef9c3;
+  color: #a16207;
+  border: 1px dashed #fde047;
+}
+
 .cim-cart-item-bottom {
   display: flex;
   align-items: center;
@@ -1690,12 +1811,12 @@
 }
 
 .cim-cart-stepper-btn {
-  width: 28px;
-  height: 28px;
+  width: 22px;
+  height: 22px;
   border: none;
   background: #f0f2f5;
   color: #050505;
-  font-size: 15px;
+  font-size: 13px;
   font-weight: 600;
   cursor: pointer;
   display: flex;
@@ -1716,9 +1837,9 @@
 }
 
 .cim-cart-stepper-qty {
-  width: 34px;
+  width: 28px;
   text-align: center;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   padding: 0 2px;
@@ -1896,12 +2017,19 @@
   color: #050505;
 }
 
-.cim-smart-hint {
-  font-size: 11px;
-  color: #8a8d91;
-  margin-bottom: 8px;
-  line-height: 1.4;
-  flex-shrink: 0;
+/* Search bar + multi-select toolbar pinned above the scrolling result list */
+.cim-goods-sticky-head {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  background: #fff;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+  padding-bottom: 8px;
+}
+
+/* margin would collapse out of the sticky wrapper and let rows peek through */
+.cim-goods-sticky-head .cim-goods-toolbar {
+  margin-bottom: 0;
 }
 
 .cim-goods-toolbar {
@@ -1948,7 +2076,10 @@
 }
 
 .cim-goods-add-selected-btn:disabled {
-  opacity: 0.38;
+  /* Full grey, not pale blue — pale blue reads as clickable */
+  background: #e4e6eb;
+  color: #bcc0c4;
+  opacity: 1;
   cursor: default;
 }
 
@@ -1990,10 +2121,10 @@
 .cim-smart-group {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding-bottom: 12px;
+  gap: 5px;
+  padding-bottom: 8px;
   border-bottom: 1px solid #f0f2f5;
-  margin-bottom: 4px;
+  margin-bottom: 2px;
 }
 
 .cim-smart-group:last-child {
@@ -2012,7 +2143,9 @@
   font-size: 12px;
   font-weight: 600;
   color: #050505;
-  flex: 1;
+  /* shrink-to-fit so the count badge sits right beside the label,
+     not detached at the far edge */
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2087,21 +2220,21 @@
 .cim-goods-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 5px;
 }
 
 .cim-goods-item {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   border: 1px solid #e4e6eb;
-  border-radius: 12px;
-  padding: 10px 12px;
+  border-radius: 10px;
+  padding: 5px 8px;
 }
 
 .cim-goods-thumb {
-  width: 48px;
-  height: 48px;
+  width: 38px;
+  height: 38px;
   border-radius: 8px;
   overflow: hidden;
   flex-shrink: 0;
@@ -2119,9 +2252,9 @@
 }
 
 .cim-goods-thumb--empty::after {
-  content: '—';
-  font-size: 12px;
-  color: #8a8d91;
+  content: '📷';
+  font-size: 14px;
+  opacity: 0.35;
 }
 
 .cim-goods-thumb--clickable {
@@ -2153,7 +2286,7 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
 }
 
 .cim-goods-name {
@@ -2185,17 +2318,41 @@
   color: #dc2626;
 }
 
+/* Unaddable (out-of-stock / off-sale) products: unmistakably inert */
+.cim-goods-item--unavailable {
+  opacity: 0.55;
+}
+
+/* Price pops out of the muted meta line — same-name products differ only by
+   price/goodsId, and quoting the wrong one costs real money */
+.cim-goods-price {
+  font-size: 13px;
+  font-weight: 700;
+  color: #0a7cff;
+}
+
+.cim-goods-stock--low {
+  color: #b45309;
+  font-weight: 600;
+}
+
+.cim-goods-id {
+  color: #b0b3b8;
+  font-size: 11px;
+}
+
 .cim-goods-item-right {
+  /* stepper and Add side by side — the vertical stack doubled card height */
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
   gap: 6px;
   flex-shrink: 0;
 }
 
 .cim-goods-add-btn {
-  height: 28px;
-  padding: 0 12px;
+  height: 26px;
+  padding: 0 10px;
   border: none;
   border-radius: 7px;
   background: #0a7cff;
@@ -2543,6 +2700,12 @@
   font-size: 13px;
   font-weight: 600;
 }
+/* Nothing was added and something failed — this is not a success */
+.cim-copy-success-banner--fail {
+  background: #fee2e2;
+  color: #991b1b;
+  border-color: #fca5a5;
+}
 .cim-copy-view-cart-btn {
   height: 34px;
   padding: 0 20px;
@@ -2574,6 +2737,7 @@
 }
 
 #cim-order-list-modal {
+  position: relative; /* anchors the payment-msg toast */
   background: #ffffff;
   border-radius: 16px;
   width: 480px;
@@ -2589,14 +2753,98 @@
   overflow: hidden;
 }
 
+/* Density: tighter body padding than the default 16px/20px drawer body */
+#cim-order-list-modal .cim-drawer-body {
+  padding: 10px 14px;
+}
+
+/* Sticky filter toolbar — chips + text filter, stays visible while scrolling.
+   Negative margins span it across the body padding. */
+.cim-ol-toolbar {
+  position: sticky;
+  top: -10px;
+  z-index: 3;
+  background: #fff;
+  margin: -10px -14px 8px;
+  padding: 10px 14px 8px;
+  border-bottom: 1px solid #f0f2f5;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cim-ol-chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.cim-ol-chip {
+  border: 1px solid #d8dadf;
+  background: #fff;
+  color: #65676b;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 20px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.cim-ol-chip:hover {
+  background: #f0f2f5;
+}
+
+.cim-ol-chip--active {
+  background: #0a7cff;
+  border-color: #0a7cff;
+  color: #fff;
+}
+
+.cim-ol-chip--active:hover {
+  background: #0060d6;
+}
+
+/* Muted note beside ALL while ERP statuses load, or when the WMS call fails */
+.cim-ol-chips-note {
+  align-self: center;
+  font-size: 11px;
+  color: #8a8d91;
+}
+
+.cim-ol-search {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #d8dadf;
+  border-radius: 8px;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-family: inherit;
+  color: #050505;
+  background: #f7f8fa;
+  outline: none;
+}
+
+.cim-ol-search:focus {
+  border-color: #0a7cff;
+  background: #fff;
+}
+
+.cim-ol-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 .cim-ol-card {
   border: 1px solid #e4e6eb;
   border-radius: 10px;
-  padding: 12px 14px;
+  padding: 7px 12px;
   background: #ffffff;
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 3px;
   transition: background 0.12s;
 }
 
@@ -2604,11 +2852,40 @@
   background: #f7f8fa;
 }
 
+/* Fully done (confirmed + paid + shipped): green accent, no pills */
+.cim-ol-card--done {
+  border-left: 3px solid #22c55e;
+  padding-left: 10px;
+}
+
+.cim-ol-card--busy {
+  opacity: 0.55;
+  pointer-events: none;
+  position: relative;
+}
+
+.cim-ol-card--busy::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  width: 12px;
+  height: 12px;
+  margin-top: -6px;
+  border: 2px solid #0a7cff;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: cim-ol-spin 0.7s linear infinite;
+}
+
+@keyframes cim-ol-spin {
+  to { transform: rotate(360deg); }
+}
+
 .cim-ol-top {
   display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 8px;
+  align-items: center;
+  gap: 6px;
 }
 
 .cim-ol-sn {
@@ -2628,56 +2905,96 @@
   color: #15803d;
   white-space: nowrap;
   flex-shrink: 0;
+  margin-left: auto;
 }
 
-.cim-ol-mid {
-  font-size: 12px;
-  color: #65676b;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.cim-ol-info {
+/* Row 2: muted info line + exception pill / ✓ + quick-action buttons */
+.cim-ol-line2 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   font-size: 11px;
   color: #8a8d91;
+}
+
+.cim-ol-line2-info {
+  flex: 1 1 auto;
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.cim-ol-bot {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 2px;
+.cim-ol-done-check {
+  flex-shrink: 0;
+  color: #15803d;
+  font-weight: 700;
+  font-size: 12px;
 }
 
-.cim-ol-status-badge {
-  display: inline-block;
-  font-size: 11px;
-  font-weight: 600;
-  padding: 2px 7px;
-  border-radius: 20px;
-  background: #f0f2f5;
-  color: #65676b;
+.cim-ol-pill {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 3px 7px;
+  border-radius: 10px;
   white-space: nowrap;
 }
 
-.cim-ol-status--done {
-  background: #f0fdf4;
-  color: #15803d;
+.cim-ol-pill--confirm { background: #f0f2f5; color: #65676b; }
+.cim-ol-pill--pay     { background: #fffbeb; color: #b45309; }
+.cim-ol-pill--ship    { background: #eef2f7; color: #52667a; }
+
+/* Inline quick-action buttons — colours mirror the detail footer buttons */
+.cim-ol-mini-btn {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  color: #fff;
+  white-space: nowrap;
+  transition: opacity 0.12s;
 }
 
-.cim-ol-status--pending {
-  background: #fffbeb;
-  color: #92400e;
+.cim-ol-mini-btn:hover {
+  opacity: 0.85;
 }
 
-.cim-ol-status--waiting {
-  background: #f0f2f5;
-  color: #65676b;
+.cim-ol-mini-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
+
+.cim-ol-mini-btn--confirm      { background: #0a7cff; }
+.cim-ol-mini-btn--confirm-paid { background: linear-gradient(135deg, #0a7cff, #0052b8); }
+.cim-ol-mini-btn--pay          { background: #15803d; }
+.cim-ol-mini-btn--ship         { background: #7c3aed; }
+
+/* ── Order status tags (panel top-5 + order list modal) ──────────────────── */
+/* Appended after the order SN; SN text itself stays black. */
+.cim-status-tag {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 4px;
+  margin-left: 5px;
+  vertical-align: 1px;
+  letter-spacing: 0.4px;
+  white-space: nowrap;
+}
+
+.cim-status-tag--shipped { background: #eff6ff; color: #0a7cff; }
+.cim-status-tag--partial { background: #f5f3ff; color: #9333ea; }
+.cim-status-tag--pending { background: #fefce8; color: #b45309; }
+.cim-status-tag--legacy  { background: #fef2f2; color: #dc2626; }
+.cim-status-tag--nodata  { background: #f0f2f5; color: #65676b; }
 
 .cim-ol-card--clickable {
   cursor: pointer;
@@ -2719,16 +3036,90 @@
 
 /* ── Order detail view ────────────────────────────────────────────────────── */
 
-.cim-od-status-row {
+/* Lifecycle block — one line per order event (下单 / 付款 / 出货) */
+.cim-od-lifecycle {
   display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  padding-bottom: 4px;
+  flex-direction: column;
+  gap: 4px;
+  padding: 2px 0;
+}
+
+.cim-od-lc-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.cim-od-lc-row::before {
+  content: '●';
+  font-size: 8px;
+  flex-shrink: 0;
+  position: relative;
+  top: -1px;
+}
+
+.cim-od-lc-row--done::before { color: #22c55e; }
+.cim-od-lc-row--todo::before { color: #f59e0b; }
+
+.cim-od-lc-label {
+  font-weight: 700;
+  flex-shrink: 0;
+  color: #050505;
+}
+
+.cim-od-lc-row--todo .cim-od-lc-label {
+  color: #b45309;
+}
+
+.cim-od-lc-val {
+  color: #65676b;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* customerGroup badge in the detail subtitle */
+.cim-od-group-badge {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: #eef2ff;
+  color: #4f46e5;
+  vertical-align: 1px;
+}
+
+/* Compact recipient block */
+.cim-od-recip-block {
+  border: 1px solid #e4e6eb;
+  border-radius: 12px;
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cim-od-recip-line {
+  font-size: 13px;
+  font-weight: 600;
+  color: #050505;
+}
+
+.cim-od-recip-addr {
+  font-size: 12px;
+  color: #65676b;
+  line-height: 1.45;
+  word-break: break-word;
 }
 
 .cim-od-section {
   border-top: 1px solid #e4e6eb;
-  padding-top: 12px;
+  padding-top: 8px;
 }
 
 .cim-od-section-header {
@@ -2764,6 +3155,25 @@
   color: #fff;
 }
 
+/* Solid variant — full colour inverse of the outline Edit button */
+.cim-od-edit-btn--solid {
+  background: #0a7cff;
+  color: #fff;
+}
+
+.cim-od-edit-btn--solid:hover {
+  background: #fff;
+  color: #0a7cff;
+}
+
+/* Keeps button pairs together on the right of a space-between section header */
+.cim-od-hdr-btns {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
 /* Items list */
 .cim-od-items-list {
   display: flex;
@@ -2775,7 +3185,7 @@
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  padding: 8px 0;
+  padding: 6px 0;
   border-bottom: 1px solid #f0f2f5;
 }
 
@@ -2785,8 +3195,8 @@
 }
 
 .cim-od-item-img-wrap {
-  width: 44px;
-  height: 44px;
+  width: 40px;
+  height: 40px;
   flex-shrink: 0;
   border-radius: 6px;
   overflow: hidden;
@@ -2794,8 +3204,8 @@
 }
 
 .cim-od-item-img {
-  width: 44px;
-  height: 44px;
+  width: 40px;
+  height: 40px;
   object-fit: cover;
   display: block;
 }
@@ -2832,13 +3242,18 @@
   gap: 4px;
 }
 
+/* Wrap to 2 lines instead of truncating — Chinese product names carry the
+   gift/promo suffix (e.g. "[+1 送 1盒]") at the END, which is exactly what CS
+   needs during disputes. */
 .cim-od-item-name {
   font-size: 13px;
   font-weight: 500;
   color: #050505;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  line-height: 1.35;
 }
 
 .cim-od-item-meta {
@@ -2862,6 +3277,12 @@
   color: #8a8d91;
 }
 
+.cim-od-item-unit {
+  font-size: 11px;
+  color: #65676b;
+  font-variant-numeric: tabular-nums;
+}
+
 .cim-od-item-ship {
   font-size: 11px;
   padding: 1px 5px;
@@ -2877,6 +3298,61 @@
 .cim-od-ship--pending {
   background: #fff7ed;
   color: #c2410c;
+}
+
+/* Collapsed-adjustment link */
+.cim-od-adj-toggle {
+  background: none;
+  border: none;
+  padding: 2px 0;
+  color: #0a7cff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+
+.cim-od-adj-toggle:hover {
+  text-decoration: underline;
+}
+
+/* 📩 send-tracking button inside the parcel info card */
+.cim-drawer-send-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  margin-left: 5px;
+  font-size: 12px;
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+/* "Details ▾" row hiding internal WMS/ERP/Task IDs */
+.cim-drawer-details-toggle {
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: #8a8d91;
+  cursor: pointer;
+  user-select: none;
+}
+
+.cim-drawer-details-toggle:hover {
+  color: #0a7cff;
+  background: #f7f8fa;
+}
+
+/* ── Order detail density overrides (scoped to the order-list modal) ─────── */
+#cim-order-list-modal .cim-drawer-body > * {
+  margin-bottom: 8px;
+}
+
+#cim-order-list-modal .cim-drawer-body > *:last-child {
+  margin-bottom: 0;
+}
+
+#cim-order-list-modal .cim-drawer-info-row {
+  padding: 6px 12px;
 }
 
 .cim-od-item-price-col {
@@ -3081,6 +3557,15 @@
   background: #0060d6;
 }
 
+.cim-cart-bulk-btn--merge {
+  background: #ecfeff;
+  color: #0e7490;
+  border-color: #a5f3fc;
+}
+.cim-cart-bulk-btn--merge:not(:disabled):hover {
+  background: #cffafe;
+}
+
 .cim-cart-bulk-btn--group {
   background: #f3e8ff;
   color: #7c3aed;
@@ -3261,6 +3746,13 @@
 }
 .cim-checkout-btn--paid:not(:disabled):hover { background: #166534; }
 
+/* Send payment-received message — appears only after Confirm+Paid succeeds */
+.cim-checkout-btn--paymsg {
+  background: #0a7cff;
+  color: #fff;
+}
+.cim-checkout-btn--paymsg:not(:disabled):hover { background: #0060d6; }
+
 .cim-checkout-btn--adj {
   background: #f0f2f5;
   color: #050505;
@@ -3429,13 +3921,13 @@
 
 .cim-cart-renew-all-btn {
   width: 100%;
-  height: 28px;
-  border: 1.5px dashed #fca5a5;
+  height: 30px;
+  border: 1.5px solid #fcd34d;
   border-radius: 7px;
-  background: #fff5f5;
-  color: #dc2626;
+  background: #fffbeb;
+  color: #b45309;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 700;
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -3445,8 +3937,100 @@
 }
 
 .cim-cart-renew-all-btn:hover {
-  background: #fee2e2;
-  border-color: #dc2626;
+  background: #fef3c7;
+  border-color: #f59e0b;
+}
+
+/* ── Undo toast (single-item delete) ──────────────────────────────────────── */
+/* Payment-received message prompt — shown after Pay / Confirm+Paid succeeds */
+.cim-payment-msg-toast {
+  position: absolute;
+  left: 50%;
+  bottom: 64px;
+  transform: translateX(-50%);
+  z-index: 7;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: calc(100% - 40px);
+  padding: 8px 14px;
+  border-radius: 10px;
+  background: #1c1e21;
+  color: #fff;
+  font-size: 12px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
+}
+
+.cim-payment-msg-label {
+  font-weight: 700;
+  color: #6ee7a0;
+  flex-shrink: 0;
+}
+
+.cim-payment-msg-btn {
+  border: none;
+  border-radius: 7px;
+  background: #0a7cff;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.cim-payment-msg-btn:hover:not(:disabled) {
+  background: #0068d9;
+}
+
+.cim-payment-msg-btn:disabled {
+  background: #15803d;
+  cursor: default;
+}
+
+.cim-cart-undo-toast {
+  position: absolute;
+  left: 50%;
+  bottom: 64px;
+  transform: translateX(-50%);
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: calc(100% - 40px);
+  padding: 8px 14px;
+  border-radius: 10px;
+  background: #1c1e21;
+  color: #fff;
+  font-size: 12px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+}
+
+.cim-cart-undo-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cim-cart-undo-btn {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  padding: 0;
+  color: #4da3ff;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.cim-cart-undo-btn:hover {
+  text-decoration: underline;
+}
+
+.cim-cart-undo-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 /* ── List options popup ───────────────────────────────────────────────────── */

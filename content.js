@@ -308,6 +308,9 @@
   function insertTextIntoMessenger(text) {
     const editor = document.querySelector('[contenteditable="true"][role="textbox"]');
     if (!editor) return false;
+    // Always start from an empty composer — a leftover draft must never be
+    // mixed into the injected message.
+    clearReplyBox();
     editor.focus();
     const cleanText = text.replace(/\\n/g, '\n').replace(/\r\n/g, '\n');
     const dataTransfer = new DataTransfer();
@@ -454,8 +457,7 @@
     backBtn.addEventListener('click', () => {
       chrome.storage.local.get(['aiLastInput'], ({ aiLastInput }) => {
         if (!aiLastInput) return;
-        clearReplyBox();
-        insertTextIntoMessenger(aiLastInput);
+        insertTextIntoMessenger(aiLastInput); // clears the box itself
       });
     });
 
@@ -472,8 +474,7 @@
           clickedBtn.classList.remove('cim-ai-btn--loading');
           quickBtn.disabled = false;
           if (result?.ok) {
-            clearReplyBox();
-            insertTextIntoMessenger(result.text);
+            insertTextIntoMessenger(result.text); // clears the box itself
           }
         });
       });
@@ -818,12 +819,12 @@
     });
   }
 
-  function buildCopyButton(text) {
+  function buildCopyButton(text, title = 'Copy Order ID') {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'cim-copy-btn';
-    btn.title = 'Copy Order ID';
-    btn.setAttribute('aria-label', 'Copy Order ID');
+    btn.title = title;
+    btn.setAttribute('aria-label', title);
 
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('viewBox', '0 0 24 24');
@@ -854,7 +855,8 @@
     btn.appendChild(tooltip);
 
     let hideTimer = null;
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
       copyToClipboard(String(text)).then(() => {
         tooltip.classList.add('cim-copy-tooltip--visible');
         clearTimeout(hideTimer);
@@ -962,9 +964,13 @@
   }
 
   function probeCartAndShowButtons(uid, psid, panel) {
-    if (!cartSessionValid || sessionState.cartHasItems !== null) return;
+    // In-flight guard: the probe is now fired early from proceedWithLookup
+    // AND from loadOrders' callback — only one request should go out.
+    if (!cartSessionValid || sessionState.cartHasItems !== null || sessionState.cartProbeInFlight) return;
+    sessionState.cartProbeInFlight = true;
 
     chrome.runtime.sendMessage({ type: 'GET_CART_SUMMARY', psid, option: '1' }, (response) => {
+      sessionState.cartProbeInFlight = false;
       if (getUserIdFromUrl() !== uid) return;
       if (chrome.runtime.lastError || !response || !response.ok) return;
 
@@ -1037,6 +1043,31 @@
 
   let cartModalPsid = null;
   let cartUserId = null;
+  // 'simple' (default) hides the power features — Merge, Group, Split, ⧉ dup
+  // badges. 'advanced' shows them. Persisted in chrome.storage.session:
+  // survives customer switches, modal reopens, page reloads, and other tabs —
+  // cleared when the Chrome session ends. Falls back to in-memory (reset on
+  // reload) if session storage isn't accessible.
+  let cartUiMode = 'simple';
+  try {
+    chrome.storage.session?.get?.('cartUiMode', (data) => {
+      if (chrome.runtime.lastError) return;
+      if (data?.cartUiMode === 'advanced' || data?.cartUiMode === 'simple') {
+        cartUiMode = data.cartUiMode;
+        const liveModal = document.getElementById(CART_MODAL_ID);
+        if (liveModal) applyCartUiMode(liveModal);
+      }
+    });
+  } catch (e) { /* session storage unavailable — in-memory fallback */ }
+
+  function persistCartUiMode() {
+    try { chrome.storage.session?.set?.({ cartUiMode }); } catch (e) { /* best-effort */ }
+  }
+  // Bumped every time a view starts rendering into the modal body. Async
+  // callbacks capture the value at send time and drop their response if the
+  // body has since moved on (Back pressed, view switched, customer changed) —
+  // otherwise a slow response paints one view's content over another's.
+  let cartViewSeq = 0;
   let cartSelectedRecIds = new Set();
   let cartTotalItemCount = 0;
   let cartGroups = new Map(); // groupId → { color, label, recIds: Set<recId> }
@@ -1086,6 +1117,27 @@
     const headerRight = document.createElement('div');
     headerRight.className = 'cim-cart-header-right';
 
+    // Segmented Simple|Adv control (same pattern as the goods picker's
+    // Normal|Smart) — both options visible, active one highlighted; a
+    // single-button toggle was ambiguous about state vs action.
+    const modeGroup = document.createElement('div');
+    modeGroup.className = 'cim-cart-mode-group';
+    modeGroup.title = 'Simple hides Merge / Group / Split / duplicate tags';
+    const modeSimpleBtn = document.createElement('button');
+    modeSimpleBtn.type = 'button';
+    modeSimpleBtn.className = 'cim-cart-mode-opt';
+    modeSimpleBtn.textContent = 'Simple';
+    modeSimpleBtn.addEventListener('click', () => { cartUiMode = 'simple'; applyCartUiMode(modal); persistCartUiMode(); });
+    const modeAdvBtn = document.createElement('button');
+    modeAdvBtn.type = 'button';
+    modeAdvBtn.className = 'cim-cart-mode-opt';
+    modeAdvBtn.textContent = 'Adv';
+    modeAdvBtn.addEventListener('click', () => { cartUiMode = 'advanced'; applyCartUiMode(modal); persistCartUiMode(); });
+    // Sliding pill behind the active option — animated via CSS transform
+    const modeThumb = document.createElement('div');
+    modeThumb.className = 'cim-cart-mode-thumb';
+    modeGroup.append(modeThumb, modeSimpleBtn, modeAdvBtn);
+
     const addBtn = document.createElement('button');
     addBtn.type = 'button';
     addBtn.className = 'cim-cart-add-btn';
@@ -1113,7 +1165,7 @@
     closeBtn.textContent = '✕';
     closeBtn.addEventListener('click', closeCartModal);
 
-    headerRight.append(addBtn, copyBtn, refreshBtn, closeBtn);
+    headerRight.append(modeGroup, addBtn, copyBtn, refreshBtn, closeBtn);
     header.append(backBtn, titleWrap, headerRight);
 
     const drawerBody = document.createElement('div');
@@ -1144,55 +1196,115 @@
     const listBtnsGroup = document.createElement('div');
     listBtnsGroup.className = 'cim-cart-list-btns';
 
-    CART_OPTIONS.forEach(({ option, label }) => {
+    // Fetches the cart-summary text (partial when a partial selection is
+    // active), applies the custom prefix, and calls cb(text, errMsg).
+    function fetchCartSummaryText(option, cb) {
+      const isPartial = cartSelectedRecIds.size > 0 && cartSelectedRecIds.size < cartTotalItemCount;
+      const recIds = isPartial ? [...cartSelectedRecIds] : [];
+      const psid = cartModalPsid;
+      const uid = sessionState.uid;
+      const handleResponse = (response) => {
+        if (getUserIdFromUrl() !== uid) return;
+        if (chrome.runtime.lastError || !response || !response.ok) { cb(null, response?.error || 'Failed.'); return; }
+        if (response.text.includes(EMPTY_CART_MARKER)) { cb(null, 'Empty Cart!'); return; }
+        const customPrefix = document.getElementById(PANEL_ID)?.querySelector('.cim-cart-prefix')?.value.trim() || '';
+        cb(customPrefix ? response.text.replace(DEFAULT_CART_PREFIX, customPrefix) : response.text, null);
+      };
+      if (isPartial) {
+        chrome.runtime.sendMessage({ type: 'GET_SELECTED_CART_SUMMARY', psid, recIds, option }, handleResponse);
+      } else {
+        chrome.runtime.sendMessage({ type: 'GET_CART_SUMMARY', psid, option }, handleResponse);
+      }
+    }
+
+    function buildListBarButton(labelText, extraClass) {
       const btn = document.createElement('button');
       btn.type = 'button';
-      btn.className = 'cim-cart-list-btn';
-      btn.dataset.listOption = option;
+      btn.className = 'cim-cart-list-btn' + (extraClass ? ` ${extraClass}` : '');
       const btnLabel = document.createElement('span');
       btnLabel.className = 'cim-cart-list-btn-label';
-      btnLabel.textContent = label;
+      btnLabel.textContent = labelText;
       const btnTooltip = document.createElement('span');
       btnTooltip.className = 'cim-copy-tooltip';
       btn.append(btnLabel, btnTooltip);
       let btnTimer = null;
-      const showTip = (text) => {
+      btn._showTip = (text) => {
         btnTooltip.textContent = text;
         btnTooltip.classList.add('cim-copy-tooltip--visible');
         clearTimeout(btnTimer);
         btnTimer = setTimeout(() => btnTooltip.classList.remove('cim-copy-tooltip--visible'), 1500);
       };
+      return btn;
+    }
+
+    CART_OPTIONS.forEach(({ option, label }) => {
+      const btn = buildListBarButton(label);
+      btn.dataset.listOption = option;
       btn.addEventListener('click', () => {
-        const isPartial = cartSelectedRecIds.size > 0 && cartSelectedRecIds.size < cartTotalItemCount;
-        const recIds = isPartial ? [...cartSelectedRecIds] : [];
-        const psid = cartModalPsid;
-        const uid = sessionState.uid;
-        const handleResponse = (response) => {
-          if (getUserIdFromUrl() !== uid) return;
-          if (chrome.runtime.lastError || !response || !response.ok) { showTip(response?.error || 'Failed.'); return; }
-          if (response.text.includes(EMPTY_CART_MARKER)) { showTip('Empty Cart!'); return; }
-          const customPrefix = document.getElementById(PANEL_ID)?.querySelector('.cim-cart-prefix')?.value.trim() || '';
-          const textToCopy = customPrefix ? response.text.replace(DEFAULT_CART_PREFIX, customPrefix) : response.text;
-          copyToClipboard(textToCopy).then(() => showTip('Copied!'));
-        };
-        if (isPartial) {
-          chrome.runtime.sendMessage({ type: 'GET_SELECTED_CART_SUMMARY', psid, recIds, option }, handleResponse);
-        } else {
-          chrome.runtime.sendMessage({ type: 'GET_CART_SUMMARY', psid, option }, handleResponse);
-        }
+        fetchCartSummaryText(option, (text, err) => {
+          if (!text) { btn._showTip(err); return; }
+          copyToClipboard(text).then(() => btn._showTip('Copied!'));
+        });
       });
       listBtnsGroup.appendChild(btn);
     });
 
+    // 📩 injects a cart list straight into the Messenger composer — skips the
+    // copy → close → click composer → paste round-trip on the most frequent
+    // workflow (quoting the customer their cart). Click opens an ALL/MYR/SGD
+    // picker so single-currency lists can be inserted too.
+    const sendBtn = buildListBarButton('📩', 'cim-cart-send-btn');
+    sendBtn.title = 'Insert cart list into Messenger';
+    sendBtn.addEventListener('click', () => {
+      document.querySelector('.cim-list-options-popup')?.remove();
+      const pop = document.createElement('div');
+      pop.className = 'cim-list-options-popup';
+      CART_OPTIONS.forEach(({ option, label }) => {
+        const optBtn = document.createElement('button');
+        optBtn.type = 'button';
+        optBtn.className = 'cim-list-option-btn';
+        optBtn.textContent = `📩 ${label}`;
+        optBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          pop.remove();
+          fetchCartSummaryText(option, (text, err) => {
+            if (!text) { sendBtn._showTip(err); return; }
+            sendBtn._showTip(insertTextIntoMessenger(text) ? 'Inserted!' : 'No reply box');
+          });
+        });
+        pop.appendChild(optBtn);
+      });
+      document.body.appendChild(pop);
+      const rect = sendBtn.getBoundingClientRect();
+      pop.style.cssText = `position:fixed;right:${window.innerWidth - rect.right}px;bottom:${window.innerHeight - rect.top + 6}px;z-index:2147483647`;
+      setTimeout(() => document.addEventListener('click', () => pop.remove(), { once: true }), 0);
+    });
+    listBtnsGroup.appendChild(sendBtn);
+
     totalBar.append(totalBarLeft, listBtnsGroup);
 
     modal.append(header, drawerBody, totalBar, footer);
+    // Only after full assembly — applyCartUiMode queries INTO the modal, and
+    // running it before header attachment left the toggle unlabeled.
+    applyCartUiMode(modal);
     overlay.appendChild(modal);
     document.body.appendChild(overlay);
 
     document.addEventListener('keydown', (e) => {
       if (!overlay.classList.contains('cim-cart-modal-overlay--visible')) return;
-      if (e.key === 'Escape') { closeCartModal(); return; }
+      if (e.key === 'Escape') {
+        // Close the topmost layer only: an open popover first, then an
+        // in-progress input edit (its own Escape handler cancels/blurs),
+        // and only then the modal itself.
+        // e.target, not activeElement: input Escape handlers blur/remove
+        // themselves before this bubbles here, resetting activeElement to body.
+        const targetTag = e.target?.tagName?.toLowerCase();
+        if (targetTag === 'input' || targetTag === 'textarea' || targetTag === 'select') return;
+        const pop = document.querySelector('.cim-split-popup, .cim-delete-confirm, .cim-list-options-popup');
+        if (pop) { pop.remove(); return; }
+        closeCartModal();
+        return;
+      }
       const tag = document.activeElement?.tagName?.toLowerCase();
       if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
       const liveModal = document.getElementById(CART_MODAL_ID);
@@ -1219,12 +1331,23 @@
       cartGroupsNextId = 1;
       cartGroupsPsid = psid;
     }
-    ensureCartModal();
+    const cartModal = ensureCartModal();
+    // A leftover undo toast belongs to the previous customer's delete.
+    cartModal.querySelector('.cim-cart-undo-toast')?.remove();
     document.getElementById(CART_MODAL_OVERLAY_ID).classList.add('cim-cart-modal-overlay--visible');
     showCartView(psid);
   }
 
+  // Confirm/split/list-option popovers are fixed-position children of
+  // document.body — closing their parent modal by any path (✕, overlay
+  // click, footer Close, Escape) must take them down too, or they're left
+  // floating over the page.
+  function closeFloatingPopovers() {
+    document.querySelectorAll('.cim-delete-confirm, .cim-split-popup, .cim-list-options-popup').forEach((p) => p.remove());
+  }
+
   function closeCartModal() {
+    closeFloatingPopovers();
     const overlay = document.getElementById(CART_MODAL_OVERLAY_ID);
     if (overlay) overlay.classList.remove('cim-cart-modal-overlay--visible');
 
@@ -1243,14 +1366,32 @@
     }
   }
 
+  // Reflect cartUiMode on the modal: a class the CSS keys off (hides
+  // Merge/Group/Split/dup badges outside advanced) + the segmented control's
+  // active highlight.
+  function applyCartUiMode(modal) {
+    const advanced = cartUiMode === 'advanced';
+    modal.classList.toggle('cim-cart-modal--advanced', advanced);
+    modal.querySelector('.cim-cart-mode-group')?.classList.toggle('cim-cart-mode-group--advanced', advanced);
+    const opts = modal.querySelectorAll('.cim-cart-mode-opt');
+    if (opts.length === 2) {
+      opts[0].classList.toggle('cim-cart-mode-opt--active', !advanced);
+      opts[1].classList.toggle('cim-cart-mode-opt--active', advanced);
+    }
+  }
+
   function setCartHeaderMode(mode) {
     const modal = document.getElementById(CART_MODAL_ID);
     if (!modal) return;
+    // Entering any view: clear a busy dim left by an in-flight cart refresh —
+    // the drawer body element survives view switches, the dim must not.
+    setCartBodyBusy(false);
     const isGoods = mode === 'goods';
     const isCopy = mode === 'copy';
     const isCheckout = mode === 'checkout';
     const isCart = mode === 'cart';
     modal.querySelector('.cim-cart-back-btn').style.display = (isGoods || isCopy || isCheckout) ? '' : 'none';
+    modal.querySelector('.cim-cart-mode-group').style.display = isCart ? '' : 'none';
     modal.querySelector('.cim-cart-add-btn').style.display = isCart ? '' : 'none';
     modal.querySelector('.cim-cart-copy-btn').style.display = isCart ? '' : 'none';
     modal.querySelector('.cim-cart-refresh-btn').style.display = isCart ? '' : 'none';
@@ -1264,24 +1405,106 @@
     document.getElementById(CART_MODAL_ID)?.querySelector('.cim-drawer-body')?.classList.toggle('cim-cart-body--busy', busy);
   }
 
+  // Error toast lives on the modal element (like the undo toast), not in the
+  // drawer body — error paths often trigger a refresh whose re-render would
+  // wipe a body-anchored toast before the operator can read it.
   function showCartError(modal, msg) {
-    const body = modal?.querySelector('.cim-drawer-body');
-    if (!body) return;
-    body.querySelector('.cim-cart-error-toast')?.remove();
+    if (!modal) return;
+    modal.querySelector('.cim-cart-error-toast')?.remove();
     const toast = document.createElement('div');
     toast.className = 'cim-cart-error-toast';
     toast.textContent = msg;
-    body.insertBefore(toast, body.firstChild);
-    setTimeout(() => toast.remove(), 3000);
+    modal.appendChild(toast);
+    setTimeout(() => toast.remove(), 4000);
   }
+
+  // ── Payment-received message (sent after Pay / Confirm+Paid) ───────────────
+
+  // English when the customer carries the English ManyChat tag (35385464),
+  // Chinese otherwise.
+  function customerHasEnglishTag() {
+    return (sessionState.manychatInfo?.tags || []).some((t) => String(t.id) === '35385464');
+  }
+
+  function buildPaymentReceivedMessage(orderSn) {
+    const link = `https://ddherbs.com.my/track/${encodeURIComponent(orderSn || '')}`;
+    if (customerHasEnglishTag()) {
+      return `Parcel detail :  ${link}\n\nHi dear, Your payment is well received! We will try our best to send out your parcel within 7 WORKING DAYS (EXCLUDING WEEKEND) Thank you for your support! 😊 \n\n**Once your order proceed system, you can click into the link above to check your parcel details anytime. 😘🙏\n\n💖 Your feedback means a lot to us!\n🙏 It only takes 1 minute — please fill in the form below:\nhttp://ddherbs.com.my/feedback`;
+    }
+    return `包裹查询： ${link}\n\n您好，已经收到了您的汇款，我们会尽快在7天工作日内（不包括周末）发货哟 ~ 🥰🙏🏻\n**一旦结单了，您可以之后自行点击以上的链接查询您的包裹详情哦😘\n\n您的意见对我们非常重要💖\n只需1分钟 ，请您填写以下反馈表🙏\nhttp://ddherbs.com.my/feedback`;
+  }
+
+  // Toast bar with a send button, shown after a successful pay operation.
+  // Anchored to the modal element (like the undo toast) so body re-renders
+  // (order detail refresh, list re-fetch) can't wipe it.
+  function showPaymentMsgPrompt(modal, orderSn) {
+    if (!modal || !orderSn) return;
+    modal.querySelector('.cim-payment-msg-toast')?.remove();
+    const toast = document.createElement('div');
+    toast.className = 'cim-payment-msg-toast';
+    const label = document.createElement('span');
+    label.className = 'cim-payment-msg-label';
+    label.textContent = '✓ Paid';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'cim-payment-msg-btn';
+    btn.textContent = customerHasEnglishTag() ? '📩 Send payment msg (EN)' : '📩 Send payment msg (中文)';
+    btn.addEventListener('click', () => {
+      const ok = insertTextIntoMessenger(buildPaymentReceivedMessage(orderSn));
+      btn.disabled = true;
+      btn.textContent = ok ? '✓ Inserted into Messenger' : '✕ No reply box found';
+      setTimeout(() => toast.remove(), 2500);
+    });
+    toast.append(label, btn);
+    modal.appendChild(toast);
+    setTimeout(() => { if (toast.isConnected && !btn.disabled) toast.remove(); }, 30000);
+  }
+
+  // Undo toast after a single-item delete. Lives on the modal element (not the
+  // body) so the post-delete re-render doesn't wipe it. Undo re-adds the same
+  // goodsId/qty — the row returns with a new recId, so group membership is
+  // not restored.
+  function showCartUndoToast(modal, item, psid) {
+    modal.querySelector('.cim-cart-undo-toast')?.remove();
+    const toast = document.createElement('div');
+    toast.className = 'cim-cart-undo-toast';
+    const label = document.createElement('span');
+    label.className = 'cim-cart-undo-label';
+    label.textContent = `Deleted ${item.name || 'item'}`;
+    const undoBtn = document.createElement('button');
+    undoBtn.type = 'button';
+    undoBtn.className = 'cim-cart-undo-btn';
+    undoBtn.textContent = 'Undo';
+    undoBtn.addEventListener('click', () => {
+      undoBtn.disabled = true;
+      chrome.runtime.sendMessage(
+        { type: 'CART_ADD_ITEM', fbUserId: psid, goodsId: item.goodsId, qty: parseInt(item.qty, 10) || 1 },
+        (res) => {
+          toast.remove();
+          // The add targets the original customer's cart; only re-render if
+          // the modal still shows that customer.
+          if (cartModalPsid !== psid) return;
+          if (res?.ok) refreshCartView(psid);
+          else showCartError(modal, res?.error || 'Undo failed.');
+        }
+      );
+    });
+    toast.append(label, undoBtn);
+    modal.appendChild(toast);
+    setTimeout(() => toast.remove(), 5000);
+  }
+
 
   function showCartView(psid) {
     const modal = ensureCartModal();
     const body = modal.querySelector('.cim-drawer-body');
     cartSelectedRecIds = new Set();
     setCartHeaderMode('cart');
+    const seq = ++cartViewSeq;
     body.innerHTML = '<div class="cim-drawer-loading">Loading cart…</div>';
     chrome.runtime.sendMessage({ type: 'GET_CART_ITEMS', psid }, (res) => {
+      // Body may have moved on (view switch / another customer) while in flight
+      if (seq !== cartViewSeq || cartModalPsid !== psid) return;
       const liveModal = document.getElementById(CART_MODAL_ID);
       if (!liveModal) return;
       const liveBody = liveModal.querySelector('.cim-drawer-body');
@@ -1291,6 +1514,71 @@
       }
       cartUserId = res.userId || null;
       renderCartContent(liveBody, liveModal, res, psid);
+    });
+  }
+
+  // True while the modal header is in cart mode (the + Add button is only
+  // shown there) and the modal is actually open.
+  function isCartViewActive() {
+    const modal = document.getElementById(CART_MODAL_ID);
+    if (!modal) return false;
+    if (!document.getElementById(CART_MODAL_OVERLAY_ID)?.classList.contains('cim-cart-modal-overlay--visible')) return false;
+    return modal.querySelector('.cim-cart-add-btn')?.style.display !== 'none';
+  }
+
+  // Non-destructive refresh after an in-cart mutation: the current rows stay
+  // visible (dimmed) during the fetch, then either patched in place (when the
+  // row structure is unchanged — no blink, scroll untouched) or rebuilt with
+  // the scroll position restored.
+  let cartRefreshReqId = 0;
+  function refreshCartView(psid) {
+    // Not on the cart view (e.g. Undo clicked from the goods picker/checkout):
+    // don't stomp that view — Back always re-fetches the cart anyway. Clear
+    // any busy dim the triggering mutation set.
+    if (!isCartViewActive()) { setCartBodyBusy(false); return; }
+    const modal = document.getElementById(CART_MODAL_ID);
+    const body = modal.querySelector('.cim-drawer-body');
+    if (!body.querySelector('.cim-cart-item-row')) {
+      // Cart mode but no rows (empty-cart state, error state) — full reload.
+      showCartView(psid);
+      return;
+    }
+    // No seq bump — a refresh stays on the cart view. Capture the current seq
+    // so the response is dropped if any view switch happened while in flight
+    // (the switch's own render, or Back's re-fetch, owns the body now).
+    // The rid makes overlapping refreshes latest-wins: an older snapshot
+    // arriving late must never overwrite a newer one (e.g. delete-refresh
+    // racing an Undo-refresh).
+    const seq = cartViewSeq;
+    const rid = ++cartRefreshReqId;
+    setCartBodyBusy(true);
+    chrome.runtime.sendMessage({ type: 'GET_CART_ITEMS', psid }, (res) => {
+      if (seq !== cartViewSeq || rid !== cartRefreshReqId || cartModalPsid !== psid) return;
+      const liveModal = document.getElementById(CART_MODAL_ID);
+      if (!liveModal) return;
+      const liveBody = liveModal.querySelector('.cim-drawer-body');
+      if (!res?.ok) {
+        setCartBodyBusy(false);
+        showCartError(liveModal, res?.error || 'Failed to refresh cart.');
+        return;
+      }
+      cartUserId = res.userId || null;
+      let patched = false;
+      if (typeof liveBody._cimPatch === 'function') {
+        try { patched = liveBody._cimPatch(res); }
+        catch (e) { patched = false; } // any patch failure degrades to a full rebuild
+      }
+      if (patched) {
+        setCartBodyBusy(false);
+        return;
+      }
+      // Structural change (split/merge/delete/renew): the mutation consumed
+      // the selection — start clean, like showCartView, or rows that survived
+      // the mutation (e.g. the merge target) linger in the count.
+      cartSelectedRecIds = new Set();
+      const scrollTop = liveBody.scrollTop;
+      renderCartContent(liveBody, liveModal, res, psid);
+      liveBody.scrollTop = scrollTop;
     });
   }
 
@@ -1354,14 +1642,28 @@
 
     const doSplit = () => {
       const splitQty = parseInt(input.value, 10);
-      if (!splitQty || splitQty < 1 || splitQty >= originalQty) return;
+      // Re-read the qty at confirm time — the popup's originalQty is a
+      // snapshot, and the server sets an ABSOLUTE remainder (qty − split), so
+      // splitting against a stale qty silently loses units.
+      const currentQty = parseInt(item.qty, 10);
+      if (!splitQty || splitQty < 1 || splitQty >= currentQty) {
+        pop.remove();
+        if (currentQty !== originalQty) showCartError(modal, 'Quantity changed — split cancelled.');
+        return;
+      }
       pop.remove();
       setCartBodyBusy(true);
       chrome.runtime.sendMessage(
-        { type: 'CART_SPLIT_ITEM', recId: item.recId, goodsId: item.goodsId, originalQty, splitQty, fbUserId: psid },
+        { type: 'CART_SPLIT_ITEM', recId: item.recId, goodsId: item.goodsId, originalQty: currentQty, splitQty, fbUserId: psid },
         (res) => {
-          if (res?.ok) { showCartView(psid); }
-          else { setCartBodyBusy(false); showCartError(modal, res?.error || 'Split failed.'); }
+          if (res?.ok) { refreshCartView(psid); }
+          else {
+            // The split is two server calls (reduce qty, add new row). On
+            // failure the first may have committed — re-fetch so the view
+            // never shows a qty the server no longer has.
+            showCartError(modal, res?.error || 'Split failed.');
+            refreshCartView(psid);
+          }
         }
       );
     };
@@ -1437,8 +1739,13 @@
   function renderCartContent(body, modal, data, psid) {
     setCartBodyBusy(false);
     body.innerHTML = '';
+    // Stale until re-created at the end of this render (empty carts never get one)
+    body._cimPatch = null;
     const subtitleEl = modal.querySelector('.cim-drawer-subtitle');
-    const items = data.items || [];
+    // recId is a string per the EC2 API, but everything downstream (Set
+    // membership, Map keys, dataset round-trips) breaks silently on mixed
+    // types — normalize at the door so that can never happen.
+    const items = (data.items || []).map((it) => ({ ...it, recId: String(it.recId) }));
 
     // Clean stale recIds from groups (items may have been deleted/renewed away)
     const existingRecIds = new Set(items.map((it) => it.recId));
@@ -1460,11 +1767,23 @@
     modal.querySelectorAll('.cim-cart-list-btn').forEach((btn) => btn.classList.remove('cim-cart-list-btn--partial'));
 
     const total = items.reduce((sum, it) => sum + (parseFloat(it.price) || 0) * (parseInt(it.qty, 10) || 0), 0);
-    if (subtitleEl) subtitleEl.textContent = '0 items · RM0.00';
+    // Default subtitle = the whole cart; a selection overrides it below.
+    // Showing "0 items · RM0.00" on a full cart was misinformation.
+    // `let` — the in-place patch below recomputes it when quantities change.
+    let fullCartSubtitle = `${items.length} item${items.length === 1 ? '' : 's'} · RM${total.toFixed(2)}`;
+    if (subtitleEl) subtitleEl.textContent = fullCartSubtitle;
 
     const itemLineTotals = new Map(
       items.map((it) => [it.recId, (parseFloat(it.price) || 0) * (parseInt(it.qty, 10) || 0)])
     );
+
+    // goodsId → occurrence count, for duplicate-row badges and Merge
+    const goodsIdCounts = new Map();
+    items.forEach((it) => goodsIdCounts.set(it.goodsId, (goodsIdCounts.get(it.goodsId) || 0) + 1));
+    const groupOfRecId = (rid) => {
+      for (const [gid, g] of cartGroups) { if (g.recIds.has(rid)) return gid; }
+      return null;
+    };
 
     // ── Toolbar ───────────────────────────────────────────────────────────────
     const toolbar = document.createElement('div');
@@ -1493,30 +1812,35 @@
     const bulkOrderBtn = document.createElement('button');
     bulkOrderBtn.type = 'button';
     bulkOrderBtn.className = 'cim-cart-bulk-btn cim-cart-bulk-btn--order';
-    bulkOrderBtn.textContent = '+ Order';
-    bulkOrderBtn.disabled = true;
+    bulkOrderBtn.textContent = '+ Order All';
     const bulkGroupBtn = document.createElement('button');
     bulkGroupBtn.type = 'button';
     bulkGroupBtn.className = 'cim-cart-bulk-btn cim-cart-bulk-btn--group';
     bulkGroupBtn.textContent = '⊞ Group';
     bulkGroupBtn.disabled = true;
-    bulkActions.append(bulkDeleteBtn, bulkRenewBtn, bulkOrderBtn, bulkGroupBtn);
+    const bulkMergeBtn = document.createElement('button');
+    bulkMergeBtn.type = 'button';
+    bulkMergeBtn.className = 'cim-cart-bulk-btn cim-cart-bulk-btn--merge';
+    bulkMergeBtn.textContent = '⇤ Merge';
+    bulkMergeBtn.disabled = true;
+    bulkMergeBtn.title = 'Merge selected duplicate rows into one (same product, same group)';
+    bulkActions.append(bulkDeleteBtn, bulkRenewBtn, bulkMergeBtn, bulkGroupBtn, bulkOrderBtn);
     toolbar.append(selectAllLabel, bulkActions);
     body.appendChild(toolbar);
 
-    const hasExpired = items.some((it) => it.expired);
-    if (hasExpired) {
+    const expiredCount = items.filter((it) => it.expired).length;
+    if (expiredCount > 0) {
       const renewAllRow = document.createElement('div');
       renewAllRow.className = 'cim-cart-renew-all-row';
       const renewAllBtn = document.createElement('button');
       renewAllBtn.type = 'button';
       renewAllBtn.className = 'cim-cart-renew-all-btn';
-      renewAllBtn.textContent = '↺ Renew All Expired';
+      renewAllBtn.textContent = `⚠️ ${expiredCount} expired item${expiredCount === 1 ? '' : 's'} — Renew all`;
       renewAllBtn.addEventListener('click', () => {
         const expiredIds = items.filter((it) => it.expired).map((it) => it.recId);
         setCartBodyBusy(true);
         chrome.runtime.sendMessage({ type: 'CART_REFRESH_VALIDITY', recIds: expiredIds }, (res) => {
-          if (res?.ok) { showCartView(psid); }
+          if (res?.ok) { refreshCartView(psid); }
           else { setCartBodyBusy(false); showCartError(modal, res?.error || 'Renew failed.'); }
         });
       });
@@ -1527,15 +1851,31 @@
     function syncBulkButtons() {
       const allChks = body.querySelectorAll('.cim-cart-item-check');
       const checked = body.querySelectorAll('.cim-cart-item-check:checked').length;
-      bulkDeleteBtn.disabled = cartSelectedRecIds.size === 0;
-      bulkRenewBtn.disabled = cartSelectedRecIds.size === 0;
-      bulkOrderBtn.disabled = cartSelectedRecIds.size === 0;
-      bulkGroupBtn.disabled = cartSelectedRecIds.size < 2;
+      const n = cartSelectedRecIds.size;
+      bulkDeleteBtn.disabled = n === 0;
+      bulkRenewBtn.disabled = n === 0;
+      bulkGroupBtn.disabled = n < 2;
+      // Empty selection = order the whole cart; the label always states scope.
+      bulkOrderBtn.textContent = n === 0 ? '+ Order All' : `+ Order (${n})`;
+      // Merge enables when the selected rows are truly the same line item:
+      // same goodsId + same product name + same price. Additional safety:
+      // all rows in one group (or all ungrouped) so quantity never crosses a
+      // group boundary, and none expired.
+      let canMerge = false;
+      if (n >= 2) {
+        const selItems = items.filter((it) => cartSelectedRecIds.has(it.recId));
+        const first = selItems[0];
+        canMerge = selItems.every((it) => it.goodsId === first.goodsId)
+          && selItems.every((it) => (it.name || '') === (first.name || ''))
+          && selItems.every((it) => (parseFloat(it.price) || 0) === (parseFloat(first.price) || 0))
+          && selItems.every((it) => groupOfRecId(it.recId) === groupOfRecId(first.recId))
+          && !selItems.some((it) => it.expired);
+      }
+      bulkMergeBtn.disabled = !canMerge;
       selectAllChk.indeterminate = checked > 0 && checked < allChks.length;
       selectAllChk.checked = allChks.length > 0 && checked === allChks.length;
       const selTotal = [...cartSelectedRecIds].reduce((sum, id) => sum + (itemLineTotals.get(id) || 0), 0);
-      const n = cartSelectedRecIds.size;
-      if (subtitleEl) subtitleEl.textContent = `${n} item${n === 1 ? '' : 's'} · RM${selTotal.toFixed(2)}`;
+      if (subtitleEl) subtitleEl.textContent = n === 0 ? fullCartSubtitle : `${n} selected · RM${selTotal.toFixed(2)}`;
       const isPartial = n > 0 && n < cartTotalItemCount;
       modal.querySelectorAll('.cim-cart-list-btn').forEach((btn) => btn.classList.toggle('cim-cart-list-btn--partial', isPartial));
       body.querySelectorAll('.cim-cart-group').forEach((groupEl) => {
@@ -1564,7 +1904,7 @@
       showDeleteConfirm(bulkDeleteBtn, () => {
         setCartBodyBusy(true);
         chrome.runtime.sendMessage({ type: 'CART_DELETE_ITEMS', recIds }, (res) => {
-          if (res?.ok) { showCartView(psid); }
+          if (res?.ok) { refreshCartView(psid); }
           else { setCartBodyBusy(false); showCartError(modal, res?.error || 'Delete failed.'); }
         });
       });
@@ -1575,17 +1915,40 @@
       if (!recIds.length) return;
       setCartBodyBusy(true);
       chrome.runtime.sendMessage({ type: 'CART_REFRESH_VALIDITY', recIds }, (res) => {
-        if (res?.ok) { showCartView(psid); }
+        if (res?.ok) { refreshCartView(psid); }
         else { setCartBodyBusy(false); showCartError(modal, res?.error || 'Renew failed.'); }
       });
     });
 
     bulkOrderBtn.addEventListener('click', () => {
-      if (!cartSelectedRecIds.size) return;
-      const selectedItems = items
-        .filter((it) => cartSelectedRecIds.has(it.recId))
+      const targetItems = cartSelectedRecIds.size
+        ? items.filter((it) => cartSelectedRecIds.has(it.recId))
+        : items;
+      const selectedItems = targetItems
         .map((it) => ({ recId: it.recId, qty: parseInt(it.qty, 10) || 1, price: parseFloat(it.price) || 0 }));
       showCheckoutView(psid, selectedItems);
+    });
+
+    bulkMergeBtn.addEventListener('click', () => {
+      const selItems = items.filter((it) => cartSelectedRecIds.has(it.recId));
+      if (selItems.length < 2) return;
+      const target = selItems[0];
+      const mergedQty = selItems.reduce((sum, it) => sum + (parseInt(it.qty, 10) || 0), 0);
+      const restIds = selItems.slice(1).map((it) => it.recId);
+      setCartBodyBusy(true);
+      chrome.runtime.sendMessage({ type: 'CART_UPDATE_QTY', recId: target.recId, qty: mergedQty }, (res) => {
+        if (!res?.ok) {
+          setCartBodyBusy(false);
+          showCartError(modal, res?.error || 'Merge failed.');
+          return;
+        }
+        chrome.runtime.sendMessage({ type: 'CART_DELETE_ITEMS', recIds: restIds }, (res2) => {
+          // Qty already changed on the target — re-fetch either way so the
+          // view reflects the real cart state.
+          if (!res2?.ok) showCartError(modal, res2?.error || 'Merged qty, but deleting duplicate rows failed.');
+          refreshCartView(psid);
+        });
+      });
     });
 
     bulkGroupBtn.addEventListener('click', () => {
@@ -1615,22 +1978,23 @@
       chk.className = 'cim-cart-checkbox cim-cart-item-check';
       chk.dataset.recId = item.recId;
       chk.addEventListener('click', (e) => {
-        if (e.shiftKey && lastCheckedIndex >= 0 && idx !== lastCheckedIndex) {
-          const start = Math.min(lastCheckedIndex, idx);
-          const end = Math.max(lastCheckedIndex, idx);
-          items.slice(start, end + 1).forEach((it) => {
-            const c = body.querySelector(`.cim-cart-item-check[data-rec-id="${it.recId}"]`);
-            if (c) {
-              c.checked = chk.checked;
-              if (chk.checked) cartSelectedRecIds.add(it.recId);
-              else cartSelectedRecIds.delete(it.recId);
-            }
+        // Range-select over VISUAL order (grouped rows render at the top,
+        // so array index ≠ what the operator sees and sweeps).
+        const allChecks = [...body.querySelectorAll('.cim-cart-item-check')];
+        const vIdx = allChecks.indexOf(chk);
+        if (e.shiftKey && lastCheckedIndex >= 0 && vIdx !== lastCheckedIndex) {
+          const start = Math.min(lastCheckedIndex, vIdx);
+          const end = Math.max(lastCheckedIndex, vIdx);
+          allChecks.slice(start, end + 1).forEach((c) => {
+            c.checked = chk.checked;
+            if (chk.checked) cartSelectedRecIds.add(c.dataset.recId);
+            else cartSelectedRecIds.delete(c.dataset.recId);
           });
         } else {
           if (chk.checked) cartSelectedRecIds.add(item.recId);
           else cartSelectedRecIds.delete(item.recId);
         }
-        lastCheckedIndex = idx;
+        lastCheckedIndex = vIdx;
         syncBulkButtons();
       });
       chkLabel.appendChild(chk);
@@ -1658,6 +2022,14 @@
         eb.textContent = '⚠ Expired';
         badges.appendChild(eb);
       }
+      // Same product appears in 2+ rows — nudge the operator toward Merge
+      if ((goodsIdCounts.get(item.goodsId) || 0) > 1) {
+        const db = document.createElement('span');
+        db.className = 'cim-cart-dup-badge';
+        db.textContent = `⧉ ×${goodsIdCounts.get(item.goodsId)}`;
+        db.title = 'Duplicate rows of this product — select them and Merge';
+        badges.appendChild(db);
+      }
       top.append(name, badges);
 
       // Controls row
@@ -1667,7 +2039,7 @@
       const price = parseFloat(item.price) || 0;
       const priceEl = document.createElement('span');
       priceEl.className = 'cim-cart-item-price';
-      priceEl.textContent = `RM ${price.toFixed(2)}/ea`;
+      priceEl.textContent = `RM ${price.toFixed(2)}/pc`;
 
       // Qty stepper
       const stepper = document.createElement('div');
@@ -1693,10 +2065,17 @@
         minusBtn.disabled = true;
         plusBtn.disabled = true;
         qtyDisplay.disabled = true;
+        // Dim the whole body, not just this row: it blocks a second mutation
+        // (or + Order with a not-yet-committed qty) from racing this one.
+        setCartBodyBusy(true);
         chrome.runtime.sendMessage({ type: 'CART_UPDATE_QTY', recId: item.recId, qty: newQty }, (res) => {
-          if (res?.ok) { showCartView(psid); }
+          if (res?.ok) { refreshCartView(psid); }
           else {
-            minusBtn.disabled = parseInt(qtyDisplay.value, 10) <= 1;
+            // Roll the input back to the last server-accepted qty — leaving
+            // the rejected value visible makes the next +/− compute from it.
+            setCartBodyBusy(false);
+            qtyDisplay.value = String(item.qty);
+            minusBtn.disabled = parseInt(item.qty, 10) <= 1;
             plusBtn.disabled = false;
             qtyDisplay.disabled = false;
             showCartError(modal, res?.error || 'Failed to update quantity.');
@@ -1736,20 +2115,22 @@
         renewBtn.addEventListener('click', () => {
           renewBtn.disabled = true;
           chrome.runtime.sendMessage({ type: 'CART_REFRESH_VALIDITY', recIds: [item.recId] }, (res) => {
-            if (res?.ok) { showCartView(psid); }
+            if (res?.ok) { refreshCartView(psid); }
             else { renewBtn.disabled = false; showCartError(modal, res?.error || 'Renew failed.'); }
           });
         });
         actions.appendChild(renewBtn);
       }
 
+      // Split sits directly beside the qty stepper (appended into `bottom`
+      // below), matching the stepper-button height.
+      let splitBtn = null;
       if (parseInt(item.qty, 10) > 1) {
-        const splitBtn = document.createElement('button');
+        splitBtn = document.createElement('button');
         splitBtn.type = 'button';
         splitBtn.className = 'cim-cart-item-split-btn';
         splitBtn.textContent = 'Split';
         splitBtn.addEventListener('click', () => showSplitPopup(splitBtn, item, psid));
-        actions.appendChild(splitBtn);
       }
 
       const deleteBtn = document.createElement('button');
@@ -1757,18 +2138,26 @@
       deleteBtn.className = 'cim-cart-item-delete-btn';
       deleteBtn.setAttribute('aria-label', 'Delete');
       deleteBtn.textContent = '🗑';
+      // Single delete: immediate + 5 s Undo toast (undo-over-confirm for a
+      // frequent reversible action). Bulk delete keeps its confirm popover —
+      // bigger blast radius.
       deleteBtn.addEventListener('click', () => {
-        showDeleteConfirm(deleteBtn, () => {
-          deleteBtn.disabled = true;
-          chrome.runtime.sendMessage({ type: 'CART_DELETE_ITEMS', recIds: [item.recId] }, (res) => {
-            if (res?.ok) { showCartView(psid); }
-            else { deleteBtn.disabled = false; showCartError(modal, res?.error || 'Delete failed.'); }
-          });
+        deleteBtn.disabled = true;
+        chrome.runtime.sendMessage({ type: 'CART_DELETE_ITEMS', recIds: [item.recId] }, (res) => {
+          if (res?.ok) {
+            showCartUndoToast(modal, item, psid);
+            refreshCartView(psid);
+          } else {
+            deleteBtn.disabled = false;
+            showCartError(modal, res?.error || 'Delete failed.');
+          }
         });
       });
       actions.appendChild(deleteBtn);
 
-      bottom.append(priceEl, stepper, lineTotalEl, actions);
+      bottom.append(priceEl, stepper);
+      if (splitBtn) bottom.appendChild(splitBtn);
+      bottom.append(lineTotalEl, actions);
       content.append(top, bottom);
 
       const thumb = document.createElement('div');
@@ -1851,6 +2240,66 @@
     // Update the sticky total bar (outside the scroll body)
     const totalBarValue = modal.querySelector('.cim-cart-total-bar .cim-cart-total-value');
     if (totalBarValue) totalBarValue.textContent = `RM ${total.toFixed(2)}`;
+
+    // Restore any surviving selection — Ungroup re-renders without resetting
+    // cartSelectedRecIds, but rows are created unchecked. Prune ids that no
+    // longer exist, re-check the rest, and let syncBulkButtons re-derive the
+    // toolbar/subtitle from the real state. (refreshCartView's rebuild path
+    // clears the selection before calling here, so this is a no-op there.)
+    for (const rid of [...cartSelectedRecIds]) {
+      if (!existingRecIds.has(rid)) cartSelectedRecIds.delete(rid);
+    }
+    if (cartSelectedRecIds.size) {
+      body.querySelectorAll('.cim-cart-item-check').forEach((chk) => {
+        chk.checked = cartSelectedRecIds.has(chk.dataset.recId);
+      });
+    }
+    syncBulkButtons();
+
+    // In-place patch for refreshCartView: when fresh data has the same row
+    // structure (same recIds in order, same expired/split-button/badge state),
+    // update only the values that can differ — qty, line totals, subtitle,
+    // grand total — leaving every untouched DOM node (and the scroll position)
+    // alone. Returns false when structure changed; caller does a full rebuild.
+    body._cimPatch = (newData) => {
+      // Body may have been re-rendered as another view (goods/checkout/copy)
+      // while the refresh was in flight — our rows are detached; full rebuild.
+      if (!body.querySelector('.cim-cart-item-row')) return false;
+      const newItems = (newData.items || []).map((it) => ({ ...it, recId: String(it.recId) }));
+      if (newItems.length !== items.length) return false;
+      for (let i = 0; i < items.length; i++) {
+        const a = items[i], b = newItems[i];
+        if (a.recId !== b.recId || a.goodsId !== b.goodsId) return false;
+        if (!!a.expired !== !!b.expired) return false;
+        // Split button exists only when qty > 1; crossing that line needs a rebuild
+        if ((parseInt(a.qty, 10) > 1) !== (parseInt(b.qty, 10) > 1)) return false;
+        if ((a.name || '') !== (b.name || '')) return false;
+        if ((parseFloat(a.price) || 0) !== (parseFloat(b.price) || 0)) return false;
+        if ((a.img || '') !== (b.img || '') || (a.origin || '') !== (b.origin || '')) return false;
+      }
+      newItems.forEach((fresh, i) => {
+        const item = items[i];
+        // Row handlers (stepper, Split, delete, undo) close over `item` —
+        // mutate the same object so they see the fresh values.
+        Object.assign(item, fresh);
+        const qty = parseInt(item.qty, 10) || 0;
+        const price = parseFloat(item.price) || 0;
+        const row = rowMap.get(item.recId);
+        const stepperBtns = row.querySelectorAll('.cim-cart-stepper-btn');
+        stepperBtns.forEach((btn) => { btn.disabled = false; });
+        if (stepperBtns[0]) stepperBtns[0].disabled = qty <= 1;
+        const qtyInput = row.querySelector('.cim-cart-stepper-qty');
+        if (qtyInput) { qtyInput.value = String(item.qty); qtyInput.disabled = false; }
+        const lineTotalEl = row.querySelector('.cim-cart-item-line-total');
+        if (lineTotalEl) lineTotalEl.textContent = `RM ${(price * qty).toFixed(2)}`;
+        itemLineTotals.set(item.recId, price * qty);
+      });
+      const newTotal = newItems.reduce((sum, it) => sum + (parseFloat(it.price) || 0) * (parseInt(it.qty, 10) || 0), 0);
+      fullCartSubtitle = `${items.length} item${items.length === 1 ? '' : 's'} · RM${newTotal.toFixed(2)}`;
+      if (totalBarValue) totalBarValue.textContent = `RM ${newTotal.toFixed(2)}`;
+      syncBulkButtons();
+      return true;
+    };
   }
 
   // ── Goods picker ─────────────────────────────────────────────────────────────
@@ -1865,14 +2314,22 @@
     goodsDataMap = {};
     const modal = ensureCartModal();
     setCartHeaderMode('goods');
+    cartViewSeq++;
     renderGoodsPicker(modal.querySelector('.cim-drawer-body'), psid);
   }
 
   function renderGoodsPicker(body, psid) {
     body.innerHTML = '';
 
-    // tracks goodsIds visible in the current result set (for select-all)
+    // tracks goodsIds visible in the current result set (for select-all) —
+    // only ADDABLE products; out-of-stock / off-sale never enter the pool
     let visibleGoodsIds = [];
+    // gid → can this product actually be added (in stock and on sale)
+    const goodsAvailMap = {};
+    const isGoodsAvailable = (g) => {
+      const s = (g.stock === null || g.stock === undefined) ? null : parseInt(g.stock, 10);
+      return !!g.onSale && s !== 0;
+    };
 
     // Mode toggle
     const modeRow = document.createElement('div');
@@ -1901,14 +2358,6 @@
     searchBtn.className = 'cim-goods-search-btn';
     searchBtn.textContent = 'Search';
     searchRow.append(searchInput, searchBtn);
-    body.appendChild(searchRow);
-
-    // Smart hint
-    const smartHint = document.createElement('div');
-    smartHint.className = 'cim-smart-hint';
-    smartHint.textContent = 'Separate products with commas (，or ,): 红枣 去核 500g，枸杞 250g';
-    smartHint.style.display = goodsSearchMode === 'smart' ? '' : 'none';
-    body.appendChild(smartHint);
 
     // Multi-select toolbar
     const toolbarRow = document.createElement('div');
@@ -1926,6 +2375,12 @@
     quoteBtn.className = 'cim-goods-quote-btn';
     quoteBtn.textContent = 'Quote';
     quoteBtn.disabled = true;
+    const quoteSendBtn = document.createElement('button');
+    quoteSendBtn.type = 'button';
+    quoteSendBtn.className = 'cim-goods-quote-btn';
+    quoteSendBtn.textContent = '📩';
+    quoteSendBtn.title = 'Insert quote into Messenger';
+    quoteSendBtn.disabled = true;
     const addSelectedBtn = document.createElement('button');
     addSelectedBtn.type = 'button';
     addSelectedBtn.className = 'cim-goods-add-selected-btn';
@@ -1933,9 +2388,15 @@
     addSelectedBtn.disabled = true;
     const btnGroup = document.createElement('div');
     btnGroup.className = 'cim-goods-btn-group';
-    btnGroup.append(quoteBtn, addSelectedBtn);
+    btnGroup.append(quoteBtn, quoteSendBtn, addSelectedBtn);
     toolbarRow.append(selectAllLabel, btnGroup);
-    body.appendChild(toolbarRow);
+
+    // Search + toolbar pin to the top of the scrolling list so All /
+    // Quote / Add Selected stay reachable on long result sets.
+    const stickyHead = document.createElement('div');
+    stickyHead.className = 'cim-goods-sticky-head';
+    stickyHead.append(searchRow, toolbarRow);
+    body.appendChild(stickyHead);
 
     const listEl = document.createElement('div');
     listEl.className = 'cim-goods-list';
@@ -1946,11 +2407,17 @@
     pagerEl.style.display = goodsSearchMode === 'smart' ? 'none' : '';
     body.appendChild(pagerEl);
 
+    // True while an Add Selected batch is in flight — the button must stay
+    // disabled (and keep its "Adding…"/result label) no matter what the
+    // selection does meanwhile, or a second click resends the whole batch.
+    let batchInFlight = false;
+
     function syncToolbar() {
       const count = goodsSelectedIds.size;
-      addSelectedBtn.disabled = count === 0;
-      addSelectedBtn.textContent = count === 0 ? 'Add Selected' : `Add Selected (${count})`;
+      addSelectedBtn.disabled = batchInFlight || count === 0;
+      if (!batchInFlight) addSelectedBtn.textContent = count === 0 ? 'Add Selected' : `Add Selected (${count})`;
       quoteBtn.disabled = count === 0;
+      quoteSendBtn.disabled = count === 0;
       const allChecked = visibleGoodsIds.length > 0 && visibleGoodsIds.every((id) => goodsSelectedIds.has(id));
       const someChecked = visibleGoodsIds.some((id) => goodsSelectedIds.has(id));
       selectAllCb.checked = allChecked;
@@ -1966,11 +2433,17 @@
       syncToolbar();
     });
 
-    quoteBtn.addEventListener('click', () => {
-      const lines = [...goodsSelectedIds].map((id) => {
+    function buildQuoteLines() {
+      // Zero-price rows (补发/reshipment placeholders) are addable but must
+      // never reach a customer quote as "RM 0.00".
+      return [...goodsSelectedIds].map((id) => {
         const d = goodsDataMap[id];
-        return d ? `${d.name} - RM ${d.price.toFixed(2)}` : null;
+        return d && d.price > 0 ? `${d.name} - RM ${d.price.toFixed(2)}` : null;
       }).filter(Boolean);
+    }
+
+    quoteBtn.addEventListener('click', () => {
+      const lines = buildQuoteLines();
       if (!lines.length) return;
       navigator.clipboard.writeText(lines.join('\n')).then(() => {
         quoteBtn.textContent = 'Copied!';
@@ -1979,45 +2452,64 @@
       });
     });
 
+    quoteSendBtn.addEventListener('click', () => {
+      const lines = buildQuoteLines();
+      if (!lines.length) return;
+      const ok = insertTextIntoMessenger(lines.join('\n'));
+      quoteSendBtn.textContent = ok ? '✓' : '✕';
+      clearTimeout(quoteSendBtn._resetTimer);
+      quoteSendBtn._resetTimer = setTimeout(() => { quoteSendBtn.textContent = '📩'; }, 1800);
+    });
+
     addSelectedBtn.addEventListener('click', () => {
-      const selectedArray = [...goodsSelectedIds];
-      if (!selectedArray.length) return;
+      // Belt-and-braces: unaddable ids can't normally enter the Set (their
+      // checkboxes are disabled), but never batch-add one regardless.
+      const selectedArray = [...goodsSelectedIds].filter((id) => goodsAvailMap[id] !== false);
+      if (!selectedArray.length || batchInFlight) return;
+      batchInFlight = true;
+      // The selection is consumed NOW: clear it before the async adds so a
+      // checkbox ticked mid-batch starts a fresh selection instead of
+      // re-arming the button with these same ids (double-add).
+      goodsSelectedIds.clear();
+      listEl.querySelectorAll('.cim-goods-item-cb').forEach((cb) => { cb.checked = false; });
+      selectAllCb.checked = false;
+      selectAllCb.indeterminate = false;
+      selectAllCb.disabled = true;
       addSelectedBtn.disabled = true;
       addSelectedBtn.textContent = 'Adding…';
-      selectAllCb.disabled = true;
       let done = 0, failed = 0, remaining = selectedArray.length;
       selectedArray.forEach((goodsId) => {
         const qty = goodsQtys[goodsId] || 1;
         chrome.runtime.sendMessage({ type: 'CART_ADD_ITEM', fbUserId: psid, goodsId, qty }, (res) => {
           if (res?.ok) {
             done++;
-            const cb = listEl.querySelector(`.cim-goods-item-cb[data-goods-id="${CSS.escape(goodsId)}"]`);
-            const cardAddBtn = cb?.closest('.cim-goods-item')?.querySelector('.cim-goods-add-btn');
-            if (cardAddBtn) { cardAddBtn.textContent = '✓ Added'; cardAddBtn.classList.add('cim-goods-add-btn--done'); }
+            // querySelectorAll: the same product can appear in two smart-search
+            // segments — mark every card, not just the first.
+            listEl.querySelectorAll(`.cim-goods-item-cb[data-goods-id="${CSS.escape(goodsId)}"]`).forEach((cbEl) => {
+              const cardAddBtn = cbEl.closest('.cim-goods-item')?.querySelector('.cim-goods-add-btn');
+              if (cardAddBtn) { cardAddBtn.textContent = '✓ Added'; cardAddBtn.classList.add('cim-goods-add-btn--done'); }
+            });
           } else {
             failed++;
             showCartError(document.getElementById(CART_MODAL_ID), res?.error || 'Add failed.');
           }
           remaining--;
           if (remaining > 0) return;
-          goodsSelectedIds.clear();
-          listEl.querySelectorAll('.cim-goods-item-cb').forEach((cb) => { cb.checked = false; });
-          selectAllCb.checked = false;
-          selectAllCb.indeterminate = false;
+          batchInFlight = false;
           selectAllCb.disabled = false;
-          syncToolbar();
           addSelectedBtn.textContent = failed === 0 ? `✓ ${done} added` : `${done} ok · ${failed} failed`;
-          setTimeout(() => { addSelectedBtn.textContent = 'Add Selected'; }, 2000);
+          clearTimeout(addSelectedBtn._resetTimer);
+          addSelectedBtn._resetTimer = setTimeout(() => syncToolbar(), 2000);
         });
       });
     });
 
     function setMode(mode) {
       goodsSearchMode = mode;
+      goodsSearchReqId++; // cancel any in-flight search of the old mode
       normalModeBtn.classList.toggle('cim-goods-mode-btn--active', mode === 'normal');
       smartModeBtn.classList.toggle('cim-goods-mode-btn--active', mode === 'smart');
       pagerEl.style.display = mode === 'smart' ? 'none' : '';
-      smartHint.style.display = mode === 'smart' ? '' : 'none';
       searchInput.placeholder = mode === 'smart' ? '红枣 去核 500g，枸杞 250g，菊花 朵' : 'Search products…';
       searchInput.value = '';
       listEl.innerHTML = '';
@@ -2035,20 +2527,31 @@
 
     // Shared card builder
     function buildGoodsCard(goods) {
+      // One canonical string id — dataset attributes are always strings, so
+      // Set/Map membership breaks silently if raw ids are ever numeric.
+      const gid = String(goods.goodsId);
+      const available = isGoodsAvailable(goods);
+      goodsAvailMap[gid] = available;
       const card = document.createElement('div');
-      card.className = 'cim-goods-item';
+      card.className = 'cim-goods-item' + (available ? '' : ' cim-goods-item--unavailable');
 
       const checkWrap = document.createElement('label');
       checkWrap.className = 'cim-goods-item-check';
       const checkbox = document.createElement('input');
       checkbox.type = 'checkbox';
       checkbox.className = 'cim-goods-item-cb cim-goods-checkbox';
-      checkbox.dataset.goodsId = goods.goodsId;
-      checkbox.checked = goodsSelectedIds.has(goods.goodsId);
-      goodsDataMap[goods.goodsId] = { name: goods.name || '(Unknown)', price: parseFloat(goods.price) || 0 };
+      checkbox.dataset.goodsId = gid;
+      // Unaddable products are unselectable — otherwise select-all / Add
+      // Selected batch-adds items the per-card Add button correctly blocks.
+      checkbox.disabled = !available;
+      checkbox.checked = available && goodsSelectedIds.has(gid);
+      goodsDataMap[gid] = { name: goods.name || '(Unknown)', price: parseFloat(goods.price) || 0 };
       checkbox.addEventListener('change', () => {
-        if (checkbox.checked) goodsSelectedIds.add(goods.goodsId);
-        else goodsSelectedIds.delete(goods.goodsId);
+        if (checkbox.checked) goodsSelectedIds.add(gid);
+        else goodsSelectedIds.delete(gid);
+        // Mirror onto duplicate cards of the same product (two smart-search
+        // segments can both return it) — one Set entry drives N cards.
+        listEl.querySelectorAll(`.cim-goods-item-cb[data-goods-id="${CSS.escape(gid)}"]`).forEach((cbEl) => { cbEl.checked = checkbox.checked; });
         syncToolbar();
       });
       checkWrap.appendChild(checkbox);
@@ -2077,7 +2580,34 @@
       goodsName.textContent = goods.name || '(Unknown)';
       const meta = document.createElement('div');
       meta.className = 'cim-goods-meta';
-      meta.textContent = `RM ${(parseFloat(goods.price) || 0).toFixed(2)} · Stock: ${goods.stock ?? '—'}`;
+      const stockNum = (goods.stock === null || goods.stock === undefined) ? null : parseInt(goods.stock, 10);
+      const priceSpan = document.createElement('span');
+      priceSpan.className = 'cim-goods-price';
+      priceSpan.textContent = `RM ${(parseFloat(goods.price) || 0).toFixed(2)}`;
+      meta.appendChild(priceSpan);
+      // Exact stock counts are noise past "plenty"; what matters is 0 (badge),
+      // low (amber count), or fine.
+      if (stockNum !== null && !Number.isNaN(stockNum) && stockNum > 0) {
+        const stockSpan = document.createElement('span');
+        if (stockNum < 100) {
+          stockSpan.className = 'cim-goods-stock--low';
+          stockSpan.textContent = ` · Low stock: ${stockNum}`;
+        } else {
+          stockSpan.textContent = ' · In stock';
+        }
+        meta.appendChild(stockSpan);
+      }
+      // goodsId — the only way to tell same-name-same-price twins apart
+      const idSpan = document.createElement('span');
+      idSpan.className = 'cim-goods-id';
+      idSpan.textContent = ` · #${gid}`;
+      meta.appendChild(idSpan);
+      if (stockNum === 0) {
+        const oos = document.createElement('span');
+        oos.className = 'cim-goods-off-badge';
+        oos.textContent = '缺货 OUT OF STOCK';
+        meta.append(' ', oos);
+      }
       if (!goods.onSale) {
         const off = document.createElement('span');
         off.className = 'cim-goods-off-badge';
@@ -2091,7 +2621,7 @@
 
       const stepper = document.createElement('div');
       stepper.className = 'cim-cart-stepper';
-      const gQty = goodsQtys[goods.goodsId] || 1;
+      const gQty = goodsQtys[gid] || 1;
       const minusBtn = document.createElement('button');
       minusBtn.type = 'button';
       minusBtn.className = 'cim-cart-stepper-btn';
@@ -2111,13 +2641,13 @@
         const cur = parseInt(qtyEl.value, 10);
         if (cur <= 1) return;
         qtyEl.value = String(cur - 1);
-        goodsQtys[goods.goodsId] = cur - 1;
+        goodsQtys[gid] = cur - 1;
         minusBtn.disabled = cur - 1 <= 1;
       });
       plusBtn.addEventListener('click', () => {
         const cur = parseInt(qtyEl.value, 10);
         qtyEl.value = String(cur + 1);
-        goodsQtys[goods.goodsId] = cur + 1;
+        goodsQtys[gid] = cur + 1;
         minusBtn.disabled = false;
       });
       qtyEl.addEventListener('input', () => {
@@ -2125,29 +2655,28 @@
       });
       qtyEl.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') { e.preventDefault(); qtyEl.blur(); }
-        if (e.key === 'Escape') { qtyEl.value = String(goodsQtys[goods.goodsId] || 1); qtyEl.blur(); }
+        if (e.key === 'Escape') { qtyEl.value = String(goodsQtys[gid] || 1); qtyEl.blur(); }
       });
       qtyEl.addEventListener('blur', () => {
         const val = parseInt(qtyEl.value, 10);
         const clamped = (!val || val < 1) ? 1 : val;
         qtyEl.value = String(clamped);
-        goodsQtys[goods.goodsId] = clamped;
+        goodsQtys[gid] = clamped;
         minusBtn.disabled = clamped <= 1;
       });
       stepper.append(minusBtn, qtyEl, plusBtn);
 
-      const outOfStock = goods.stock !== null && goods.stock !== undefined && parseInt(goods.stock, 10) === 0;
       const addBtn = document.createElement('button');
       addBtn.type = 'button';
       addBtn.className = 'cim-goods-add-btn';
       addBtn.textContent = 'Add';
-      addBtn.disabled = outOfStock || !goods.onSale;
+      addBtn.disabled = !available;
 
       addBtn.addEventListener('click', () => {
         const qty = parseInt(qtyEl.value, 10) || 1;
         addBtn.disabled = true;
         addBtn.textContent = '…';
-        chrome.runtime.sendMessage({ type: 'CART_ADD_ITEM', fbUserId: psid, goodsId: goods.goodsId, qty }, (res) => {
+        chrome.runtime.sendMessage({ type: 'CART_ADD_ITEM', fbUserId: psid, goodsId: gid, qty }, (res) => {
           if (res?.ok) {
             addBtn.textContent = '✓ Added';
             addBtn.classList.add('cim-goods-add-btn--done');
@@ -2164,16 +2693,24 @@
       return card;
     }
 
+    // Monotonic search token: only the LATEST search may render. Without it a
+    // slow older response overwrites newer results (list shows search A under
+    // an input reading B), and a pending normal search can paint into the
+    // Smart view after a mode switch.
+    let goodsSearchReqId = 0;
+
     // Normal search (GET, paginated)
     const doSearch = (keyword, page) => {
       goodsKeyword = keyword;
       goodsPage = page;
       goodsSelectedIds.clear();
       visibleGoodsIds = [];
+      const rid = ++goodsSearchReqId;
       listEl.innerHTML = '<div class="cim-drawer-loading">Searching…</div>';
       pagerEl.innerHTML = '';
       syncToolbar();
       chrome.runtime.sendMessage({ type: 'SEARCH_GOODS', keyword, page }, (res) => {
+        if (rid !== goodsSearchReqId || !listEl.isConnected) return;
         if (!res?.ok) {
           listEl.innerHTML = `<div class="cim-drawer-error">${res?.error || 'Search failed.'}</div>`;
           return;
@@ -2187,7 +2724,7 @@
           return;
         }
 
-        visibleGoodsIds = result.items.map((g) => g.goodsId);
+        visibleGoodsIds = result.items.filter(isGoodsAvailable).map((g) => String(g.goodsId));
         result.items.forEach((goods) => listEl.appendChild(buildGoodsCard(goods)));
         syncToolbar();
 
@@ -2219,6 +2756,7 @@
 
       goodsSelectedIds.clear();
       visibleGoodsIds = [];
+      const rid = ++goodsSearchReqId;
       syncToolbar();
       listEl.innerHTML = '<div class="cim-drawer-loading">Searching…</div>';
 
@@ -2228,6 +2766,9 @@
       segments.forEach((seg, i) => {
         const words = seg.split(/\s+/).filter(Boolean);
         chrome.runtime.sendMessage({ type: 'SMART_SEARCH_GOODS', words }, (res) => {
+          // A newer search owns the list (and visibleGoodsIds) — this whole
+          // fan-out is dead, stop counting.
+          if (rid !== goodsSearchReqId || !listEl.isConnected) return;
           results[i] = { seg, res };
           completed++;
           if (completed < segments.length) return;
@@ -2260,7 +2801,7 @@
 
             if (segRes?.ok && segRes.items?.length > 0) {
               segRes.items.forEach((goods) => {
-                visibleGoodsIds.push(goods.goodsId);
+                if (isGoodsAvailable(goods)) visibleGoodsIds.push(String(goods.goodsId));
                 group.appendChild(buildGoodsCard(goods));
               });
             }
@@ -2283,6 +2824,7 @@
     searchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) triggerSearch(); });
 
     if (goodsSearchMode === 'normal') doSearch(goodsKeyword, goodsPage);
+    requestAnimationFrame(() => searchInput.focus());
   }
 
   // ── Copy cart view ──────────────────────────────────────────────────────────
@@ -2292,6 +2834,7 @@
     const modal = ensureCartModal();
     const body = modal.querySelector('.cim-drawer-body');
     setCartHeaderMode('copy');
+    cartViewSeq++;
     renderCopyCartView(body, psid);
   }
 
@@ -2379,6 +2922,28 @@
     body.appendChild(confirmRow);
 
     let previewData = null;
+    // What the operator actually previewed — Confirm sends THIS, not the live
+    // input/checkbox state, so an edit after previewing can never silently
+    // change what gets copied.
+    let previewSnapshot = null;
+    let previewReqId = 0;
+
+    // Any change to the source ID or flags voids the preview: the on-screen
+    // list no longer describes what Confirm would do.
+    function invalidatePreview() {
+      previewReqId++;
+      previewData = null;
+      previewSnapshot = null;
+      resultsEl.innerHTML = '';
+      confirmRow.style.display = 'none';
+      // An in-flight preview's response will now be dropped — restore the
+      // button it disabled, or it stays stuck on "…" forever.
+      previewBtn.disabled = false;
+      previewBtn.textContent = 'Preview';
+    }
+    input.addEventListener('input', invalidatePreview);
+    expiredChk.addEventListener('change', invalidatePreview);
+    mergeChk.addEventListener('change', invalidatePreview);
 
     function renderPreviewResults(data) {
       previewData = data;
@@ -2427,11 +2992,12 @@
       confirmRow.style.display = 'none';
 
       const banner = document.createElement('div');
-      banner.className = 'cim-copy-success-banner';
+      const nothingAdded = data.added.length === 0 && data.failed.length > 0;
+      banner.className = 'cim-copy-success-banner' + (nothingAdded ? ' cim-copy-success-banner--fail' : '');
       const parts = [`Added ${data.added.length}`];
       if (data.skipped.length) parts.push(`skipped ${data.skipped.length}`);
       if (data.failed.length) parts.push(`failed ${data.failed.length}`);
-      banner.textContent = `✓ Copy complete — ${parts.join(' · ')}`;
+      banner.textContent = `${nothingAdded ? '⚠ Copy failed' : '✓ Copy complete'} — ${parts.join(' · ')}`;
       resultsEl.appendChild(banner);
 
       if (data.failed.length > 0) {
@@ -2457,28 +3023,42 @@
     function doPreview() {
       const sourceId = input.value.trim();
       if (!sourceId) { input.focus(); return; }
+      if (sourceId === psid) {
+        resultsEl.innerHTML = '<div class="cim-drawer-error">Source is this customer — copying a cart into itself would duplicate every row.</div>';
+        confirmRow.style.display = 'none';
+        previewData = null;
+        previewSnapshot = null;
+        return;
+      }
       copySourceId = sourceId;
+      const snapshot = { sourceId, includeExpired: expiredChk.checked, mergeDuplicates: mergeChk.checked };
+      const rid = ++previewReqId;
+      const seq = cartViewSeq;
       previewBtn.disabled = true;
       previewBtn.textContent = '…';
       resultsEl.innerHTML = '<div class="cim-drawer-loading">Checking source cart…</div>';
       confirmRow.style.display = 'none';
       previewData = null;
+      previewSnapshot = null;
       chrome.runtime.sendMessage(
-        { type: 'CART_COPY_ITEMS', fbUserId: psid, sourceFbUserId: sourceId, dryRun: true, includeExpired: expiredChk.checked, mergeDuplicates: mergeChk.checked },
+        { type: 'CART_COPY_ITEMS', fbUserId: psid, sourceFbUserId: snapshot.sourceId, dryRun: true, includeExpired: snapshot.includeExpired, mergeDuplicates: snapshot.mergeDuplicates },
         (res) => {
+          // Drop if a newer preview started, inputs changed, or the view moved on
+          if (rid !== previewReqId || seq !== cartViewSeq) return;
           previewBtn.disabled = false;
           previewBtn.textContent = 'Preview';
           if (!res?.ok) {
             resultsEl.innerHTML = `<div class="cim-drawer-error">${res?.error || 'Preview failed.'}</div>`;
             return;
           }
+          previewSnapshot = snapshot;
           renderPreviewResults(res);
         }
       );
     }
 
     previewBtn.addEventListener('click', doPreview);
-    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') doPreview(); });
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !previewBtn.disabled) doPreview(); });
 
     cancelBtn.addEventListener('click', () => {
       resultsEl.innerHTML = '';
@@ -2487,14 +3067,20 @@
     });
 
     confirmBtn.addEventListener('click', () => {
-      if (!previewData || previewData.added.length === 0) return;
-      const sourceId = input.value.trim();
+      if (!previewData || previewData.added.length === 0 || !previewSnapshot) return;
       confirmBtn.disabled = true;
       cancelBtn.disabled = true;
       confirmBtn.textContent = '…';
+      const seq = cartViewSeq;
       chrome.runtime.sendMessage(
-        { type: 'CART_COPY_ITEMS', fbUserId: psid, sourceFbUserId: sourceId, includeExpired: expiredChk.checked, mergeDuplicates: mergeChk.checked },
+        { type: 'CART_COPY_ITEMS', fbUserId: psid, sourceFbUserId: previewSnapshot.sourceId, includeExpired: previewSnapshot.includeExpired, mergeDuplicates: previewSnapshot.mergeDuplicates },
         (res) => {
+          if (seq !== cartViewSeq) {
+            // Operator left the copy view mid-flight. The copy RAN if ok —
+            // surface that so they don't run it twice.
+            if (res?.ok) showCartError(document.getElementById(CART_MODAL_ID), `⚠ Cart copy finished in the background — ${res.added.length} item${res.added.length === 1 ? '' : 's'} added.`);
+            return;
+          }
           confirmBtn.disabled = false;
           cancelBtn.disabled = false;
           confirmBtn.textContent = '✓ Confirm Copy';
@@ -2516,12 +3102,16 @@
     const modal = ensureCartModal();
     const body = modal.querySelector('.cim-drawer-body');
     setCartHeaderMode('checkout');
+    const seq = ++cartViewSeq;
     body.innerHTML = '<div class="cim-drawer-loading">Loading checkout…</div>';
     const recIds = selectedItems.map((it) => it.recId);
     const goodsNumbers = selectedItems.map((it) => it.qty);
     chrome.runtime.sendMessage(
       { type: 'GET_CHECKOUT_FORM', fbUserId: psid, userId: cartUserId, recIds, goodsNumbers },
       (res) => {
+        // Operator may have gone Back / switched customer — never paint this
+        // checkout form (with its captured psid) over whatever renders now.
+        if (seq !== cartViewSeq || cartModalPsid !== psid) return;
         const liveModal = document.getElementById(CART_MODAL_ID);
         if (!liveModal) return;
         const liveBody = liveModal.querySelector('.cim-drawer-body');
@@ -2606,9 +3196,19 @@
     body.appendChild(makeField('Postcode', postcodeInput, true));
 
     stateSelect.addEventListener('change', () => {
-      areaSelect.innerHTML = '<option>Loading…</option>';
-      chrome.runtime.sendMessage({ type: 'GET_REGION_AREAS', stateId: stateSelect.value }, (res) => {
+      // value="" so the required-field check catches an order submitted before
+      // areas load — otherwise areaSelect.value is the literal "Loading…".
+      const loadingOpt = document.createElement('option');
+      loadingOpt.value = '';
+      loadingOpt.textContent = 'Loading…';
+      areaSelect.innerHTML = '';
+      areaSelect.appendChild(loadingOpt);
+      areaSelect.disabled = true;
+      const stateId = stateSelect.value;
+      chrome.runtime.sendMessage({ type: 'GET_REGION_AREAS', stateId }, (res) => {
+        if (stateSelect.value !== stateId || !areaSelect.isConnected) return;
         areaSelect.innerHTML = '';
+        areaSelect.disabled = false;
         if (res?.ok && res.areas?.length) {
           res.areas.forEach((a) => {
             const o = document.createElement('option');
@@ -2617,6 +3217,11 @@
             areaSelect.appendChild(o);
           });
           postcodeInput.value = res.areas[0].code || '';
+        } else {
+          const failOpt = document.createElement('option');
+          failOpt.value = '';
+          failOpt.textContent = '⚠ Failed to load — reselect State';
+          areaSelect.appendChild(failOpt);
         }
       });
     });
@@ -2681,11 +3286,22 @@
       createBtn.disabled = true;
       createBtn.textContent = 'Creating…';
       const orderItems = selectedItems.map((it) => ({ recId: it.recId, qty: it.qty, price: it.price }));
+      const seq = cartViewSeq;
       chrome.runtime.sendMessage(
         { type: 'CREATE_ORDER', fbUserId: psid, userId: cartUserId, items: orderItems, customer: c, shippingIdType: selectedShippingId, confirm: false, pay: false },
         (res) => {
           const liveModal = document.getElementById(CART_MODAL_ID);
           if (!liveModal) return;
+          if (seq !== cartViewSeq) {
+            // Operator left the checkout while the order was being created.
+            // The order EXISTS if ok — say so loudly instead of painting the
+            // success panel over an unrelated view (it would confirm/pay the
+            // wrong customer's order), and never leave success silent (a
+            // silent drop invites a duplicate re-create).
+            if (res?.ok) showCartError(liveModal, `⚠ Order ${res.orderSn || ''} was created for the previous checkout — check Recent Orders before creating again.`);
+            if (res?.ok) refreshOrderListCache(psid);
+            return;
+          }
           if (!res?.ok) {
             createBtn.disabled = false;
             createBtn.textContent = 'Create Order';
@@ -2693,18 +3309,30 @@
             return;
           }
           renderCheckoutSuccess(liveModal.querySelector('.cim-drawer-body'), liveModal, psid, res);
-          chrome.runtime.sendMessage({ type: 'GET_ORDER_LIST', psid }, (r) => {
-            if (r?.ok && r.orders?.length) {
-              renderRecentOrdersInPanel(r.orders.slice(0, 5).map((o) => ({
-                orderId: o.orderId,
-                orderSn: o.orderSn,
-                totalAmount: o.amount,
-                orderDate: o.orderTime,
-              })));
-            }
-          });
+          refreshOrderListCache(psid);
         }
       );
+    });
+  }
+
+  // Background re-fetch of the order list after anything outside the order
+  // modal changes order state (create / confirm / pay from the checkout
+  // panel). Syncs both the panel top-5 and the cached "Recent Orders ↗"
+  // preload — without this the modal's first open replays stale statuses.
+  function refreshOrderListCache(psid) {
+    if (!psid) return;
+    chrome.runtime.sendMessage({ type: 'GET_ORDER_LIST', psid }, (r) => {
+      if (!r?.ok || !r.orders) return;
+      updateCachedAllOrders(psid, r.orders);
+      // The operator may have switched conversations while this was in
+      // flight — never paint another customer's orders into the panel.
+      if (sessionState.view?.psid !== psid) return;
+      renderRecentOrdersInPanel(r.orders.slice(0, 5).map((o) => ({
+        orderId: o.orderId,
+        orderSn: o.orderSn,
+        totalAmount: o.amount,
+        orderDate: o.orderTime,
+      })));
     });
   }
 
@@ -2808,7 +3436,19 @@
     viewOrderBtn.type = 'button';
     viewOrderBtn.className = 'cim-checkout-btn cim-checkout-btn--view';
     viewOrderBtn.textContent = 'View Order';
-    actRow.append(confirmBtn, confirmPaidBtn, viewOrderBtn);
+    // Hidden until Confirm+Paid's pay step succeeds — payment must actually be
+    // recorded before the "payment received" message makes sense.
+    const payMsgBtn = document.createElement('button');
+    payMsgBtn.type = 'button';
+    payMsgBtn.className = 'cim-checkout-btn cim-checkout-btn--paymsg';
+    payMsgBtn.textContent = '📩 Payment msg';
+    payMsgBtn.style.display = 'none';
+    payMsgBtn.addEventListener('click', () => {
+      const ok = insertTextIntoMessenger(buildPaymentReceivedMessage(result.orderSn));
+      payMsgBtn.textContent = ok ? '✓ Inserted' : '✕ No reply box';
+      setTimeout(() => { payMsgBtn.textContent = '📩 Payment msg'; }, 2000);
+    });
+    actRow.append(confirmBtn, confirmPaidBtn, payMsgBtn, viewOrderBtn);
     body.appendChild(actRow);
 
     const orderId = result.orderId;
@@ -2854,7 +3494,13 @@
           showCartError(modal, res?.error || 'Confirm failed.');
           return;
         }
+        // Confirm succeeded — the buttons are obsolete NOW. Hiding must not
+        // wait on refreshPayable's GET: if that fails they'd sit visible but
+        // permanently disabled.
+        confirmBtn.style.display = 'none';
+        confirmPaidBtn.style.display = 'none';
         refreshPayable();
+        refreshOrderListCache(psid);
       });
     });
 
@@ -2868,9 +3514,14 @@
           showCartError(modal, res1?.error || 'Confirm failed.');
           return;
         }
+        confirmBtn.style.display = 'none';
+        confirmPaidBtn.style.display = 'none';
         chrome.runtime.sendMessage({ type: 'ORDER_OPERATION', orderId, operation: 'pay' }, (res2) => {
-          if (!res2?.ok) showCartError(modal, res2?.error || 'Pay failed.');
+          // This panel has no standalone Pay button — point at the recovery path.
+          if (!res2?.ok) showCartError(modal, `${res2?.error || 'Pay failed.'} Order is confirmed — use View Order to retry payment.`);
+          else payMsgBtn.style.display = '';
           refreshPayable();
+          refreshOrderListCache(psid);
         });
       });
     });
@@ -2960,6 +3611,16 @@
 
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && overlay.classList.contains('cim-order-list-overlay--visible')) {
+        // Parcel drawer can sit on top (camera icon on list cards) — let its
+        // own Escape handler consume the key first.
+        if (document.getElementById(PARCEL_OVERLAY_ID)?.classList.contains('cim-parcel-overlay--visible')) return;
+        // Close the topmost layer only: an open confirm popover (e.g. the
+        // Ship confirm) before the modal — otherwise the modal closes and
+        // the body-anchored popover is left floating on the page.
+        const pop = document.querySelector('.cim-delete-confirm, .cim-split-popup, .cim-list-options-popup');
+        if (pop) { pop.remove(); return; }
+        const targetTag = e.target?.tagName?.toLowerCase();
+        if (targetTag === 'input' || targetTag === 'textarea' || targetTag === 'select') return;
         closeOrderListModal();
       }
     });
@@ -2979,6 +3640,18 @@
     }
   }
 
+  // The panel keeps the full order list (view.data.allOrders) as the
+  // "Recent Orders ↗" preload so opening the modal costs no API call. Any
+  // code that fetches a fresh GET_ORDER_LIST must push it through here, or
+  // the next modal open shows a stale snapshot (e.g. missing an order just
+  // created from the cart).
+  function updateCachedAllOrders(psid, orders) {
+    const view = sessionState.view;
+    if (view?.type === 'orders' && view.psid === psid && view.data) {
+      view.data.allOrders = orders;
+    }
+  }
+
   function openOrderListModal(psid, preloadedOrders) {
     orderListModalPsid = psid;
     const modal = ensureOrderListModal();
@@ -2995,6 +3668,7 @@
   }
 
   function closeOrderListModal() {
+    closeFloatingPopovers();
     const overlay = document.getElementById(ORDER_LIST_OVERLAY_ID);
     if (overlay) overlay.classList.remove('cim-order-list-overlay--visible');
   }
@@ -3015,82 +3689,342 @@
     return `${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}`;
   }
 
-  function renderOrderCards(orders, body) {
+  // Compact date + time for list rows — "11/7 14:32"; year appears only when
+  // it isn't the current year. Time matters: same-night live orders are
+  // otherwise indistinguishable.
+  function formatOrderDateTime(dateStr) {
+    if (!dateStr) return null;
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return dateStr;
+    const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    const yr = d.getFullYear() === new Date().getFullYear() ? '' : `/${d.getFullYear()}`;
+    return `${d.getDate()}/${d.getMonth() + 1}${yr} ${hm}`;
+  }
+
+  // Status tag appended after an order SN. The SN text itself always stays
+  // black; the tag carries the colour legend instead.
+  const STATUS_TAG_LABELS = {
+    shipped: 'SHIPPED',
+    partial: 'PARTIAL',
+    pending: 'PENDING',
+    legacy: 'LEGACY',
+    nodata: 'NO DATA',
+  };
+
+  function buildStatusTag(kind) {
+    const tag = document.createElement('span');
+    tag.className = `cim-status-tag cim-status-tag--${kind}`;
+    tag.textContent = STATUS_TAG_LABELS[kind];
+    if (kind === 'nodata') {
+      tag.title = 'No ERP activity in the last 60 days — status unknown (old order, likely shipped long ago)';
+    }
+    return tag;
+  }
+
+  function statusTagKind(st) {
+    if (!st) return 'nodata';
+    if (st === 'WAIT_AUDIT') return 'pending';
+    if (st === 'PARTIAL_AUDIT') return 'partial';
+    return 'shipped';
+  }
+
+  // One funnel stage per order: confirm → pay → ship → done. Drives the
+  // exception pill, the filter-chip counts, and the inline quick actions —
+  // fully-done orders show a green ✓ instead of three "everything is fine"
+  // badges.
+  function setOrderListSubtitle(modal, count) {
+    const subtitle = modal.querySelector('.cim-drawer-subtitle');
+    if (!subtitle) return;
+    subtitle.textContent = `${count} order${count !== 1 ? 's' : ''}`;
+    if (orderListModalPsid) {
+      subtitle.append(` · ${orderListModalPsid}`, buildCopyButton(orderListModalPsid, 'Copy user ID'));
+    }
+  }
+
+  function orderStage(order) {
+    const sp = order.statusParts;
+    if (!sp) return 'other';
+    if (sp.confirm?.startsWith('待')) return 'confirm';
+    if (sp.payment?.startsWith('未')) return 'pay';
+    if (sp.shipping?.startsWith('未')) return 'ship';
+    return 'done';
+  }
+
+  const ORDER_STAGE_LABELS = { confirm: '待确认', pay: '未付款', ship: '未出货' };
+
+  function renderOrderCards(orders, body, preserveFilter) {
+    const modal = document.getElementById(ORDER_LIST_MODAL_ID);
+    // Filter state lives on the modal so a quick-action refresh keeps the
+    // active chip/search; a fresh showOrderList() resets it.
+    if (!preserveFilter || !modal._olState) modal._olState = { stage: 'all', query: '' };
+    const state = modal._olState;
+
     body.innerHTML = '';
-    orders.forEach((order) => {
-        const card = document.createElement('div');
-        card.className = 'cim-ol-card cim-ol-card--clickable';
-        card.addEventListener('click', () => openOrderDetail(order.orderId));
 
-        const topRow = document.createElement('div');
-        topRow.className = 'cim-ol-top';
-        const sn = document.createElement('span');
-        sn.className = 'cim-ol-sn';
-        sn.textContent = order.orderSn;
-        if (order.orderSn) sn.dataset.orderId = order.orderSn;
-        const amount = document.createElement('span');
-        amount.className = 'cim-ol-amount';
-        amount.textContent = order.amount ? `RM ${parseFloat(order.amount).toFixed(2)}` : '—';
-        topRow.append(sn, amount);
+    const toolbar = document.createElement('div');
+    toolbar.className = 'cim-ol-toolbar';
+    const chipsRow = document.createElement('div');
+    chipsRow.className = 'cim-ol-chips';
+    const search = document.createElement('input');
+    search.type = 'text';
+    search.className = 'cim-ol-search';
+    search.placeholder = 'Filter by name / phone / SN';
+    search.value = state.query;
+    toolbar.append(chipsRow, search);
 
-        const midRow = document.createElement('div');
-        midRow.className = 'cim-ol-mid';
-        const parts = [order.consignee, order.mobile].filter(Boolean);
-        midRow.textContent = parts.join(' · ');
+    const listWrap = document.createElement('div');
+    listWrap.className = 'cim-ol-list';
+    body.append(toolbar, listWrap);
 
-        const infoRow = document.createElement('div');
-        infoRow.className = 'cim-ol-info';
-        const infoParts = [
-          formatOrderDate(order.orderTime),
-          mapShippingLabel(order.shippingMethod),
-        ].filter(Boolean);
-        if (infoParts.length) infoRow.textContent = infoParts.join(' · ');
+    // Batched async results cached here so re-filtering re-applies them
+    // without re-fetching.
+    let statusMap = null;
+    let photoMap = null;
+    let statusFetchFailed = false;
 
-        const botRow = document.createElement('div');
-        botRow.className = 'cim-ol-bot';
-        if (order.statusParts) {
-          ['confirm', 'payment', 'shipping'].forEach((key) => {
-            const val = order.statusParts[key];
-            if (!val) return;
-            const badge = document.createElement('span');
-            badge.className = 'cim-ol-status-badge';
-            if (val.startsWith('已')) badge.classList.add('cim-ol-status--done');
-            else if (val.startsWith('未')) badge.classList.add('cim-ol-status--pending');
-            else if (val.startsWith('待')) badge.classList.add('cim-ol-status--waiting');
-            badge.textContent = val;
-            botRow.appendChild(badge);
-          });
-        } else if (order.statusText) {
-          const badge = document.createElement('span');
-          badge.className = 'cim-ol-status-badge';
-          badge.textContent = order.statusText;
-          botRow.appendChild(badge);
-        }
+    // ERP ship-status kind for an order — only meaningful once statusMap has
+    // loaded; orders without an SN (or absent from the ERP response) → nodata.
+    function orderStatusKind(order) {
+      return statusTagKind(statusMap ? statusMap[order.orderSn] : undefined);
+    }
 
-        card.append(topRow, midRow);
-        if (infoParts.length) card.appendChild(infoRow);
-        card.appendChild(botRow);
-        body.appendChild(card);
-    });
+    // Chips filter by the ERP ship-status legend (SHIPPED / PENDING / PARTIAL /
+    // NO DATA), which arrives async from GET_ORDER_STATUSES. Until then only
+    // ALL renders (with a loading note); on WMS failure the note says so and
+    // filtering stays fully usable via ALL + search.
+    function buildChips() {
+      chipsRow.innerHTML = '';
+      const counts = { all: orders.length, shipped: 0, pending: 0, partial: 0, nodata: 0 };
+      if (statusMap) orders.forEach((o) => { counts[orderStatusKind(o)] += 1; });
+      if (state.stage !== 'all' && (!statusMap || !counts[state.stage])) state.stage = 'all';
+      [
+        ['all', 'ALL'],
+        ['shipped', 'SHIPPED'],
+        ['pending', 'PENDING'],
+        ['partial', 'PARTIAL'],
+        ['nodata', 'NO DATA'],
+      ].forEach(([kind, label]) => {
+        if (kind !== 'all' && (!statusMap || !counts[kind])) return;
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'cim-ol-chip';
+        chip.dataset.stage = kind;
+        chip.textContent = `${label} ${counts[kind]}`;
+        chip.addEventListener('click', () => { state.stage = kind; applyFilters(); });
+        chipsRow.appendChild(chip);
+      });
+      if (!statusMap) {
+        const note = document.createElement('span');
+        note.className = 'cim-ol-chips-note';
+        note.textContent = statusFetchFailed
+          ? 'Ship-status filter unavailable (WMS load failed)'
+          : 'Loading ship statuses…';
+        chipsRow.appendChild(note);
+      }
+    }
 
-    // Ship-status colouring — same legend as the panel's recent-orders list.
-    // One batched call for the whole list; orders missing from the ERP response
-    // (>60-day lookup window) keep the default dark SN colour.
-    const snIds = orders.map((o) => o.orderSn).filter(Boolean);
-    if (!snIds.length) return;
-    chrome.runtime.sendMessage({ type: 'GET_ORDER_STATUSES', orderIds: snIds }, (response) => {
-      if (!response?.ok || !response.statuses) return;
-      if (!body.isConnected) return;
-      body.querySelectorAll('.cim-ol-sn[data-order-id]').forEach((el) => {
-        const st = response.statuses[el.dataset.orderId];
-        if (!st) {
-          el.title = 'No ERP activity in the last 60 days — status unknown (old order, likely shipped long ago)';
+    function applyStatusTags() {
+      if (!statusMap) return;
+      listWrap.querySelectorAll('.cim-ol-sn[data-order-id]').forEach((el) => {
+        if (el.querySelector('.cim-status-tag')) return;
+        el.appendChild(buildStatusTag(statusTagKind(statusMap[el.dataset.orderId])));
+      });
+    }
+
+    function applyPhotoIcons() {
+      if (!photoMap) return;
+      listWrap.querySelectorAll('.cim-ol-card[data-sn]').forEach((card) => {
+        if (card.querySelector('.cim-photo-icon')) return;
+        if (!photoMap[card.dataset.sn]?.hasPhotos) return;
+        const topRow = card.querySelector('.cim-ol-top');
+        const amount = card.querySelector('.cim-ol-amount');
+        if (topRow && amount) topRow.insertBefore(buildPhotoIconBtn(card.dataset.sn), amount);
+      });
+    }
+
+    function refreshAfterOp() {
+      chrome.runtime.sendMessage({ type: 'GET_ORDER_LIST', psid: orderListModalPsid }, (res) => {
+        const liveModal = document.getElementById(ORDER_LIST_MODAL_ID);
+        if (!liveModal) return;
+        const liveBody = liveModal.querySelector('.cim-drawer-body');
+        if (!res?.ok) { showOrderDetailToast(liveModal, res?.error || 'Refresh failed.'); return; }
+        const fresh = res.orders || [];
+        updateCachedAllOrders(orderListModalPsid, fresh);
+        setOrderListSubtitle(liveModal, fresh.length);
+        renderOrderCards(fresh, liveBody, true);
+        renderRecentOrdersInPanel(fresh.slice(0, 5).map((o) => ({
+          orderId: o.orderId,
+          orderSn: o.orderSn,
+          totalAmount: o.amount,
+          orderDate: o.orderTime,
+        })));
+      });
+    }
+
+    function runQuickOps(card, orderId, operations) {
+      card.classList.add('cim-ol-card--busy');
+      const runNext = (ops) => {
+        if (!ops.length) {
+          // 付款 / 确认+付款 succeeded — offer the payment-received message.
+          if (operations.includes('pay') && card.dataset.sn) {
+            const liveModal = document.getElementById(ORDER_LIST_MODAL_ID);
+            if (liveModal) showPaymentMsgPrompt(liveModal, card.dataset.sn);
+          }
+          refreshAfterOp();
           return;
         }
-        if (st === 'WAIT_AUDIT') el.style.color = 'orange';
-        else if (st === 'PARTIAL_AUDIT') el.style.color = '#9333ea';
-        else el.style.color = '#0a7cff';
+        const [op, ...rest] = ops;
+        chrome.runtime.sendMessage({ type: 'ORDER_OPERATION', orderId, operation: op }, (res) => {
+          if (!res?.ok) {
+            card.classList.remove('cim-ol-card--busy');
+            const liveModal = document.getElementById(ORDER_LIST_MODAL_ID);
+            if (liveModal) showOrderDetailToast(liveModal, res?.error || `Operation "${op}" failed.`);
+            return;
+          }
+          runNext(rest);
+        });
+      };
+      runNext(operations);
+    }
+
+    function mkMiniBtn(text, cls, onClick) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = `cim-ol-mini-btn ${cls}`;
+      btn.textContent = text;
+      btn.addEventListener('click', (e) => { e.stopPropagation(); onClick(btn); });
+      return btn;
+    }
+
+    function buildCard(order) {
+      const stage = orderStage(order);
+      const card = document.createElement('div');
+      card.className = 'cim-ol-card cim-ol-card--clickable';
+      if (stage === 'done') card.classList.add('cim-ol-card--done');
+      if (order.orderSn) card.dataset.sn = order.orderSn;
+      card.addEventListener('click', () => openOrderDetail(order.orderId));
+
+      const topRow = document.createElement('div');
+      topRow.className = 'cim-ol-top';
+      const sn = document.createElement('span');
+      sn.className = 'cim-ol-sn';
+      sn.textContent = order.orderSn;
+      if (order.orderSn) sn.dataset.orderId = order.orderSn;
+      const amount = document.createElement('span');
+      amount.className = 'cim-ol-amount';
+      amount.textContent = order.amount ? `RM ${parseFloat(order.amount).toFixed(2)}` : '—';
+      topRow.appendChild(sn);
+      if (order.orderSn) topRow.appendChild(buildCopyButton(order.orderSn));
+      topRow.appendChild(amount);
+
+      const line2 = document.createElement('div');
+      line2.className = 'cim-ol-line2';
+      const info = document.createElement('span');
+      info.className = 'cim-ol-line2-info';
+      const infoParts = [
+        order.consignee,
+        order.mobile,
+        formatOrderDateTime(order.orderTime),
+        mapShippingLabel(order.shippingMethod),
+      ].filter(Boolean);
+      info.textContent = infoParts.join(' · ');
+      info.title = infoParts.join(' · ');
+      line2.appendChild(info);
+
+      if (stage === 'done') {
+        const check = document.createElement('span');
+        check.className = 'cim-ol-done-check';
+        check.textContent = '✓';
+        line2.appendChild(check);
+      } else if (ORDER_STAGE_LABELS[stage]) {
+        const pill = document.createElement('span');
+        pill.className = `cim-ol-pill cim-ol-pill--${stage}`;
+        pill.textContent = ORDER_STAGE_LABELS[stage];
+        line2.appendChild(pill);
+      } else if (order.statusText) {
+        const pill = document.createElement('span');
+        pill.className = 'cim-ol-pill cim-ol-pill--confirm';
+        pill.textContent = order.statusText;
+        line2.appendChild(pill);
+      }
+
+      // Inline quick actions — same statusParts → button logic as the detail
+      // footer, firing the same ORDER_OPERATION handler.
+      if (stage === 'confirm') {
+        line2.append(
+          mkMiniBtn('确认', 'cim-ol-mini-btn--confirm', () => runQuickOps(card, order.orderId, ['confirm'])),
+          mkMiniBtn('确认+付款', 'cim-ol-mini-btn--confirm-paid', () => runQuickOps(card, order.orderId, ['confirm', 'pay']))
+        );
+      } else if (stage === 'pay') {
+        line2.append(mkMiniBtn('付款', 'cim-ol-mini-btn--pay', () => runQuickOps(card, order.orderId, ['pay'])));
+      } else if (stage === 'ship') {
+        line2.append(mkMiniBtn('出货', 'cim-ol-mini-btn--ship', (btn) =>
+          showDeleteConfirm(btn, () => runQuickOps(card, order.orderId, ['shiped']), 'Confirm ship order 确认更改状态至 [已出货] ?')));
+      }
+
+      card.append(topRow, line2);
+      return card;
+    }
+
+    function applyFilters() {
+      const q = state.query.trim().toLowerCase();
+      listWrap.innerHTML = '';
+      const visible = orders.filter((o) => {
+        // Stage filter only applies once ERP statuses have loaded — before
+        // that (or after a failed load) it degrades to showing everything.
+        if (state.stage !== 'all' && statusMap && orderStatusKind(o) !== state.stage) return false;
+        if (!q) return true;
+        return [o.orderSn, o.consignee, o.mobile].some((v) => v && String(v).toLowerCase().includes(q));
       });
+      if (!visible.length) {
+        const empty = document.createElement('div');
+        empty.className = 'cim-drawer-empty';
+        empty.textContent = 'No matching orders.';
+        listWrap.appendChild(empty);
+      } else {
+        visible.forEach((o) => listWrap.appendChild(buildCard(o)));
+      }
+      applyStatusTags();
+      applyPhotoIcons();
+      chipsRow.querySelectorAll('.cim-ol-chip').forEach((chip) => {
+        chip.classList.toggle('cim-ol-chip--active', chip.dataset.stage === state.stage);
+      });
+    }
+
+    search.addEventListener('input', () => { state.query = search.value; applyFilters(); });
+
+    buildChips();
+    applyFilters();
+
+    // Ship-status tags — same legend as the panel's recent-orders list. The SN
+    // stays black; one batched call appends a coloured tag per SN. Orders
+    // missing from the ERP response (>60-day lookup window) get a grey
+    // "NO DATA" tag. Parcel-photo probe mirrors the panel's camera icons.
+    const snIds = orders.map((o) => o.orderSn).filter(Boolean);
+    if (!snIds.length) {
+      // Nothing to ask the ERP about — chips honestly report all NO DATA.
+      statusMap = {};
+      buildChips();
+      applyFilters();
+      return;
+    }
+    chrome.runtime.sendMessage({ type: 'GET_ORDER_STATUSES', orderIds: snIds }, (response) => {
+      if (!body.isConnected) return;
+      if (!response?.ok || !response.statuses) {
+        statusFetchFailed = true;
+        buildChips();
+        applyFilters();
+        return;
+      }
+      statusMap = response.statuses;
+      buildChips();
+      applyFilters();
+    });
+    chrome.runtime.sendMessage({ type: 'CHECK_PARCEL_PHOTOS', orderIds: snIds }, (response) => {
+      if (!response?.ok || !response.results) return;
+      if (!body.isConnected) return;
+      photoMap = response.results;
+      applyPhotoIcons();
     });
   }
 
@@ -3143,6 +4077,7 @@
       idEl.dataset.orderId = displaySn;
       idEl.textContent = displaySn;
       li.appendChild(idEl);
+      if (isBaserow) li.appendChild(buildStatusTag('legacy'));
 
       const dateVal = order.orderDate || order.orderTime;
       if (dateVal) {
@@ -3166,10 +4101,12 @@
       if (!response?.ok || !response.statuses) return;
       const livePanel = document.getElementById(PANEL_ID);
       if (!livePanel) return;
-      livePanel.querySelectorAll('.cim-order-id').forEach((el) => {
+      // Baserow rows already carry a LEGACY tag from render time; only EC2
+      // rows get a status tag here. SN text stays black — the tag is the legend.
+      livePanel.querySelectorAll('.cim-order-id:not(.cim-order-id--baserow)').forEach((el) => {
+        if (el.nextElementSibling?.classList?.contains('cim-status-tag')) return;
         const st = response.statuses[el.dataset.orderId];
-        if (st === 'WAIT_AUDIT') el.style.color = 'orange';
-        else if (st === 'PARTIAL_AUDIT') el.style.color = '#9333ea';
+        el.after(buildStatusTag(statusTagKind(st)));
       });
     });
     chrome.runtime.sendMessage({ type: 'CHECK_PARCEL_PHOTOS', orderIds }, (photoRes) => {
@@ -3197,8 +4134,12 @@
     const body = modal.querySelector('.cim-drawer-body');
     modal.querySelector('.cim-drawer-title').textContent = sessionState.name || 'Orders';
 
+    // The modal is a reused singleton — reset the scroll position left over
+    // from the previous customer/view.
+    body.scrollTop = 0;
+
     if (preloadedOrders) {
-      modal.querySelector('.cim-drawer-subtitle').textContent = `${preloadedOrders.length} order${preloadedOrders.length !== 1 ? 's' : ''}`;
+      setOrderListSubtitle(modal, preloadedOrders.length);
       if (!preloadedOrders.length) {
         body.innerHTML = '<div class="cim-drawer-empty">No orders found.</div>';
       } else {
@@ -3218,7 +4159,8 @@
         return;
       }
       const orders = res.orders || [];
-      liveModal.querySelector('.cim-drawer-subtitle').textContent = `${orders.length} order${orders.length !== 1 ? 's' : ''}`;
+      updateCachedAllOrders(psid, orders);
+      setOrderListSubtitle(liveModal, orders.length);
       if (!orders.length) {
         liveBody.innerHTML = '<div class="cim-drawer-empty">No orders found.</div>';
         return;
@@ -3254,6 +4196,7 @@
       if (backBtn) backBtn.hidden = true;
     }
     const body = modal.querySelector('.cim-drawer-body');
+    body.scrollTop = 0;
     body.innerHTML = '<div class="cim-drawer-loading">Loading order…</div>';
     modal.querySelector('.cim-drawer-title').textContent = 'Loading…';
     modal.querySelector('.cim-drawer-subtitle').textContent = '';
@@ -3274,8 +4217,9 @@
 
   function renderOrderDetail(body, modal, data) {
     body.innerHTML = '';
-    modal.querySelector('.cim-drawer-title').textContent = data.orderSn;
-    modal.querySelector('.cim-drawer-subtitle').textContent = data.statusText || '';
+    const titleEl = modal.querySelector('.cim-drawer-title');
+    titleEl.textContent = data.orderSn;
+    if (data.orderSn) titleEl.appendChild(buildCopyButton(data.orderSn, 'Copy Order SN'));
 
     function mkEl(tag, cls, txt) {
       const el = document.createElement(tag);
@@ -3283,6 +4227,17 @@
       if (txt != null) el.textContent = txt;
       return el;
     }
+
+    // Subtitle: payable · pcs · buyer (+ customerGroup badge) — the three
+    // facts CS otherwise scrolls to the Summary card for.
+    const subtitleEl = modal.querySelector('.cim-drawer-subtitle');
+    subtitleEl.textContent = [
+      formatCurrency(data.payable || 0),
+      (data.itemsCount || data.items?.length) ? `${data.itemsCount || data.items.length} pcs` : null,
+      data.buyer?.name,
+    ].filter(Boolean).join(' · ');
+    // EC2 returns the literal string "--" for no group — don't badge that.
+    if (data.customerGroup && data.customerGroup !== '--') subtitleEl.appendChild(mkEl('span', 'cim-od-group-badge', data.customerGroup));
 
     function mkInfoCard(rows) {
       const card = mkEl('div', 'cim-drawer-info-card');
@@ -3303,45 +4258,55 @@
       return { sect, hdr };
     }
 
-    // Status badges
-    if (data.statusParts) {
-      const statusRow = mkEl('div', 'cim-od-status-row');
-      ['confirm', 'payment', 'shipping'].forEach((key) => {
-        const val = data.statusParts[key];
-        if (!val) return;
-        const badge = mkEl('span', 'cim-ol-status-badge', val);
-        if (val.startsWith('已')) badge.classList.add('cim-ol-status--done');
-        else if (val.startsWith('未')) badge.classList.add('cim-ol-status--pending');
-        else badge.classList.add('cim-ol-status--waiting');
-        statusRow.appendChild(badge);
-      });
-      body.appendChild(statusRow);
+    // Lifecycle block — replaces status pills + the 6-row meta card. One line
+    // per event: status word + timestamp + method, green for done / amber for
+    // outstanding, so abnormal states stand out instead of drowning in rows.
+    const sp = data.statusParts || {};
+    const lc = mkEl('div', 'cim-od-lifecycle');
+    function lcRow(done, label, detailParts) {
+      const row = mkEl('div', `cim-od-lc-row ${done ? 'cim-od-lc-row--done' : 'cim-od-lc-row--todo'}`);
+      row.appendChild(mkEl('span', 'cim-od-lc-label', label));
+      const detail = detailParts.filter(Boolean).join(' · ');
+      if (detail) row.appendChild(mkEl('span', 'cim-od-lc-val', detail));
+      lc.appendChild(row);
     }
+    lcRow(true, '下单', [data.orderTime ? formatOrderDateTime(data.orderTime) : null]);
+    if (sp.confirm?.startsWith('待')) lcRow(false, '待确认', ['—']);
+    const paid = data.payTime && data.payTime !== '未付款';
+    lcRow(paid, paid ? '已付款' : '未付款', [paid ? data.payTime : '—', data.paymentMethod]);
+    const shipped = data.shipTime && data.shipTime !== '未出货';
+    const shipLabel = data.shippingMethod ? (mapShippingLabel(data.shippingMethod) || data.shippingMethod) : null;
+    lcRow(shipped, shipped ? '已出货' : '未出货', [shipped ? data.shipTime : '—', shipLabel]);
+    body.appendChild(lc);
 
-    // Order meta info
-    const metaCard = mkInfoCard([
-      ['Order Time', data.orderTime ? formatOrderDate(data.orderTime) : null],
-      ['Payment', data.paymentMethod],
-      ['Pay Time', data.payTime && data.payTime !== '未付款' ? data.payTime : null],
-      ['Shipping', data.shippingMethod ? (mapShippingLabel(data.shippingMethod) || data.shippingMethod) : null],
-      ['Ship Time', data.shipTime && data.shipTime !== '未出货' ? data.shipTime : null],
-      ['Buyer', data.buyer?.name],
-    ]);
-    if (metaCard.children.length) body.appendChild(metaCard);
-
-    // Recipient
+    // Recipient — compact address block; the labels added nothing. ⧉ Copy
+    // yields the paste-ready name+phone+address block CS drops into courier
+    // forms and chat.
     const { sect: recipSect, hdr: recipHdr } = mkSection('Recipient');
+    const recip = data.recipient || {};
+    const copyAllBtn = mkEl('button', 'cim-od-edit-btn cim-od-edit-btn--solid', '⧉ Copy');
+    copyAllBtn.type = 'button';
+    copyAllBtn.addEventListener('click', () => {
+      const block = [recip.consignee, recip.mobile, recip.address].filter(Boolean).join('\n');
+      if (!block) return;
+      copyToClipboard(block).then(() => {
+        copyAllBtn.textContent = 'Copied!';
+        setTimeout(() => { copyAllBtn.textContent = '⧉ Copy'; }, 1500);
+      });
+    });
     const editBtn = mkEl('button', 'cim-od-edit-btn', 'Edit');
     editBtn.type = 'button';
     editBtn.addEventListener('click', () => showEditConsigneeDialog(modal, data.orderId, data));
-    recipHdr.appendChild(editBtn);
-    const recip = data.recipient || {};
-    recipSect.appendChild(mkInfoCard([
-      ['Name', recip.consignee],
-      ['Mobile', recip.mobile],
-      ['Email', recip.email],
-      ['Address', recip.address],
-    ]));
+    // Wrapped so the space-between header keeps the pair together on the right
+    const recipBtns = mkEl('div', 'cim-od-hdr-btns');
+    recipBtns.append(copyAllBtn, editBtn);
+    recipHdr.appendChild(recipBtns);
+    const recipBlock = mkEl('div', 'cim-od-recip-block');
+    const nameLine = [recip.consignee, recip.mobile].filter(Boolean).join(' · ');
+    if (nameLine) recipBlock.appendChild(mkEl('div', 'cim-od-recip-line', nameLine));
+    if (recip.address) recipBlock.appendChild(mkEl('div', 'cim-od-recip-addr', recip.address));
+    if (recip.email) recipBlock.appendChild(mkEl('div', 'cim-od-recip-addr', recip.email));
+    recipSect.appendChild(recipBlock);
     body.appendChild(recipSect);
 
     // Items
@@ -3370,10 +4335,18 @@
         const meta = mkEl('div', 'cim-od-item-meta');
         if (item.note) meta.appendChild(mkEl('span', 'cim-od-item-code', item.note));
         if (item.origin && item.origin !== '--') meta.appendChild(mkEl('span', 'cim-od-item-origin', item.origin));
+        if (item.price != null) meta.appendChild(mkEl('span', 'cim-od-item-unit', `RM ${parseFloat(item.price).toFixed(2)}/pc`));
+        // Per-item ship badge only when it disagrees with the order-level
+        // shipping status — on a fully-shipped order N identical 已出货 badges
+        // carry zero information; on split shipments the outliers stand out.
         if (item.shipState) {
-          const sb = mkEl('span', 'cim-od-item-ship', item.shipState);
-          sb.classList.add(item.shipState.startsWith('已') ? 'cim-od-ship--done' : 'cim-od-ship--pending');
-          meta.appendChild(sb);
+          const itemShipped = item.shipState.startsWith('已');
+          const orderShipped = sp.shipping ? sp.shipping.startsWith('已') : null;
+          if (orderShipped === null || itemShipped !== orderShipped) {
+            const sb = mkEl('span', 'cim-od-item-ship', item.shipState);
+            sb.classList.add(itemShipped ? 'cim-od-ship--done' : 'cim-od-ship--pending');
+            meta.appendChild(sb);
+          }
         }
         info.appendChild(meta);
         const priceCol = mkEl('div', 'cim-od-item-price-col');
@@ -3404,9 +4377,20 @@
     sumSect.appendChild(feeList);
     body.appendChild(sumSect);
 
-    // Adjustment section — hidden once order is shipped (已出货)
+    // Adjustment section — hidden once order is shipped (已出货). Collapsed
+    // behind a link by default: it's used on a small minority of orders but
+    // is an expanded money-changing form on every unshipped one otherwise.
     if (!data.statusParts?.shipping?.startsWith('已')) {
+      const adjToggle = mkEl('button', 'cim-od-adj-toggle', '＋ Add adjustment');
+      adjToggle.type = 'button';
+      body.appendChild(adjToggle);
+
       const adjSect = mkEl('div', 'cim-checkout-adj');
+      adjSect.style.display = 'none';
+      adjToggle.addEventListener('click', () => {
+        adjToggle.remove();
+        adjSect.style.display = '';
+      });
       const adjTitle = mkEl('div', 'cim-checkout-adj-title', 'Adjustment (optional)');
       adjSect.appendChild(adjTitle);
 
@@ -3454,6 +4438,7 @@
           adjApplyBtn.disabled = false;
           if (!res?.ok) { showOrderDetailToast(modal, res?.error || 'Adjustment failed.'); return; }
           showOrderDetail(data.orderId);
+          refreshOrderListCache(sessionState.view?.psid);
         });
       });
     }
@@ -3523,12 +4508,12 @@
       if (sp.confirm?.startsWith('待')) {
         footerActions.append(
           mkOpBtn('Confirm', 'cim-od-op-btn--confirm', () => doOrderOperations(data.orderId, ['confirm'], modal)),
-          mkOpBtn('Confirm+Paid', 'cim-od-op-btn--confirm-paid', () => doOrderOperations(data.orderId, ['confirm', 'pay'], modal))
+          mkOpBtn('Confirm+Paid', 'cim-od-op-btn--confirm-paid', () => doOrderOperations(data.orderId, ['confirm', 'pay'], modal, data.orderSn))
         );
       } else {
         const isConfirmed = sp.confirm && !sp.confirm.startsWith('待');
         if (isConfirmed && sp.payment?.startsWith('未')) {
-          footerActions.appendChild(mkOpBtn('Pay', 'cim-od-op-btn--pay', () => doOrderOperations(data.orderId, ['pay'], modal)));
+          footerActions.appendChild(mkOpBtn('Pay', 'cim-od-op-btn--pay', () => doOrderOperations(data.orderId, ['pay'], modal, data.orderSn)));
         }
         if (sp.payment?.startsWith('已') && sp.shipping?.startsWith('未')) {
           const shipBtn = mkOpBtn('Ship', 'cim-od-op-btn--ship', () => showDeleteConfirm(shipBtn, () => doOrderOperations(data.orderId, ['shiped'], modal), 'Confirm ship order 确认更改状态至 [已出货] ?'));
@@ -3538,7 +4523,7 @@
     }
   }
 
-  function doOrderOperations(orderId, operations, modal) {
+  function doOrderOperations(orderId, operations, modal, orderSn) {
     const footerActions = modal.querySelector('.cim-ol-footer-actions');
     const btns = footerActions ? [...footerActions.querySelectorAll('button')] : [];
     btns.forEach((b) => { b.disabled = true; });
@@ -3546,6 +4531,12 @@
     const runNext = (ops) => {
       if (!ops.length) {
         showOrderDetail(orderId);
+        // Status changed — resync the panel top-5 and the modal's preload
+        // cache so the next list open doesn't replay the old status.
+        refreshOrderListCache(sessionState.view?.psid);
+        // Payment just went through — offer the payment-received message.
+        // Toast sits on the modal element, so the detail re-render keeps it.
+        if (operations.includes('pay') && orderSn) showPaymentMsgPrompt(modal, orderSn);
         return;
       }
       const [op, ...rest] = ops;
@@ -3694,6 +4685,7 @@
           return;
         }
         showOrderDetail(orderId);
+        refreshOrderListCache(sessionState.view?.psid);
       });
     });
 
@@ -3882,24 +4874,33 @@
     const card = document.createElement('div');
     card.className = 'cim-drawer-info-card';
 
+    // Always-visible rows: Customer, EC2 Order link, Tracking (with copy +
+    // 📩 Send). Internal reference IDs (WMS / ERP / Task) collapse behind a
+    // "Details ▾" toggle — reachable, not always expanded.
     const fields = [
-      ['Customer', wmsOrder.customerName, false],
-      ['WMS ID', wmsOrder.wmsId, false],
-      ['ERP ID', wmsOrder.erpId, false],
-      ['EC2 Order', wmsOrder.ec2OrderId, true],
-      ['Task ID', wmsOrder.taskId, false],
-      ['Tracking', wmsOrder.trackingNumber || null, false, !wmsOrder.trackingNumber],
+      ['Customer', wmsOrder.customerName, { }],
+      ['EC2 Order', wmsOrder.ec2OrderId, { isLink: true }],
+      ['Tracking', wmsOrder.trackingNumber || null, { isTracking: true, noTracking: !wmsOrder.trackingNumber }],
+      ['WMS ID', wmsOrder.wmsId, { internal: true }],
+      ['ERP ID', wmsOrder.erpId, { internal: true }],
+      ['Task ID', wmsOrder.taskId, { internal: true }],
     ];
 
-    fields.forEach(([label, value, isLink, noTracking]) => {
-      if (!value && !noTracking) return;
+    let hasInternal = false;
+    fields.forEach(([label, value, opts]) => {
+      if (!value && !opts.noTracking) return;
       const row = document.createElement('div');
       row.className = 'cim-drawer-info-row';
+      if (opts.internal) {
+        row.classList.add('cim-drawer-info-row--internal');
+        row.style.display = 'none';
+        hasInternal = true;
+      }
       const labelEl = document.createElement('span');
       labelEl.className = 'cim-drawer-info-label';
       labelEl.textContent = label;
       let valueEl;
-      if (isLink) {
+      if (opts.isLink) {
         valueEl = document.createElement('a');
         valueEl.href = `https://ddherbs.com.my/track/${value}`;
         valueEl.target = '_blank';
@@ -3910,10 +4911,30 @@
         icon.className = 'cim-drawer-ext-icon';
         icon.textContent = ' ↗';
         valueEl.appendChild(icon);
-      } else if (noTracking) {
+      } else if (opts.noTracking) {
         valueEl = document.createElement('span');
         valueEl.className = 'cim-drawer-info-value cim-drawer-info-value--no-tracking';
         valueEl.textContent = 'No tracking number';
+      } else if (opts.isTracking) {
+        valueEl = document.createElement('span');
+        valueEl.className = 'cim-drawer-info-value';
+        valueEl.textContent = value;
+        valueEl.appendChild(buildCopyButton(value, 'Copy tracking number'));
+        // 📩 injects the standard post-shipping message into the composer —
+        // the single most repeated CS message after an order ships.
+        const sendBtn = document.createElement('button');
+        sendBtn.type = 'button';
+        sendBtn.className = 'cim-drawer-send-btn';
+        sendBtn.title = 'Insert shipping message into Messenger';
+        sendBtn.textContent = '📩';
+        sendBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const snPart = wmsOrder.ec2OrderId ? ` ${wmsOrder.ec2OrderId}` : '';
+          const inserted = insertTextIntoMessenger(`订单${snPart} 已出货 ✅ 追踪号: ${value}`);
+          sendBtn.textContent = inserted ? '✓' : '✕';
+          setTimeout(() => { sendBtn.textContent = '📩'; }, 1500);
+        });
+        valueEl.appendChild(sendBtn);
       } else {
         valueEl = document.createElement('span');
         valueEl.className = 'cim-drawer-info-value';
@@ -3922,6 +4943,19 @@
       row.append(labelEl, valueEl);
       card.appendChild(row);
     });
+
+    if (hasInternal) {
+      const toggleRow = document.createElement('div');
+      toggleRow.className = 'cim-drawer-info-row cim-drawer-details-toggle';
+      toggleRow.textContent = 'Details ▾';
+      toggleRow.addEventListener('click', () => {
+        const rows = card.querySelectorAll('.cim-drawer-info-row--internal');
+        const opening = rows[0]?.style.display === 'none';
+        rows.forEach((r) => { r.style.display = opening ? '' : 'none'; });
+        toggleRow.textContent = opening ? 'Details ▴' : 'Details ▾';
+      });
+      card.appendChild(toggleRow);
+    }
 
     els.push(card);
 
@@ -3992,6 +5026,23 @@
             const startIdx = allImages.findIndex((i) => i.id === img.id);
             openGalleryModal(allImages, startIdx >= 0 ? startIdx : 0);
           });
+          // Customer-visible photos are public S3 URLs and exist as
+          // proof-of-parcel — let CS copy the link straight into chat.
+          if (kind === 'customer') {
+            const urlBtn = document.createElement('button');
+            urlBtn.type = 'button';
+            urlBtn.className = 'cim-drawer-thumb-copy';
+            urlBtn.title = 'Copy photo URL';
+            urlBtn.textContent = '⧉';
+            urlBtn.addEventListener('click', (e) => {
+              e.stopPropagation();
+              copyToClipboard(img.url).then(() => {
+                urlBtn.textContent = '✓';
+                setTimeout(() => { urlBtn.textContent = '⧉'; }, 1500);
+              });
+            });
+            thumb.appendChild(urlBtn);
+          }
           grid.appendChild(thumb);
         });
 
@@ -4354,8 +5405,15 @@
       renderManyChatInfoRows(sessionState.manychatInfo);
       return;
     }
+    // In-flight guard: fired early from proceedWithLookup AND from loadOrders'
+    // callback. Whichever call finds a request already running skips; the
+    // running request's callback renders (renderManyChatInfoRows no-ops until
+    // the orders view exists, and renders from cache once it does).
+    if (sessionState.manychatInfoInFlight) return;
+    sessionState.manychatInfoInFlight = true;
 
     chrome.runtime.sendMessage({ type: 'GET_MANYCHAT_INFO', psid }, (response) => {
+      sessionState.manychatInfoInFlight = false;
       if (getUserIdFromUrl() !== uid) return;
       if (chrome.runtime.lastError || !response || !response.ok) return;
 
@@ -4402,6 +5460,12 @@
       const psid = map[uid];
       if (psid) {
         renderPsidRow(livePanel, uid, psid);
+        // Pre-warm: cart probe and ManyChat info only need the psid — fire
+        // them WITH the orders fetch instead of after it. Their callbacks
+        // cache into sessionState (uid-guarded) and only touch the DOM once
+        // the orders view exists, so ordering doesn't matter.
+        probeCartAndShowButtons(uid, psid, livePanel);
+        fetchAndRenderManyChatInfo(uid, psid);
         loadOrders(uid, psid, livePanel);
       } else {
         chrome.runtime.sendMessage({ type: 'SEARCH_BASEROW_BY_UID', uid }, (response) => {
@@ -4410,6 +5474,8 @@
           if (response?.ok && response.psid) {
             setUidPsidLink(uid, response.psid).then(() => {
               renderPsidRow(currentPanel, uid, response.psid);
+              probeCartAndShowButtons(uid, response.psid, currentPanel);
+              fetchAndRenderManyChatInfo(uid, response.psid);
               loadOrders(uid, response.psid, currentPanel);
             });
           } else {
@@ -4690,8 +5756,14 @@
     handleCandidateSearch(sessionState.uid, input.value.trim(), panel);
   });
 
-  function initCartSessionCheck() {
+  function initCartSessionCheck(attempt = 0) {
     chrome.runtime.sendMessage({ type: 'CHECK_SESSION' }, (response) => {
+      if (!response?.ok && attempt < 3) {
+        // Network blip / Lambda cold start at page load — retry with backoff
+        // (5s/15s/45s) instead of hiding every cart feature until a reload.
+        setTimeout(() => initCartSessionCheck(attempt + 1), 5000 * Math.pow(3, attempt));
+        return;
+      }
       cartSessionValid = !!(response && response.ok && response.valid);
       if (cartSessionValid && sessionState.view?.type === 'orders') {
         const panel = document.getElementById(PANEL_ID);
