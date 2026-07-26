@@ -410,7 +410,10 @@ function fetchOrderStatuses(orderIds) {
       const items = Array.isArray(json) ? json : Array.isArray(json?.data) ? json.data : [];
       items.forEach((item) => {
         const id = item.onlineOrderNumber;
-        if (id && item.status) statuses[String(id)] = item.status;
+        // aggregateStatus covers the whole split-order family (PARTIAL_AUDIT
+        // when only some children shipped); legacy status is one child only.
+        const st = item.aggregateStatus || item.status;
+        if (id && st) statuses[String(id)] = st;
       });
       return { ok: true, statuses };
     })

@@ -1131,39 +1131,79 @@
     const totalBar = document.createElement('div');
     totalBar.className = 'cim-cart-total-bar';
     totalBar.style.display = 'none';
+
+    const totalBarLeft = document.createElement('div');
+    totalBarLeft.className = 'cim-cart-total-left';
     const totalBarLabel = document.createElement('span');
     totalBarLabel.className = 'cim-cart-total-label';
     totalBarLabel.textContent = 'Total';
     const totalBarValue = document.createElement('span');
     totalBarValue.className = 'cim-cart-total-value';
+    totalBarLeft.append(totalBarLabel, totalBarValue);
 
-    const listBtn = document.createElement('button');
-    listBtn.type = 'button';
-    listBtn.className = 'cim-cart-list-btn';
-    const listBtnLabel = document.createElement('span');
-    listBtnLabel.className = 'cim-cart-list-btn-label';
-    listBtnLabel.textContent = 'All List';
-    const listBtnTooltip = document.createElement('span');
-    listBtnTooltip.className = 'cim-copy-tooltip';
-    listBtn.append(listBtnLabel, listBtnTooltip);
-    let listBtnHideTimer = null;
-    const showListBtnTooltip = (text) => {
-      listBtnTooltip.textContent = text;
-      listBtnTooltip.classList.add('cim-copy-tooltip--visible');
-      clearTimeout(listBtnHideTimer);
-      listBtnHideTimer = setTimeout(() => listBtnTooltip.classList.remove('cim-copy-tooltip--visible'), 1500);
-    };
-    listBtn.addEventListener('click', () => showListOptionsPopup(listBtn, showListBtnTooltip));
+    const listBtnsGroup = document.createElement('div');
+    listBtnsGroup.className = 'cim-cart-list-btns';
 
-    totalBar.append(totalBarLabel, totalBarValue, listBtn);
+    CART_OPTIONS.forEach(({ option, label }) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'cim-cart-list-btn';
+      btn.dataset.listOption = option;
+      const btnLabel = document.createElement('span');
+      btnLabel.className = 'cim-cart-list-btn-label';
+      btnLabel.textContent = label;
+      const btnTooltip = document.createElement('span');
+      btnTooltip.className = 'cim-copy-tooltip';
+      btn.append(btnLabel, btnTooltip);
+      let btnTimer = null;
+      const showTip = (text) => {
+        btnTooltip.textContent = text;
+        btnTooltip.classList.add('cim-copy-tooltip--visible');
+        clearTimeout(btnTimer);
+        btnTimer = setTimeout(() => btnTooltip.classList.remove('cim-copy-tooltip--visible'), 1500);
+      };
+      btn.addEventListener('click', () => {
+        const isPartial = cartSelectedRecIds.size > 0 && cartSelectedRecIds.size < cartTotalItemCount;
+        const recIds = isPartial ? [...cartSelectedRecIds] : [];
+        const psid = cartModalPsid;
+        const uid = sessionState.uid;
+        const handleResponse = (response) => {
+          if (getUserIdFromUrl() !== uid) return;
+          if (chrome.runtime.lastError || !response || !response.ok) { showTip(response?.error || 'Failed.'); return; }
+          if (response.text.includes(EMPTY_CART_MARKER)) { showTip('Empty Cart!'); return; }
+          const customPrefix = document.getElementById(PANEL_ID)?.querySelector('.cim-cart-prefix')?.value.trim() || '';
+          const textToCopy = customPrefix ? response.text.replace(DEFAULT_CART_PREFIX, customPrefix) : response.text;
+          copyToClipboard(textToCopy).then(() => showTip('Copied!'));
+        };
+        if (isPartial) {
+          chrome.runtime.sendMessage({ type: 'GET_SELECTED_CART_SUMMARY', psid, recIds, option }, handleResponse);
+        } else {
+          chrome.runtime.sendMessage({ type: 'GET_CART_SUMMARY', psid, option }, handleResponse);
+        }
+      });
+      listBtnsGroup.appendChild(btn);
+    });
+
+    totalBar.append(totalBarLeft, listBtnsGroup);
 
     modal.append(header, drawerBody, totalBar, footer);
     overlay.appendChild(modal);
     document.body.appendChild(overlay);
 
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && overlay.classList.contains('cim-cart-modal-overlay--visible')) {
-        closeCartModal();
+      if (!overlay.classList.contains('cim-cart-modal-overlay--visible')) return;
+      if (e.key === 'Escape') { closeCartModal(); return; }
+      const tag = document.activeElement?.tagName?.toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+      const liveModal = document.getElementById(CART_MODAL_ID);
+      if (!liveModal?.querySelector('.cim-cart-toolbar')) return;
+      if ((e.key === 'a' || e.key === 'A') && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        const selAll = liveModal.querySelector('.cim-cart-select-all input[type="checkbox"]');
+        if (selAll) {
+          selAll.checked = !(selAll.checked && !selAll.indeterminate);
+          selAll.dispatchEvent(new Event('change', { bubbles: true }));
+        }
       }
     });
 
@@ -1417,11 +1457,7 @@
     }
 
     cartTotalItemCount = items.length;
-    const listBtnLabelEl = modal.querySelector('.cim-cart-list-btn-label');
-    if (listBtnLabelEl) {
-      listBtnLabelEl.textContent = 'All List';
-      listBtnLabelEl.closest('.cim-cart-list-btn')?.classList.remove('cim-cart-list-btn--partial');
-    }
+    modal.querySelectorAll('.cim-cart-list-btn').forEach((btn) => btn.classList.remove('cim-cart-list-btn--partial'));
 
     const total = items.reduce((sum, it) => sum + (parseFloat(it.price) || 0) * (parseInt(it.qty, 10) || 0), 0);
     if (subtitleEl) subtitleEl.textContent = '0 items · RM0.00';
@@ -1436,6 +1472,7 @@
 
     const selectAllLabel = document.createElement('label');
     selectAllLabel.className = 'cim-cart-select-all';
+    selectAllLabel.title = 'Select all (A)';
     const selectAllChk = document.createElement('input');
     selectAllChk.type = 'checkbox';
     selectAllChk.className = 'cim-cart-checkbox';
@@ -1467,6 +1504,26 @@
     toolbar.append(selectAllLabel, bulkActions);
     body.appendChild(toolbar);
 
+    const hasExpired = items.some((it) => it.expired);
+    if (hasExpired) {
+      const renewAllRow = document.createElement('div');
+      renewAllRow.className = 'cim-cart-renew-all-row';
+      const renewAllBtn = document.createElement('button');
+      renewAllBtn.type = 'button';
+      renewAllBtn.className = 'cim-cart-renew-all-btn';
+      renewAllBtn.textContent = '↺ Renew All Expired';
+      renewAllBtn.addEventListener('click', () => {
+        const expiredIds = items.filter((it) => it.expired).map((it) => it.recId);
+        setCartBodyBusy(true);
+        chrome.runtime.sendMessage({ type: 'CART_REFRESH_VALIDITY', recIds: expiredIds }, (res) => {
+          if (res?.ok) { showCartView(psid); }
+          else { setCartBodyBusy(false); showCartError(modal, res?.error || 'Renew failed.'); }
+        });
+      });
+      renewAllRow.appendChild(renewAllBtn);
+      body.appendChild(renewAllRow);
+    }
+
     function syncBulkButtons() {
       const allChks = body.querySelectorAll('.cim-cart-item-check');
       const checked = body.querySelectorAll('.cim-cart-item-check:checked').length;
@@ -1479,12 +1536,8 @@
       const selTotal = [...cartSelectedRecIds].reduce((sum, id) => sum + (itemLineTotals.get(id) || 0), 0);
       const n = cartSelectedRecIds.size;
       if (subtitleEl) subtitleEl.textContent = `${n} item${n === 1 ? '' : 's'} · RM${selTotal.toFixed(2)}`;
-      const lbl = modal.querySelector('.cim-cart-list-btn-label');
-      if (lbl) {
-        const isPartial = n > 0 && n < cartTotalItemCount;
-        lbl.textContent = isPartial ? 'Partial List' : 'All List';
-        lbl.closest('.cim-cart-list-btn')?.classList.toggle('cim-cart-list-btn--partial', isPartial);
-      }
+      const isPartial = n > 0 && n < cartTotalItemCount;
+      modal.querySelectorAll('.cim-cart-list-btn').forEach((btn) => btn.classList.toggle('cim-cart-list-btn--partial', isPartial));
       body.querySelectorAll('.cim-cart-group').forEach((groupEl) => {
         const groupChk = groupEl.querySelector('.cim-cart-group-select-chk');
         if (!groupChk) return;
@@ -1550,7 +1603,8 @@
 
     // ── Item rows ─────────────────────────────────────────────────────────────
     const rowMap = new Map(); // recId → DOM row element
-    items.forEach((item) => {
+    let lastCheckedIndex = -1;
+    items.forEach((item, idx) => {
       const row = document.createElement('div');
       row.className = 'cim-cart-item-row' + (item.expired ? ' cim-cart-item-row--expired' : '');
 
@@ -1560,9 +1614,23 @@
       chk.type = 'checkbox';
       chk.className = 'cim-cart-checkbox cim-cart-item-check';
       chk.dataset.recId = item.recId;
-      chk.addEventListener('change', () => {
-        if (chk.checked) cartSelectedRecIds.add(item.recId);
-        else cartSelectedRecIds.delete(item.recId);
+      chk.addEventListener('click', (e) => {
+        if (e.shiftKey && lastCheckedIndex >= 0 && idx !== lastCheckedIndex) {
+          const start = Math.min(lastCheckedIndex, idx);
+          const end = Math.max(lastCheckedIndex, idx);
+          items.slice(start, end + 1).forEach((it) => {
+            const c = body.querySelector(`.cim-cart-item-check[data-rec-id="${it.recId}"]`);
+            if (c) {
+              c.checked = chk.checked;
+              if (chk.checked) cartSelectedRecIds.add(it.recId);
+              else cartSelectedRecIds.delete(it.recId);
+            }
+          });
+        } else {
+          if (chk.checked) cartSelectedRecIds.add(item.recId);
+          else cartSelectedRecIds.delete(item.recId);
+        }
+        lastCheckedIndex = idx;
         syncBulkButtons();
       });
       chkLabel.appendChild(chk);
@@ -2959,6 +3027,7 @@
         const sn = document.createElement('span');
         sn.className = 'cim-ol-sn';
         sn.textContent = order.orderSn;
+        if (order.orderSn) sn.dataset.orderId = order.orderSn;
         const amount = document.createElement('span');
         amount.className = 'cim-ol-amount';
         amount.textContent = order.amount ? `RM ${parseFloat(order.amount).toFixed(2)}` : '—';
@@ -3002,6 +3071,26 @@
         if (infoParts.length) card.appendChild(infoRow);
         card.appendChild(botRow);
         body.appendChild(card);
+    });
+
+    // Ship-status colouring — same legend as the panel's recent-orders list.
+    // One batched call for the whole list; orders missing from the ERP response
+    // (>60-day lookup window) keep the default dark SN colour.
+    const snIds = orders.map((o) => o.orderSn).filter(Boolean);
+    if (!snIds.length) return;
+    chrome.runtime.sendMessage({ type: 'GET_ORDER_STATUSES', orderIds: snIds }, (response) => {
+      if (!response?.ok || !response.statuses) return;
+      if (!body.isConnected) return;
+      body.querySelectorAll('.cim-ol-sn[data-order-id]').forEach((el) => {
+        const st = response.statuses[el.dataset.orderId];
+        if (!st) {
+          el.title = 'No ERP activity in the last 60 days — status unknown (old order, likely shipped long ago)';
+          return;
+        }
+        if (st === 'WAIT_AUDIT') el.style.color = 'orange';
+        else if (st === 'PARTIAL_AUDIT') el.style.color = '#9333ea';
+        else el.style.color = '#0a7cff';
+      });
     });
   }
 
@@ -3078,7 +3167,9 @@
       const livePanel = document.getElementById(PANEL_ID);
       if (!livePanel) return;
       livePanel.querySelectorAll('.cim-order-id').forEach((el) => {
-        if (response.statuses[el.dataset.orderId] === 'WAIT_AUDIT') el.style.color = 'orange';
+        const st = response.statuses[el.dataset.orderId];
+        if (st === 'WAIT_AUDIT') el.style.color = 'orange';
+        else if (st === 'PARTIAL_AUDIT') el.style.color = '#9333ea';
       });
     });
     chrome.runtime.sendMessage({ type: 'CHECK_PARCEL_PHOTOS', orderIds }, (photoRes) => {
