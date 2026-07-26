@@ -1702,7 +1702,19 @@
 
       bottom.append(priceEl, stepper, lineTotalEl, actions);
       content.append(top, bottom);
-      row.append(chkLabel, content);
+
+      const thumb = document.createElement('div');
+      thumb.className = 'cim-cart-item-thumb';
+      if (item.img) {
+        const thumbImg = document.createElement('img');
+        thumbImg.src = item.img;
+        thumbImg.alt = '';
+        thumb.appendChild(thumbImg);
+        thumb.classList.add('cim-cart-item-thumb--clickable');
+        thumb.addEventListener('click', () => openGalleryModal([{ url: item.img, id: String(item.goodsId), label: item.name }], 0));
+      }
+
+      row.append(chkLabel, thumb, content);
       rowMap.set(item.recId, row);
     });
 
