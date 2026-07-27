@@ -4569,7 +4569,7 @@
         } else {
           const wmsSection = mkEl('div', 'cim-parcel-section');
           const wmsHeader = mkEl('div', 'cim-parcel-section-header');
-          const wmsTitle = mkEl('span', 'cim-parcel-section-title', wmsOrder.wmsId || `Parcel ${wmsIdx + 1}`);
+          const wmsTitle = mkEl('span', 'cim-parcel-section-title', wmsSectionTitle(wmsOrder, wmsIdx));
           const chevron = mkEl('span', 'cim-parcel-section-chevron', '▸');
           wmsHeader.append(wmsTitle, chevron);
           const wmsBody = mkEl('div', 'cim-parcel-section-body');
@@ -4916,7 +4916,7 @@
 
         const sectionTitle = document.createElement('span');
         sectionTitle.className = 'cim-parcel-section-title' + (hasTracking ? '' : ' cim-parcel-section-title--no-tracking');
-        sectionTitle.textContent = wmsOrder.wmsId || `Parcel ${wmsIdx + 1}`;
+        sectionTitle.textContent = wmsSectionTitle(wmsOrder, wmsIdx);
 
         const right = document.createElement('div');
         right.className = 'cim-parcel-section-right';
@@ -4960,6 +4960,14 @@
         body.appendChild(section);
       }
     });
+  }
+
+  // Collapsible-section title: WMS id plus tracking number in brackets — two
+  // parcels can share a WMS id, and the tracking is what tells them apart
+  // without expanding the section.
+  function wmsSectionTitle(wmsOrder, idx) {
+    const base = wmsOrder.wmsId || `Parcel ${idx + 1}`;
+    return wmsOrder.trackingNumber ? `${base} (${wmsOrder.trackingNumber})` : base;
   }
 
   function buildWmsContent(wmsOrder) {
