@@ -1210,6 +1210,7 @@
   border-top: 1px solid #e4e6eb;
   display: flex;
   justify-content: flex-end;
+  gap: 8px;
   flex-shrink: 0;
 }
 
@@ -1456,6 +1457,13 @@
   flex-shrink: 0;
 }
 
+/* ✕ closes the whole modal — keep it clearly apart from ↻ (misclicking
+   refresh into close throws away selection + scroll). Applies to both the
+   cart and order-list headers, which share this container. */
+.cim-cart-header-right > .cim-drawer-close {
+  margin-left: 12px;
+}
+
 .cim-cart-add-btn {
   height: 32px;
   padding: 0 12px;
@@ -1495,6 +1503,34 @@
 .cim-cart-refresh-btn:hover {
   background: #f0f2f5;
   color: #050505;
+}
+
+/* EC2 portal deep-link button (footer, left of the Close button) */
+.cim-ec2-link-btn {
+  padding: 8px 14px;
+  border: 1px solid #cfe3ff;
+  border-radius: 8px;
+  background: #f0f7ff;
+  color: #0a7cff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+  text-decoration: none;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.cim-ec2-link-btn:hover {
+  background: #e0efff;
+  border-color: #a9cfff;
+  text-decoration: none;
+}
+
+/* display:flex above would defeat the hidden attribute — restore it */
+.cim-ec2-link-btn[hidden] {
+  display: none;
 }
 
 /* Busy overlay on body */
@@ -1547,8 +1583,9 @@
   display: none;
 }
 
-/* Segmented Simple|Adv control: grey track, sliding teal pill (Merge's
-   palette), spring-ish ease on the slide. */
+/* Segmented Simple|Adv control: grey track, sliding white pill with blue
+   active text (muted — it's a set-once preference, not a status badge, and
+   the extension's accent is blue), spring-ish ease on the slide. */
 .cim-cart-mode-group {
   position: relative;
   display: flex;
@@ -1569,9 +1606,9 @@
   height: calc(100% - 4px);
   box-sizing: border-box;
   border-radius: 6px;
-  background: #d1fae5;
-  border: 1px solid #86efac;
-  box-shadow: 0 1px 2px rgba(21, 128, 61, 0.15);
+  background: #ffffff;
+  border: 1px solid #d8dadf;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
   transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
@@ -1599,7 +1636,7 @@
 }
 
 .cim-cart-mode-opt--active {
-  color: #15803d;
+  color: #0a7cff;
   cursor: default;
 }
 
@@ -3012,6 +3049,14 @@
   gap: 6px;
   align-items: center;
   flex-wrap: wrap;
+}
+
+/* EC2 link + Close grouped on the footer's right (footer is space-between) */
+.cim-ol-footer-right {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-left: auto;
 }
 
 /* ── Back button in order list header ────────────────────────────────────── */

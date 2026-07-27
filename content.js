@@ -279,12 +279,29 @@
     return !!box.querySelector('br[data-lexical-managed-linebreak]');
   }
 
+  // Prefer the placeholder-verified composer (skips the extension's own
+  // elements); fall back to the legacy loose selector so a placeholder copy
+  // change degrades to old behavior instead of disabling sends.
+  function getComposerEditor() {
+    return findMessengerReplyBox()
+      || document.querySelector('[contenteditable="true"][role="textbox"]');
+  }
+
+  // Truly empty: no text AND a single block — a draft of only blank lines has
+  // zero textContent but multiple block children, and must still be cleared.
+  function isComposerCleared(editor) {
+    return editor.textContent.length === 0 && editor.children.length <= 1;
+  }
+
   function clearReplyBox() {
-    const editor = document.querySelector('[contenteditable="true"][role="textbox"]');
+    const editor = getComposerEditor();
     if (!editor) return false;
     editor.focus();
-    const charsToDelete = editor.textContent.length + 2;
-    for (let i = 0; i < charsToDelete; i++) {
+    // Line breaks don't appear in textContent — budget one Backspace per
+    // character plus one per extra block, with slack.
+    const budget = editor.textContent.length + Math.max(0, editor.children.length - 1) + 5;
+    for (let i = 0; i < budget; i++) {
+      if (isComposerCleared(editor)) break;
       const selection = window.getSelection();
       selection.selectAllChildren(editor);
       selection.collapseToEnd();
@@ -302,14 +319,30 @@
         key: 'Backspace', code: 'Backspace', keyCode: 8, which: 8, bubbles: true, cancelable: true,
       }));
     }
+    // Lexical applies these edits ASYNCHRONOUSLY — the DOM can still look
+    // full here even when every queued delete will land. So this sweep is
+    // belt-and-braces only (select-all + one delete through the same queue),
+    // and the return value must NOT depend on a synchronous emptiness
+    // re-check: gating the follow-up paste on it aborts real sends.
+    if (!isComposerCleared(editor)) {
+      window.getSelection().selectAllChildren(editor);
+      editor.dispatchEvent(new InputEvent('beforeinput', {
+        inputType: 'deleteContentBackward', bubbles: true, cancelable: true,
+      }));
+      document.execCommand('delete', false, null);
+      editor.dispatchEvent(new InputEvent('input', {
+        inputType: 'deleteContentBackward', bubbles: true, cancelable: true,
+      }));
+    }
     return true;
   }
 
   function insertTextIntoMessenger(text) {
-    const editor = document.querySelector('[contenteditable="true"][role="textbox"]');
+    const editor = getComposerEditor();
     if (!editor) return false;
     // Always start from an empty composer — a leftover draft must never be
-    // mixed into the injected message.
+    // mixed into the injected message. The paste below travels through the
+    // same async Lexical queue as the deletes, so it lands after them.
     clearReplyBox();
     editor.focus();
     const cleanText = text.replace(/\\n/g, '\n').replace(/\r\n/g, '\n');
@@ -1142,19 +1175,24 @@
     addBtn.type = 'button';
     addBtn.className = 'cim-cart-add-btn';
     addBtn.textContent = '+ Add';
+    addBtn.title = 'Add products to cart';
     addBtn.addEventListener('click', () => showGoodsPicker(cartModalPsid));
 
+    // "Import", not "Copy" — this mutates the cart by pulling another
+    // customer's items IN; "Copy" is reserved for clipboard actions.
     const copyBtn = document.createElement('button');
     copyBtn.type = 'button';
     copyBtn.className = 'cim-cart-copy-btn';
-    copyBtn.textContent = '↙ Copy';
-    copyBtn.setAttribute('aria-label', 'Copy from another customer');
+    copyBtn.textContent = '⇩ Import';
+    copyBtn.title = 'Import cart from another customer';
+    copyBtn.setAttribute('aria-label', 'Import cart from another customer');
     copyBtn.addEventListener('click', () => showCopyCartView(cartModalPsid));
 
     const refreshBtn = document.createElement('button');
     refreshBtn.type = 'button';
     refreshBtn.className = 'cim-cart-refresh-btn';
     refreshBtn.setAttribute('aria-label', 'Refresh');
+    refreshBtn.title = 'Refresh cart';
     refreshBtn.textContent = '↻';
     refreshBtn.addEventListener('click', () => showCartView(cartModalPsid));
 
@@ -1162,6 +1200,7 @@
     closeBtn.type = 'button';
     closeBtn.className = 'cim-drawer-close';
     closeBtn.setAttribute('aria-label', 'Close');
+    closeBtn.title = 'Close';
     closeBtn.textContent = '✕';
     closeBtn.addEventListener('click', closeCartModal);
 
@@ -1173,12 +1212,13 @@
 
     const footer = document.createElement('div');
     footer.className = 'cim-drawer-footer';
+    const ec2Btn = buildEc2LinkButton();
     const footerClose = document.createElement('button');
     footerClose.type = 'button';
     footerClose.className = 'cim-drawer-footer-close';
     footerClose.textContent = 'Close';
     footerClose.addEventListener('click', closeCartModal);
-    footer.appendChild(footerClose);
+    footer.append(ec2Btn, footerClose);
 
     const totalBar = document.createElement('div');
     totalBar.className = 'cim-cart-total-bar';
@@ -1269,7 +1309,7 @@
           pop.remove();
           fetchCartSummaryText(option, (text, err) => {
             if (!text) { sendBtn._showTip(err); return; }
-            sendBtn._showTip(insertTextIntoMessenger(text) ? 'Inserted!' : 'No reply box');
+            sendBtn._showTip(insertTextIntoMessenger(text) ? 'Inserted!' : 'Insert failed');
           });
         });
         pop.appendChild(optBtn);
@@ -1380,6 +1420,41 @@
     }
   }
 
+  // ── EC2 portal deep links (footer ↗ button, left of Close, on every view) ──
+  const EC2_PORTAL_BASE = 'https://ec2.full2house.com/Ent/index.php';
+
+  function ec2CartUrl(psid) {
+    return `${EC2_PORTAL_BASE}?win_name=&fb_user_id=${encodeURIComponent(psid)}&a=EntLive&m=mallCartUserLists&live_id=`;
+  }
+
+  // no_cancel=on is EC2's own filter — 取消 orders never appear in the list.
+  function ec2OrderListUrl(psid) {
+    return `${EC2_PORTAL_BASE}?a=EntMall&m=orderList&fb_user_id=${encodeURIComponent(psid)}&new_status=0&no_cancel=on`;
+  }
+
+  function ec2OrderDetailUrl(orderId) {
+    return `${EC2_PORTAL_BASE}?a=EntMall&m=orderDetail&order_id=${encodeURIComponent(orderId)}`;
+  }
+
+  function buildEc2LinkButton() {
+    const btn = document.createElement('a');
+    btn.className = 'cim-ec2-link-btn';
+    btn.target = '_blank';
+    btn.rel = 'noopener';
+    btn.hidden = true;
+    return btn;
+  }
+
+  function setEc2Link(modal, label, url) {
+    const btn = modal?.querySelector('.cim-ec2-link-btn');
+    if (!btn) return;
+    if (!url) { btn.hidden = true; return; }
+    btn.hidden = false;
+    btn.textContent = `${label} ↗`;
+    btn.href = url;
+    btn.title = `Open ${label} in EC2 (new tab)`;
+  }
+
   function setCartHeaderMode(mode) {
     const modal = document.getElementById(CART_MODAL_ID);
     if (!modal) return;
@@ -1395,8 +1470,13 @@
     modal.querySelector('.cim-cart-add-btn').style.display = isCart ? '' : 'none';
     modal.querySelector('.cim-cart-copy-btn').style.display = isCart ? '' : 'none';
     modal.querySelector('.cim-cart-refresh-btn').style.display = isCart ? '' : 'none';
-    modal.querySelector('.cim-drawer-title').textContent = isGoods ? 'Add Product' : isCopy ? 'Copy Cart' : isCheckout ? 'Create Order' : (sessionState.name || 'Cart');
+    modal.querySelector('.cim-drawer-title').textContent = isGoods ? 'Add Product' : isCopy ? 'Import Cart' : isCheckout ? 'Create Order' : (sessionState.name || 'Cart');
     modal.querySelector('.cim-drawer-subtitle').textContent = '';
+    // Cart and the checkout FORM link to the EC2 cart page (no order exists
+    // yet); renderCheckoutSuccess upgrades the link to the created order's
+    // detail page once ✓ Order Created shows.
+    setEc2Link(modal, 'EC2 Cart',
+      (isCart || isCheckout) && cartModalPsid ? ec2CartUrl(cartModalPsid) : null);
     const totalBar = modal.querySelector('.cim-cart-total-bar');
     if (totalBar) totalBar.style.display = isCart ? '' : 'none';
   }
@@ -1452,7 +1532,7 @@
     btn.addEventListener('click', () => {
       const ok = insertTextIntoMessenger(buildPaymentReceivedMessage(orderSn));
       btn.disabled = true;
-      btn.textContent = ok ? '✓ Inserted into Messenger' : '✕ No reply box found';
+      btn.textContent = ok ? '✓ Inserted into Messenger' : '✕ Insert failed';
       setTimeout(() => toast.remove(), 2500);
     });
     toast.append(label, btn);
@@ -2861,7 +2941,7 @@
 
     const helpText = document.createElement('p');
     helpText.className = 'cim-copy-help';
-    helpText.textContent = 'Copy all items from another customer\'s cart into this one. Duplicate products are added as separate rows by default.';
+    helpText.textContent = 'Import all items from another customer\'s cart into this one. Duplicate products are added as separate rows by default.';
     body.appendChild(helpText);
 
     const labelEl = document.createElement('label');
@@ -2917,7 +2997,7 @@
     const confirmBtn = document.createElement('button');
     confirmBtn.type = 'button';
     confirmBtn.className = 'cim-copy-confirm-btn';
-    confirmBtn.textContent = '✓ Confirm Copy';
+    confirmBtn.textContent = '✓ Confirm Import';
     confirmRow.append(cancelBtn, confirmBtn);
     body.appendChild(confirmRow);
 
@@ -2954,7 +3034,7 @@
       if (!hasItems) {
         const empty = document.createElement('div');
         empty.className = 'cim-drawer-empty';
-        empty.textContent = 'Source cart is empty or has no items to copy.';
+        empty.textContent = 'Source cart is empty or has no items to import.';
         resultsEl.appendChild(empty);
         confirmRow.style.display = 'none';
         return;
@@ -2997,7 +3077,7 @@
       const parts = [`Added ${data.added.length}`];
       if (data.skipped.length) parts.push(`skipped ${data.skipped.length}`);
       if (data.failed.length) parts.push(`failed ${data.failed.length}`);
-      banner.textContent = `${nothingAdded ? '⚠ Copy failed' : '✓ Copy complete'} — ${parts.join(' · ')}`;
+      banner.textContent = `${nothingAdded ? '⚠ Import failed' : '✓ Import complete'} — ${parts.join(' · ')}`;
       resultsEl.appendChild(banner);
 
       if (data.failed.length > 0) {
@@ -3083,7 +3163,7 @@
           }
           confirmBtn.disabled = false;
           cancelBtn.disabled = false;
-          confirmBtn.textContent = '✓ Confirm Copy';
+          confirmBtn.textContent = '✓ Confirm Import';
           if (!res?.ok) {
             showCartError(document.getElementById(CART_MODAL_ID), res?.error || 'Copy failed.');
             return;
@@ -3339,6 +3419,11 @@
   function renderCheckoutSuccess(body, modal, psid, result) {
     body.innerHTML = '';
 
+    // The order now exists — upgrade the footer link from the cart page to
+    // this order's real EC2 detail page. (Without an orderId the EC2 Cart
+    // link from setCartHeaderMode stays.)
+    if (result.orderId) setEc2Link(modal, 'EC2 Details', ec2OrderDetailUrl(result.orderId));
+
     const successHeader = document.createElement('div');
     successHeader.className = 'cim-checkout-success-header';
     successHeader.textContent = '✓ Order Created';
@@ -3445,7 +3530,7 @@
     payMsgBtn.style.display = 'none';
     payMsgBtn.addEventListener('click', () => {
       const ok = insertTextIntoMessenger(buildPaymentReceivedMessage(result.orderSn));
-      payMsgBtn.textContent = ok ? '✓ Inserted' : '✕ No reply box';
+      payMsgBtn.textContent = ok ? '✓ Inserted' : '✕ Insert failed';
       setTimeout(() => { payMsgBtn.textContent = '📩 Payment msg'; }, 2000);
     });
     actRow.append(confirmBtn, confirmPaidBtn, payMsgBtn, viewOrderBtn);
@@ -3574,6 +3659,7 @@
     refreshBtn.type = 'button';
     refreshBtn.className = 'cim-cart-refresh-btn';
     refreshBtn.setAttribute('aria-label', 'Refresh');
+    refreshBtn.title = 'Refresh';
     refreshBtn.textContent = '↻';
     refreshBtn.addEventListener('click', () => {
       if (modal._refreshAction) modal._refreshAction();
@@ -3583,6 +3669,7 @@
     closeBtn.type = 'button';
     closeBtn.className = 'cim-drawer-close';
     closeBtn.setAttribute('aria-label', 'Close');
+    closeBtn.title = 'Close';
     closeBtn.textContent = '✕';
     closeBtn.addEventListener('click', closeOrderListModal);
 
@@ -3598,12 +3685,18 @@
     const footerActions = document.createElement('div');
     footerActions.className = 'cim-ol-footer-actions';
 
+    const ec2Btn = buildEc2LinkButton();
     const footerClose = document.createElement('button');
     footerClose.type = 'button';
     footerClose.className = 'cim-drawer-footer-close';
     footerClose.textContent = 'Close';
     footerClose.addEventListener('click', closeOrderListModal);
-    footer.append(footerActions, footerClose);
+    // Footer is space-between (actions left, close right) — keep the EC2 link
+    // glued to the left of Close inside one right-side group.
+    const footerRight = document.createElement('div');
+    footerRight.className = 'cim-ol-footer-right';
+    footerRight.append(ec2Btn, footerClose);
+    footer.append(footerActions, footerRight);
 
     modal.append(header, drawerBody, footer);
     overlay.appendChild(modal);
@@ -4129,6 +4222,7 @@
     const modal = ensureOrderListModal();
     modal._refreshAction = () => showOrderList(psid);
     setOrderListHeaderMode('list', modal);
+    setEc2Link(modal, 'EC2 Orders', psid ? ec2OrderListUrl(psid) : null);
     const footerActions = modal.querySelector('.cim-ol-footer-actions');
     if (footerActions) footerActions.innerHTML = '';
     const body = modal.querySelector('.cim-drawer-body');
@@ -4191,6 +4285,7 @@
     }
     modal._refreshAction = () => showOrderDetail(orderId);
     setOrderListHeaderMode('detail', modal);
+    setEc2Link(modal, 'EC2 Details', ec2OrderDetailUrl(orderId));
     if (modal._noBack) {
       const backBtn = modal.querySelector('.cim-ol-back-btn');
       if (backBtn) backBtn.hidden = true;
