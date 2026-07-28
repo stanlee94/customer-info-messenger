@@ -4134,3 +4134,218 @@
 #cim-cart-modal .cim-drawer-title {
   font-size: 15px;
 }
+
+/* ── Live mode (add by live code) ────────────────────────────────────────── */
+.cim-live-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cim-live-select-wrap {
+  position: relative;
+}
+
+.cim-live-select-btn {
+  width: 100%;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 12px;
+  border: 1px solid #e4e6eb;
+  border-radius: 8px;
+  background: #ffffff;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  color: #050505;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s;
+}
+
+.cim-live-select-btn:hover,
+.cim-live-select-btn--open {
+  border-color: #0a7cff;
+}
+
+.cim-live-select-btn--empty {
+  color: #8a8d91;
+  font-weight: 400;
+}
+
+.cim-live-select-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cim-live-select-caret {
+  flex-shrink: 0;
+  color: #65676b;
+  font-size: 11px;
+}
+
+.cim-live-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 8; /* above the sticky search head (z-index 6) */
+  background: #ffffff;
+  border: 1px solid #e4e6eb;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* display: flex above would defeat the [hidden] attribute (UA display:none
+   loses to any authored display) — restore it explicitly */
+.cim-live-dropdown[hidden] {
+  display: none;
+}
+
+.cim-live-dd-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.cim-live-dd-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  font-family: inherit;
+  font-size: 12px;
+  color: #050505;
+  cursor: pointer;
+  text-align: left;
+}
+
+.cim-live-dd-item:hover {
+  background: #f0f2f5;
+}
+
+.cim-live-dd-item--selected {
+  background: rgba(10, 124, 255, 0.08);
+  color: #0a7cff;
+  font-weight: 600;
+}
+
+.cim-live-dd-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cim-live-codes-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 12px;
+  border: 1px solid #e4e6eb;
+  border-radius: 8px;
+  font-size: 13px;
+  font-family: inherit;
+  color: #050505;
+  background: #ffffff;
+  outline: none;
+  resize: vertical;
+  transition: border-color 0.15s;
+}
+
+.cim-live-codes-input:focus {
+  border-color: #0a7cff;
+}
+
+.cim-live-action-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.cim-live-hint {
+  font-size: 11px;
+  color: #8a8d91;
+}
+
+.cim-live-add-btn {
+  height: 32px;
+  padding: 0 16px;
+  border: none;
+  border-radius: 8px;
+  background: #0a7cff;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s;
+}
+
+.cim-live-add-btn:hover:not(:disabled) {
+  background: #0060d6;
+}
+
+.cim-live-add-btn:disabled {
+  background: #e4e6eb;
+  color: #bcc0c4;
+  cursor: default;
+}
+
+.cim-live-result {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cim-live-result-block {
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: #65676b;
+  background: #f9fafb;
+}
+
+.cim-live-result-block--ok {
+  background: #f0fdf4;
+  color: #15803d;
+}
+
+.cim-live-result-block--skip {
+  background: #fffbeb;
+  color: #b45309;
+}
+
+.cim-live-result-block--warn {
+  background: #fff5f5;
+  color: #dc2626;
+  font-weight: 600;
+}
+
+.cim-live-result-head {
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.cim-live-result-line {
+  padding: 1px 0;
+  word-break: break-word;
+}

@@ -1111,9 +1111,13 @@
   let goodsPage = 1;
   let goodsTotalPages = 1;
   let goodsQtys = {};
-  let goodsSearchMode = 'normal'; // 'normal' | 'smart'
+  let goodsSearchMode = 'normal'; // 'normal' | 'smart' | 'live'
   let goodsSelectedIds = new Set();
   let goodsDataMap = {}; // goodsId → { name, price }
+  // Survives picker re-opens while the cart modal stays open, but resets
+  // when the modal closes (closeCartModal) — every modal session starts
+  // with a fresh "Choose live…" so a stale live can't be added into.
+  let liveSelected = null; // { id, name }
   let copySourceId = '';
 
   function ensureCartModal() {
@@ -1388,6 +1392,7 @@
 
   function closeCartModal() {
     closeFloatingPopovers();
+    liveSelected = null; // Live tab starts fresh next time the modal opens
     const overlay = document.getElementById(CART_MODAL_OVERLAY_ID);
     if (overlay) overlay.classList.remove('cim-cart-modal-overlay--visible');
 
@@ -2422,7 +2427,11 @@
     smartModeBtn.type = 'button';
     smartModeBtn.className = 'cim-goods-mode-btn' + (goodsSearchMode === 'smart' ? ' cim-goods-mode-btn--active' : '');
     smartModeBtn.textContent = '✦ Smart';
-    modeRow.append(normalModeBtn, smartModeBtn);
+    const liveModeBtn = document.createElement('button');
+    liveModeBtn.type = 'button';
+    liveModeBtn.className = 'cim-goods-mode-btn' + (goodsSearchMode === 'live' ? ' cim-goods-mode-btn--active' : '');
+    liveModeBtn.textContent = '🔴 Live';
+    modeRow.append(normalModeBtn, smartModeBtn, liveModeBtn);
     body.appendChild(modeRow);
 
     // Search bar
@@ -2486,6 +2495,342 @@
     pagerEl.className = 'cim-goods-pager';
     pagerEl.style.display = goodsSearchMode === 'smart' ? 'none' : '';
     body.appendChild(pagerEl);
+
+    // ── Live mode: add products by the codes customers type in live comments
+    // (A2+3, C1+2) via POST /api/cart/items-by-code. Sits under the mode
+    // toggle; search head / list / pager hide while it's visible.
+    const sendBg = (msg) => new Promise((resolve) => chrome.runtime.sendMessage(msg, resolve));
+
+    const liveSection = document.createElement('div');
+    liveSection.className = 'cim-live-section';
+    liveSection.style.display = goodsSearchMode === 'live' ? '' : 'none';
+    body.insertBefore(liveSection, stickyHead);
+
+    const liveSelectBtn = document.createElement('button');
+    liveSelectBtn.type = 'button';
+    liveSelectBtn.className = 'cim-live-select-btn';
+    const syncLiveSelectBtn = () => {
+      liveSelectBtn.classList.toggle('cim-live-select-btn--empty', !liveSelected);
+      liveSelectBtn.textContent = '';
+      const label = document.createElement('span');
+      label.className = 'cim-live-select-label';
+      label.textContent = liveSelected ? liveSelected.name : 'Choose live…';
+      const caret = document.createElement('span');
+      caret.className = 'cim-live-select-caret';
+      caret.textContent = '▾';
+      liveSelectBtn.append(label, caret);
+    };
+    syncLiveSelectBtn();
+
+    const liveDropdown = document.createElement('div');
+    liveDropdown.className = 'cim-live-dropdown';
+    liveDropdown.hidden = true;
+    const liveDdList = document.createElement('div');
+    liveDdList.className = 'cim-live-dd-list';
+    liveDropdown.append(liveDdList);
+
+    const liveSelectWrap = document.createElement('div');
+    liveSelectWrap.className = 'cim-live-select-wrap';
+    liveSelectWrap.append(liveSelectBtn, liveDropdown);
+
+    let livePage = 0; // last page appended; 0 = nothing loaded yet
+    let liveLastPage = 1;
+    let livesLoading = false;
+    let liveEmptyStreak = 0; // consecutive pages with zero 进行中 rows
+
+    const closeLiveDropdown = () => {
+      liveDropdown.hidden = true;
+      liveSelectBtn.classList.remove('cim-live-select-btn--open');
+    };
+
+    // Infinite scroll: each page APPENDS as the list nears its bottom. The
+    // in-flight flag serialises loads, so pages can't arrive out of order.
+    const loadMoreLives = () => {
+      if (livesLoading || (livePage > 0 && livePage >= liveLastPage)) return;
+      livesLoading = true;
+      const loadingRow = document.createElement('div');
+      loadingRow.className = 'cim-drawer-loading';
+      loadingRow.textContent = 'Loading…';
+      liveDdList.appendChild(loadingRow);
+      sendBg({ type: 'LIST_LIVES', page: livePage + 1 }).then((res) => {
+        if (!liveDdList.isConnected) return;
+        loadingRow.remove();
+        livesLoading = false;
+        if (!res?.ok) {
+          const err = document.createElement('div');
+          err.className = 'cim-drawer-error';
+          err.textContent = res?.error || 'Failed to load lives.';
+          liveDdList.appendChild(err);
+          setTimeout(() => err.remove(), 2500); // scrolling again retries
+          return;
+        }
+        livePage = res.page;
+        liveLastPage = res.lastPage;
+        // Only 进行中 lives are selectable — other statuses are hidden. The
+        // status label is dropped from the rows since it's now constant.
+        const active = res.lives.filter((lv) => (lv.status || '').trim() === '进行中');
+        // Lives are newest-first: after a few consecutive pages with no
+        // 进行中 row the rest won't have any either — declare the end, or
+        // the top-up below would crawl every remaining page finding nothing.
+        if (active.length) liveEmptyStreak = 0;
+        else if (++liveEmptyStreak >= 3) liveLastPage = livePage;
+        active.forEach((lv) => {
+          const item = document.createElement('button');
+          item.type = 'button';
+          item.className = 'cim-live-dd-item' + (liveSelected && liveSelected.id === String(lv.id) ? ' cim-live-dd-item--selected' : '');
+          const nameEl = document.createElement('span');
+          nameEl.className = 'cim-live-dd-name';
+          nameEl.textContent = lv.name || `Live ${lv.id}`;
+          item.append(nameEl);
+          item.addEventListener('click', () => {
+            liveSelected = { id: String(lv.id), name: lv.name || `Live ${lv.id}` };
+            syncLiveSelectBtn();
+            closeLiveDropdown();
+            liveCodesInput.focus();
+          });
+          liveDdList.appendChild(item);
+        });
+        if (livePage >= liveLastPage && !liveDdList.querySelector('.cim-live-dd-item')) {
+          const empty = document.createElement('div');
+          empty.className = 'cim-drawer-empty';
+          empty.textContent = 'No 进行中 lives found.';
+          liveDdList.appendChild(empty);
+          return;
+        }
+        // A filtered-short page can leave the list unscrollable — no scroll
+        // event would ever fire, so top up until it scrolls or pages run out.
+        if (liveDdList.scrollHeight <= liveDdList.clientHeight + 4 && livePage < liveLastPage) loadMoreLives();
+      });
+    };
+
+    liveDdList.addEventListener('scroll', () => {
+      if (liveDdList.scrollTop + liveDdList.clientHeight >= liveDdList.scrollHeight - 40) loadMoreLives();
+    });
+
+    const openLiveDropdown = () => {
+      liveDropdown.hidden = false;
+      liveSelectBtn.classList.add('cim-live-select-btn--open');
+      if (livePage === 0) loadMoreLives();
+    };
+
+    liveSelectBtn.addEventListener('click', () => {
+      if (liveDropdown.hidden) openLiveDropdown();
+      else closeLiveDropdown();
+    });
+
+    // Self-cleaning outside-click close — renderGoodsPicker re-renders into
+    // the same drawer body, so a document listener must detach itself once
+    // this render's nodes are gone or listeners pile up across opens.
+    const onLiveDocMousedown = (e) => {
+      if (!liveSection.isConnected) { document.removeEventListener('mousedown', onLiveDocMousedown); return; }
+      if (liveDropdown.hidden) return;
+      if (!liveSelectWrap.contains(e.target)) closeLiveDropdown();
+    };
+    document.addEventListener('mousedown', onLiveDocMousedown);
+
+    const liveCodesInput = document.createElement('textarea');
+    liveCodesInput.className = 'cim-live-codes-input';
+    liveCodesInput.rows = 4;
+    liveCodesInput.placeholder = 'A2+3, A3+4, C1+2';
+
+    const liveActionRow = document.createElement('div');
+    liveActionRow.className = 'cim-live-action-row';
+    const liveHint = document.createElement('span');
+    liveHint.className = 'cim-live-hint';
+    liveHint.textContent = 'CODE+QTY · comma or newline separated';
+    const liveAddBtn = document.createElement('button');
+    liveAddBtn.type = 'button';
+    liveAddBtn.className = 'cim-live-add-btn';
+    liveAddBtn.textContent = 'Add by Code';
+    liveActionRow.append(liveHint, liveAddBtn);
+
+    const liveResult = document.createElement('div');
+    liveResult.className = 'cim-live-result';
+
+    liveSection.append(liveSelectWrap, liveCodesInput, liveActionRow, liveResult);
+
+    // "A2+3, A3+4" → [{raw, code, qty} | {raw, error}]. Qty is REQUIRED — a
+    // bare code is skipped, never defaulted to 1.
+    const parseLiveCodes = (text) => text
+      .split(/[,，;；\n\r]+/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .map((raw) => {
+        const m = raw.match(/^([A-Za-z0-9]+)\s*[+＋xX×*]\s*(\d+)$/);
+        if (!m) {
+          return /^[A-Za-z0-9]+$/.test(raw)
+            ? { raw, error: 'missing qty — write CODE+QTY' }
+            : { raw, error: 'cannot parse' };
+        }
+        const qty = parseInt(m[2], 10);
+        if (!qty) return { raw, error: 'qty must be ≥ 1' };
+        return { raw, code: m[1], qty };
+      });
+
+    // Ledger statuses with 0 addable rows → the fixed "cannot add" wording;
+    // ambiguous normally auto-resolves before reaching here (highest winNum),
+    // so its label only shows when candidates were unexpectedly absent.
+    const liveSkipReason = (r) => {
+      if (r.status === 'not_found') return 'cannot add this product — not in this live';
+      if (r.status === 'closed') return 'cannot add this product — 停止补单';
+      if (r.status === 'ambiguous') return 'cannot add this product — multiple matches';
+      if (r.status === 'not_attempted') return 'not attempted — resubmit';
+      return r.msg || r.status || 'refused';
+    };
+
+    const renderLiveResult = (added, skipped, opts = {}) => {
+      liveResult.innerHTML = '';
+      if (opts.warning) {
+        const blk = document.createElement('div');
+        blk.className = 'cim-live-result-block cim-live-result-block--warn';
+        blk.textContent = `⚠ ${opts.warning}`;
+        liveResult.appendChild(blk);
+      }
+      if (added && added.length) {
+        const blk = document.createElement('div');
+        blk.className = 'cim-live-result-block cim-live-result-block--ok';
+        const head = document.createElement('div');
+        head.className = 'cim-live-result-head';
+        head.textContent = `✓ ${added.length} added`;
+        blk.appendChild(head);
+        added.forEach((r) => {
+          const line = document.createElement('div');
+          line.className = 'cim-live-result-line';
+          const pick = opts.autoPicked?.get(String(r.groupId));
+          line.textContent = `${r.code} · ${r.name} ×${r.qty} — RM ${r.lineTotal}`
+            + (r.merged >= 2 ? ' · ⧉ merged' : '')
+            + (pick !== undefined ? ` · auto-picked (${pick} sold)` : '')
+            + (r.verified === false ? ' · ⚠ not verified' : '');
+          blk.appendChild(line);
+        });
+        liveResult.appendChild(blk);
+      } else if (added && !opts.warning && !(opts.already && opts.already.length)) {
+        const blk = document.createElement('div');
+        blk.className = 'cim-live-result-block';
+        blk.textContent = 'Nothing added.';
+        liveResult.appendChild(blk);
+      }
+      if (opts.already && opts.already.length) {
+        const blk = document.createElement('div');
+        blk.className = 'cim-live-result-block';
+        const head = document.createElement('div');
+        head.className = 'cim-live-result-head';
+        head.textContent = `ℹ ${opts.already.length} already in cart — edit qty in the cart instead`;
+        blk.appendChild(head);
+        opts.already.forEach((r) => {
+          const line = document.createElement('div');
+          line.className = 'cim-live-result-line';
+          line.textContent = `${r.code} · ${r.name} ×${r.qty}`;
+          blk.appendChild(line);
+        });
+        liveResult.appendChild(blk);
+      }
+      if (skipped && skipped.length) {
+        const blk = document.createElement('div');
+        blk.className = 'cim-live-result-block cim-live-result-block--skip';
+        const head = document.createElement('div');
+        head.className = 'cim-live-result-head';
+        head.textContent = `⚠ ${skipped.length} skipped — not added`;
+        blk.appendChild(head);
+        skipped.forEach((s) => {
+          const line = document.createElement('div');
+          line.className = 'cim-live-result-line';
+          line.textContent = `${s.raw}${s.name ? ` · ${s.name}` : ''} — ${s.reason}`;
+          blk.appendChild(line);
+        });
+        liveResult.appendChild(blk);
+      }
+    };
+
+    let liveAddInFlight = false;
+    liveAddBtn.addEventListener('click', async () => {
+      if (liveAddInFlight) return;
+      const modalEl = document.getElementById(CART_MODAL_ID);
+      if (!liveSelected) { showCartError(modalEl, 'Choose a live first.'); openLiveDropdown(); return; }
+      const parsed = parseLiveCodes(liveCodesInput.value);
+      if (!parsed.length) { showCartError(modalEl, 'Enter live codes first (e.g. A2+3).'); liveCodesInput.focus(); return; }
+      const skipped = parsed.filter((p) => p.error).map((p) => ({ raw: p.raw, reason: p.error }));
+      let items = parsed.filter((p) => !p.error).map((p) => ({ code: p.code, qty: p.qty }));
+      liveAddInFlight = true;
+      liveAddBtn.disabled = true;
+      liveResult.innerHTML = '';
+      // Progress hint. The backend writes sequentially (~0.35 s/item after a
+      // ~1.5 s cart+groups read) but answers once, so the counter is a
+      // time-based ESTIMATE — capped at the item count so it can never claim
+      // completion before the real response lands; past the estimate it
+      // reads "Verifying…" (the backend's read-after-write phase).
+      const startProgress = (count) => {
+        const startedAt = Date.now();
+        clearInterval(liveAddBtn._progTimer);
+        const tick = () => {
+          const est = Math.floor((Date.now() - startedAt - 1500) / 350);
+          const done = Math.min(count, Math.max(0, est));
+          liveAddBtn.textContent = done >= count ? 'Verifying…' : `Adding… ${done}/${count}`;
+        };
+        tick();
+        liveAddBtn._progTimer = setInterval(tick, 300);
+      };
+      const finish = (label) => {
+        clearInterval(liveAddBtn._progTimer);
+        liveAddInFlight = false;
+        liveAddBtn.disabled = false;
+        liveAddBtn.textContent = label;
+        if (label !== 'Add by Code') {
+          clearTimeout(liveAddBtn._resetTimer);
+          liveAddBtn._resetTimer = setTimeout(() => { liveAddBtn.textContent = 'Add by Code'; }, 2500);
+        }
+      };
+
+      const added = [];   // ledger rows that landed (status 'added')
+      const already = []; // status 'already_in_cart' — informational, not an error
+      const autoPicked = new Map(); // groupId → winNum, for the result line
+      let warning = null;
+      // Per-item ledger (live-code-per-item-explained.md): ONE call; the
+      // backend hits EC2 one POST per item and answers 200 ok:true with one
+      // results[] row per line — failures live in results[].status, never in
+      // the HTTP status. Pass 2 exists only for ambiguous codes (2+ addable
+      // rows): auto-resolved to the highest-winNum candidate and resubmitted
+      // as { groupId, qty }. Resubmitting is safe by contract — landed lines
+      // answer already_in_cart, every other status wrote nothing.
+      for (let pass = 0; items.length && pass < 2; pass++) {
+        startProgress(items.length); // pass 2 restarts with the smaller count
+        const res = await sendBg({ type: 'CART_ADD_BY_CODE', liveId: liveSelected.id, fbUserId: psid, items });
+        // view/customer changed — drop (and stop the ticker on the dead button)
+        if (!liveSection.isConnected) { clearInterval(liveAddBtn._progTimer); return; }
+        if (!res?.ok) {
+          // Input validation or a failed session heal — nothing was attempted.
+          renderLiveResult(null, skipped, { warning: res?.error || 'Add by code failed.' });
+          finish('✕ Failed');
+          return;
+        }
+        if (res.warning) warning = warning ? `${warning} · ${res.warning}` : res.warning;
+        const next = [];
+        (res.results || []).forEach((r) => {
+          const raw = `${r.code}+${r.qty}`;
+          if (r.status === 'added') { added.push(r); return; }
+          if (r.status === 'already_in_cart') { already.push(r); return; }
+          if (r.status === 'ambiguous' && pass === 0 && Array.isArray(r.candidates) && r.candidates.length) {
+            const best = r.candidates.reduce((a, b) => ((Number(b.winNum) || 0) > (Number(a.winNum) || 0) ? b : a));
+            autoPicked.set(String(best.groupId), Number(best.winNum) || 0);
+            next.push({ groupId: best.groupId, qty: r.qty });
+            return;
+          }
+          // rows that resolved (ec2_error etc.) carry the product name —
+          // show it, so "已经结单" errors say WHICH product without a lookup
+          skipped.push({ raw, name: r.name, reason: liveSkipReason(r) });
+        });
+        items = next;
+      }
+      renderLiveResult(added, skipped, { autoPicked, already, warning });
+      // Leave only the skipped lines in the box for correction (already-in-
+      // cart lines are not resubmittable, they stay out); full success clears it.
+      liveCodesInput.value = skipped.map((s) => s.raw).join(', ');
+      finish(added.length ? `✓ ${added.length} added` : 'Add by Code');
+    });
+
+    liveCodesInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); liveAddBtn.click(); }
+    });
 
     // True while an Add Selected batch is in flight — the button must stay
     // disabled (and keep its "Adding…"/result label) no matter what the
@@ -2589,7 +2934,12 @@
       goodsSearchReqId++; // cancel any in-flight search of the old mode
       normalModeBtn.classList.toggle('cim-goods-mode-btn--active', mode === 'normal');
       smartModeBtn.classList.toggle('cim-goods-mode-btn--active', mode === 'smart');
-      pagerEl.style.display = mode === 'smart' ? 'none' : '';
+      liveModeBtn.classList.toggle('cim-goods-mode-btn--active', mode === 'live');
+      const isLive = mode === 'live';
+      liveSection.style.display = isLive ? '' : 'none';
+      stickyHead.style.display = isLive ? 'none' : '';
+      listEl.style.display = isLive ? 'none' : '';
+      pagerEl.style.display = mode === 'normal' ? '' : 'none';
       searchInput.placeholder = mode === 'smart' ? '红枣 去核 500g，枸杞 250g，菊花 朵' : 'Search products…';
       searchInput.value = '';
       listEl.innerHTML = '';
@@ -2598,12 +2948,18 @@
       goodsSelectedIds.clear();
       visibleGoodsIds = [];
       syncToolbar();
-      searchInput.focus();
-      if (mode === 'normal') doSearch('', 1); // restore initial list
+      if (isLive) {
+        (liveSelected ? liveCodesInput : liveSelectBtn).focus();
+      } else {
+        closeLiveDropdown();
+        searchInput.focus();
+        if (mode === 'normal') doSearch('', 1); // restore initial list
+      }
     }
 
     normalModeBtn.addEventListener('click', () => { if (goodsSearchMode !== 'normal') setMode('normal'); });
     smartModeBtn.addEventListener('click', () => { if (goodsSearchMode !== 'smart') setMode('smart'); });
+    liveModeBtn.addEventListener('click', () => { if (goodsSearchMode !== 'live') setMode('live'); });
 
     // Shared card builder
     function buildGoodsCard(goods) {
@@ -3333,6 +3689,14 @@
     });
     body.appendChild(shippingSection);
 
+    // Order note (备注) → EC2 create-order info[note]. Optional; editable
+    // later via the order detail's recipient Edit dialog like before.
+    const noteInput = document.createElement('textarea');
+    noteInput.className = 'cim-checkout-textarea';
+    noteInput.rows = 2;
+    noteInput.placeholder = 'Order note 备注 (optional)';
+    body.appendChild(makeField('Note', noteInput, false));
+
     const btnRow = document.createElement('div');
     btnRow.className = 'cim-checkout-actions';
     const createBtn = document.createElement('button');
@@ -3368,7 +3732,7 @@
       const orderItems = selectedItems.map((it) => ({ recId: it.recId, qty: it.qty, price: it.price }));
       const seq = cartViewSeq;
       chrome.runtime.sendMessage(
-        { type: 'CREATE_ORDER', fbUserId: psid, userId: cartUserId, items: orderItems, customer: c, shippingIdType: selectedShippingId, confirm: false, pay: false },
+        { type: 'CREATE_ORDER', fbUserId: psid, userId: cartUserId, items: orderItems, customer: c, shippingIdType: selectedShippingId, confirm: false, pay: false, note: noteInput.value.trim() },
         (res) => {
           const liveModal = document.getElementById(CART_MODAL_ID);
           if (!liveModal) return;

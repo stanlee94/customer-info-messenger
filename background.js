@@ -282,6 +282,34 @@ function smartSearchGoods(words) {
     .catch((err) => ({ ok: false, error: err.message }));
 }
 
+function listLives(page, name) {
+  const params = new URLSearchParams({ page: String(page || 1) });
+  if (name) params.set('name', name);
+  return fetch(`${CART_API_BASE}/api/lives?${params}`)
+    .then((res) => res.json())
+    .then((json) => json.ok
+      ? { ok: true, page: json.page || 1, lastPage: json.lastPage || 1, lives: json.lives || [] }
+      : { ok: false, error: json.msg || 'Failed to load lives.' })
+    .catch((err) => ({ ok: false, error: err.message }));
+}
+
+// Per-item ledger contract (live-code-per-item-explained.md): once the ledger
+// exists the route always answers 200 ok:true — item failures live inside
+// results[].status, never in the HTTP status. ok:false only means input
+// validation or a failed session heal, i.e. nothing was attempted.
+function addCartItemsByCode(liveId, fbUserId, items) {
+  return fetch(`${CART_API_BASE}/api/cart/items-by-code`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ liveId, fbUserId, items }),
+  })
+    .then((res) => res.json())
+    .then((json) => json.ok
+      ? { ok: true, summary: json.summary || null, results: json.results || [], warning: json.warning || null, cart: json.cart || null }
+      : { ok: false, error: json.msg || 'Add by code failed.' })
+    .catch((err) => ({ ok: false, error: err.message }));
+}
+
 function copyCart(fbUserId, sourceFbUserId, dryRun, includeExpired, mergeDuplicates) {
   const body = { fbUserId, sourceFbUserId };
   if (dryRun) body.dryRun = true;
@@ -366,11 +394,13 @@ function getCheckoutForm(fbUserId, userId, recIds, goodsNumbers) {
     .catch((err) => ({ ok: false, error: err.message }));
 }
 
-function createOrder(fbUserId, userId, items, customer, shippingIdType, confirm, pay) {
+function createOrder(fbUserId, userId, items, customer, shippingIdType, confirm, pay, note) {
+  const body = { fbUserId, userId, items, customer, shippingIdType, confirm, pay };
+  if (note) body.note = note; // → EC2 create-order info[note] (order 备注)
   return fetch(`${CART_API_BASE}/api/orders`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ fbUserId, userId, items, customer, shippingIdType, confirm, pay }),
+    body: JSON.stringify(body),
   })
     .then((res) => res.json())
     .then((json) =>
@@ -812,6 +842,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message?.type === 'LIST_LIVES') {
+    listLives(message.page || 1, message.name || '').then(sendResponse);
+    return true;
+  }
+
+  if (message?.type === 'CART_ADD_BY_CODE') {
+    addCartItemsByCode(message.liveId, message.fbUserId, message.items || []).then(sendResponse);
+    return true;
+  }
+
   if (message?.type === 'CART_COPY_ITEMS') {
     copyCart(message.fbUserId, message.sourceFbUserId, message.dryRun || false, message.includeExpired || false, message.mergeDuplicates || false).then(sendResponse);
     return true;
@@ -855,7 +895,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === 'CREATE_ORDER') {
-    createOrder(message.fbUserId, message.userId, message.items || [], message.customer, message.shippingIdType, !!message.confirm, !!message.pay).then(sendResponse);
+    createOrder(message.fbUserId, message.userId, message.items || [], message.customer, message.shippingIdType, !!message.confirm, !!message.pay, message.note || '').then(sendResponse);
     return true;
   }
 
