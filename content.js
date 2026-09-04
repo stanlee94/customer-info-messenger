@@ -1103,6 +1103,13 @@
   let cartViewSeq = 0;
   let cartSelectedRecIds = new Set();
   let cartTotalItemCount = 0;
+  // Dragged position of the cart modal, page-session only: it deliberately
+  // outlives close/reopen and customer switches (an operator who moved the
+  // modal aside wants it to stay there) but is NOT persisted, so a reload
+  // brings the modal back to centre.
+  let cartModalPosition = null; // {x, y} px, or null = centred by the overlay
+  let cartModalDragEndAt = 0; // timestamp of the last drag release — see the overlay click guard
+  let cartSearchQuery = ''; // cart modal footer search — highlights, never filters
   let cartGroups = new Map(); // groupId → { color, label, recIds: Set<recId> }
   let cartGroupsNextId = 1;
   let cartGroupsPsid = null;
@@ -1125,11 +1132,25 @@
 
     const overlay = document.createElement('div');
     overlay.id = CART_MODAL_OVERLAY_ID;
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) closeCartModal(); });
+    // A drag that ends over the backdrop fires a click whose target is the
+    // overlay (the mousedown was on the handle, so the modal is not the common
+    // ancestor) — without the flag, moving the modal would close it.
+    overlay.addEventListener('click', (e) => {
+      // Time-based rather than a sticky flag: a drag released over the modal
+      // itself fires no overlay click, and a flag left standing would swallow
+      // the operator's next genuine backdrop click.
+      if (Date.now() - cartModalDragEndAt < 250) return;
+      if (e.target === overlay) closeCartModal();
+    });
 
     const modal = document.createElement('div');
     modal.id = CART_MODAL_ID;
     modal.setAttribute('role', 'dialog');
+
+    const dragHandle = document.createElement('div');
+    dragHandle.className = 'cim-cart-drag-handle';
+    dragHandle.textContent = '···';
+    dragHandle.title = 'Drag to move';
 
     const header = document.createElement('div');
     header.className = 'cim-drawer-header';
@@ -1216,13 +1237,34 @@
 
     const footer = document.createElement('div');
     footer.className = 'cim-drawer-footer';
+    // Full-width search, left of the two link buttons. Highlights only — see
+    // applyCartSearchHighlight for why it never filters rows away.
+    const searchInput = document.createElement('input');
+    searchInput.type = 'text';
+    searchInput.className = 'cim-cart-search-input';
+    searchInput.placeholder = 'Search name or code…';
+    searchInput.addEventListener('input', () => {
+      cartSearchQuery = searchInput.value;
+      applyCartSearchHighlight(modal);
+    });
+    searchInput.addEventListener('keydown', (e) => {
+      // Escape clears the search, matching how the qty inputs cancel an edit.
+      // The modal's own Escape handler already bails when e.target is an input,
+      // so this never closes the modal — clearing is the whole behaviour.
+      if (e.key === 'Escape') {
+        searchInput.value = '';
+        cartSearchQuery = '';
+        applyCartSearchHighlight(modal);
+      }
+    });
     const ec2Btn = buildEc2LinkButton();
+    const ddBtn = buildDdCartLinkButton();
     const footerClose = document.createElement('button');
     footerClose.type = 'button';
     footerClose.className = 'cim-drawer-footer-close';
     footerClose.textContent = 'Close';
     footerClose.addEventListener('click', closeCartModal);
-    footer.append(ec2Btn, footerClose);
+    footer.append(searchInput, ec2Btn, ddBtn, footerClose);
 
     const totalBar = document.createElement('div');
     totalBar.className = 'cim-cart-total-bar';
@@ -1327,7 +1369,8 @@
 
     totalBar.append(totalBarLeft, listBtnsGroup);
 
-    modal.append(header, drawerBody, totalBar, footer);
+    modal.append(dragHandle, header, drawerBody, totalBar, footer);
+    initCartModalDrag(modal, dragHandle);
     // Only after full assembly — applyCartUiMode queries INTO the modal, and
     // running it before header attachment left the toggle unlabeled.
     applyCartUiMode(modal);
@@ -1366,10 +1409,85 @@
     return modal;
   }
 
+  /**
+   * Re-apply the remembered position. The overlay centres the modal with flex,
+   * so a moved modal switches to position:fixed and drives left/top itself.
+   * Clamped on every apply: the window may have been resized (or the sidebar
+   * collapsed) since the drag, which could otherwise strand it off-screen.
+   */
+  function applyCartModalPosition(modal) {
+    if (!modal) return;
+    if (!cartModalPosition) {
+      modal.classList.remove('cim-cart-modal--moved');
+      modal.style.left = modal.style.top = '';
+      return;
+    }
+    modal.classList.add('cim-cart-modal--moved');
+    const maxX = Math.max(0, window.innerWidth - modal.offsetWidth);
+    const maxY = Math.max(0, window.innerHeight - modal.offsetHeight);
+    cartModalPosition = {
+      x: Math.max(0, Math.min(cartModalPosition.x, maxX)),
+      y: Math.max(0, Math.min(cartModalPosition.y, maxY)),
+    };
+    modal.style.left = cartModalPosition.x + 'px';
+    modal.style.top = cartModalPosition.y + 'px';
+  }
+
+  function initCartModalDrag(modal, handle) {
+    handle.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault(); // no text selection while dragging
+
+      // First drag: freeze wherever flex-centring put it, then take over.
+      const rect = modal.getBoundingClientRect();
+      if (!cartModalPosition) {
+        cartModalPosition = { x: rect.left, y: rect.top };
+        modal.classList.add('cim-cart-modal--moved');
+        modal.style.left = rect.left + 'px';
+        modal.style.top = rect.top + 'px';
+      }
+      const offsetX = e.clientX - rect.left;
+      const offsetY = e.clientY - rect.top;
+      let moved = false;
+
+      function onMove(ev) {
+        moved = true;
+        const x = Math.max(0, Math.min(ev.clientX - offsetX, window.innerWidth - modal.offsetWidth));
+        const y = Math.max(0, Math.min(ev.clientY - offsetY, window.innerHeight - modal.offsetHeight));
+        modal.style.left = x + 'px';
+        modal.style.top = y + 'px';
+      }
+
+      function onUp() {
+        // Only a real drag suppresses the overlay click; a bare click on the
+        // handle must not swallow the next backdrop click.
+        if (moved) cartModalDragEndAt = Date.now();
+        cartModalPosition = { x: parseFloat(modal.style.left), y: parseFloat(modal.style.top) };
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      }
+
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+
+    handle.addEventListener('dblclick', () => {
+      // Escape hatch: put it back in the middle without reloading the page.
+      cartModalPosition = null;
+      applyCartModalPosition(modal);
+    });
+  }
+
   function openCartModal(psid) {
+    const switchedCustomer = cartModalPsid !== psid;
     cartModalPsid = psid;
     cartSelectedRecIds = new Set();
+    cartSearchQuery = '';
     goodsQtys = {};
+    // Nothing about the previous customer may survive into this modal — only
+    // cartModalPosition (x/y) is deliberately kept across customers.
+    cartUserId = null;
+    if (switchedCustomer) liveSelected = null;
     if (cartGroupsPsid !== psid) {
       cartGroups = new Map();
       cartGroupsNextId = 1;
@@ -1378,7 +1496,12 @@
     const cartModal = ensureCartModal();
     // A leftover undo toast belongs to the previous customer's delete.
     cartModal.querySelector('.cim-cart-undo-toast')?.remove();
+    const searchBox = cartModal.querySelector('.cim-cart-search-input');
+    if (searchBox) searchBox.value = '';
     document.getElementById(CART_MODAL_OVERLAY_ID).classList.add('cim-cart-modal-overlay--visible');
+    // After the overlay is visible — offsetWidth/Height are 0 while hidden,
+    // so the clamp inside would collapse the position to (0,0).
+    applyCartModalPosition(cartModal);
     showCartView(psid);
   }
 
@@ -1441,6 +1564,46 @@
     return `${EC2_PORTAL_BASE}?a=EntMall&m=orderDetail&order_id=${encodeURIComponent(orderId)}`;
   }
 
+  /**
+   * Footer search: mark the rows whose name or live comment contains the query.
+   * Deliberately additive — matches are highlighted and everything else stays
+   * on screen, so a search can never be mistaken for "this is the whole cart".
+   */
+  function applyCartSearchHighlight(modal) {
+    const scope = modal || document.getElementById(CART_MODAL_ID);
+    if (!scope) return;
+    const q = cartSearchQuery.trim().toLowerCase();
+    scope.querySelectorAll('.cim-cart-item-row').forEach((row) => {
+      const hit = !!q && (row.dataset.search || '').includes(q);
+      row.classList.toggle('cim-cart-item-row--match', hit);
+    });
+  }
+
+  // The customer-facing storefront cart (cust-tracking's CartV2), keyed by the
+  // same PSID as the EC2 page — read-only, what the customer themselves sees.
+  function ddCartUrl(psid) {
+    return `https://ddherbs.com.my/cart/${encodeURIComponent(psid)}`;
+  }
+
+  function buildDdCartLinkButton() {
+    const btn = document.createElement('a');
+    btn.className = 'cim-dd-link-btn';
+    btn.target = '_blank';
+    btn.rel = 'noopener';
+    btn.hidden = true;
+    btn.textContent = 'DD Cart ↗';
+    btn.title = 'Open the customer-facing DD Herbs cart (new tab)';
+    return btn;
+  }
+
+  function setDdCartLink(modal, url) {
+    const btn = modal?.querySelector('.cim-dd-link-btn');
+    if (!btn) return;
+    if (!url) { btn.hidden = true; return; }
+    btn.hidden = false;
+    btn.href = url;
+  }
+
   function buildEc2LinkButton() {
     const btn = document.createElement('a');
     btn.className = 'cim-ec2-link-btn';
@@ -1480,10 +1643,33 @@
     // Cart and the checkout FORM link to the EC2 cart page (no order exists
     // yet); renderCheckoutSuccess upgrades the link to the created order's
     // detail page once ✓ Order Created shows.
-    setEc2Link(modal, 'EC2 Cart',
-      (isCart || isCheckout) && cartModalPsid ? ec2CartUrl(cartModalPsid) : null);
-    const totalBar = modal.querySelector('.cim-cart-total-bar');
-    if (totalBar) totalBar.style.display = isCart ? '' : 'none';
+    // Search only makes sense over the cart list itself.
+    const searchBox = modal.querySelector('.cim-cart-search-input');
+    if (searchBox) searchBox.hidden = !isCart;
+    const cartLinkPsid = (isCart || isCheckout) && cartModalPsid ? cartModalPsid : null;
+    setEc2Link(modal, 'EC2 Cart', cartLinkPsid ? ec2CartUrl(cartLinkPsid) : null);
+    setDdCartLink(modal, cartLinkPsid ? ddCartUrl(cartLinkPsid) : null);
+    // Hide only — renderCartContent decides whether a cart view actually has a
+    // total to show, so leaving cart mode never reveals a stale bar.
+    if (!isCart) {
+      const totalBar = modal.querySelector('.cim-cart-total-bar');
+      if (totalBar) totalBar.style.display = 'none';
+    }
+  }
+
+  /**
+   * Blank the sticky total bar and hide it. Every cart load starts here so a
+   * new customer can never be shown the previous one's total — the bar lives
+   * outside .cim-drawer-body, so wiping the body does not touch it.
+   */
+  function resetCartTotalBar(modal) {
+    if (!modal) return;
+    cartTotalItemCount = 0;
+    const value = modal.querySelector('.cim-cart-total-bar .cim-cart-total-value');
+    if (value) value.textContent = 'RM 0.00';
+    modal.querySelectorAll('.cim-cart-list-btn').forEach((btn) => btn.classList.remove('cim-cart-list-btn--partial'));
+    const bar = modal.querySelector('.cim-cart-total-bar');
+    if (bar) bar.style.display = 'none';
   }
 
   function setCartBodyBusy(busy) {
@@ -1585,6 +1771,7 @@
     const body = modal.querySelector('.cim-drawer-body');
     cartSelectedRecIds = new Set();
     setCartHeaderMode('cart');
+    resetCartTotalBar(modal); // the bar outlives body.innerHTML — clear it explicitly
     const seq = ++cartViewSeq;
     body.innerHTML = '<div class="cim-drawer-loading">Loading cart…</div>';
     chrome.runtime.sendMessage({ type: 'GET_CART_ITEMS', psid }, (res) => {
@@ -1821,6 +2008,27 @@
     setTimeout(() => document.addEventListener('click', () => pop.remove(), { once: true }), 0);
   }
 
+  /**
+   * Shrink EC2's 留言内容 cell down to the live code for the badge.
+   * The cell is free text: usually just the code ("J10+2"), but customers and
+   * operators write sentences around it ("小助理请你帮我取消J2+3我打错了谢谢").
+   * Ellipses mark the trimmed-away words, so a bare code and a code buried in a
+   * note never look alike; the row's title attribute keeps the full text.
+   */
+  function formatCartComment(raw) {
+    const text = (raw || '').trim();
+    if (!text) return '';
+    // Codes are one live's line label: 1–3 letters, digits, optional +qty.
+    const m = text.match(/[A-Za-z]{1,3}\d{1,3}(?:\+\d{1,4})?/);
+    if (m) {
+      const before = text.slice(0, m.index).trim();
+      const after = text.slice(m.index + m[0].length).trim();
+      return `${before ? '…' : ''}${m[0]}${after ? '…' : ''}`;
+    }
+    // No code in there at all — a pure note. Hard-cut it; hover has the rest.
+    return text.length > 10 ? `${text.slice(0, 10)}…` : text;
+  }
+
   function renderCartContent(body, modal, data, psid) {
     setCartBodyBusy(false);
     body.innerHTML = '';
@@ -1841,6 +2049,8 @@
 
     if (items.length === 0) {
       if (subtitleEl) subtitleEl.textContent = 'Empty cart';
+      // No items, no total — and nothing for the copy-list buttons to copy.
+      resetCartTotalBar(modal);
       const empty = document.createElement('div');
       empty.className = 'cim-drawer-empty';
       empty.textContent = '🛒 Cart is empty';
@@ -2055,6 +2265,9 @@
     items.forEach((item, idx) => {
       const row = document.createElement('div');
       row.className = 'cim-cart-item-row' + (item.expired ? ' cim-cart-item-row--expired' : '');
+      // Searched against by the footer box — the raw comment, not the shortened
+      // badge label, so a code hidden inside a note is still findable.
+      row.dataset.search = `${item.name || ''} ${item.comment || ''}`.toLowerCase();
 
       const chkLabel = document.createElement('label');
       chkLabel.className = 'cim-cart-item-chk-wrap';
@@ -2095,10 +2308,18 @@
       name.textContent = item.name || '(Unknown product)';
       const badges = document.createElement('div');
       badges.className = 'cim-cart-item-badges';
-      if (item.origin) {
+      // EC2's 留言内容 cell — normally the live code the customer commented
+      // ("C3+1"), sometimes with an operator note appended. Only live-added rows
+      // carry it, so its presence means live even if `origin` says otherwise;
+      // it replaces the generic LIVE label because the code is the useful part.
+      const rawComment = (item.comment || '').trim();
+      const originCode = formatCartComment(rawComment);
+      if (item.origin || originCode) {
+        const isLive = !!originCode || item.origin === 'live';
         const ob = document.createElement('span');
-        ob.className = `cim-cart-origin-badge cim-cart-origin-badge--${item.origin}`;
-        ob.textContent = item.origin === 'live' ? 'LIVE' : 'SYS';
+        ob.className = `cim-cart-origin-badge cim-cart-origin-badge--${isLive ? 'live' : 'system'}`;
+        ob.textContent = originCode || (isLive ? 'LIVE' : 'SYS');
+        if (originCode) ob.title = `Live comment: ${rawComment}`;
         badges.appendChild(ob);
       }
       if (item.expired) {
@@ -2325,6 +2546,8 @@
     // Update the sticky total bar (outside the scroll body)
     const totalBarValue = modal.querySelector('.cim-cart-total-bar .cim-cart-total-value');
     if (totalBarValue) totalBarValue.textContent = `RM ${total.toFixed(2)}`;
+    const totalBarEl = modal.querySelector('.cim-cart-total-bar');
+    if (totalBarEl) totalBarEl.style.display = ''; // value is current — safe to show
 
     // Restore any surviving selection — Ungroup re-renders without resetting
     // cartSelectedRecIds, but rows are created unchecked. Prune ids that no
@@ -2340,6 +2563,8 @@
       });
     }
     syncBulkButtons();
+    // Rows were just rebuilt — a query typed before the refresh must light up again.
+    applyCartSearchHighlight(modal);
 
     // In-place patch for refreshCartView: when fresh data has the same row
     // structure (same recIds in order, same expired/split-button/badge state),
@@ -2361,6 +2586,7 @@
         if ((a.name || '') !== (b.name || '')) return false;
         if ((parseFloat(a.price) || 0) !== (parseFloat(b.price) || 0)) return false;
         if ((a.img || '') !== (b.img || '') || (a.origin || '') !== (b.origin || '')) return false;
+        if ((a.comment || '').trim() !== (b.comment || '').trim()) return false;
       }
       newItems.forEach((fresh, i) => {
         const item = items[i];
@@ -3787,6 +4013,8 @@
     // this order's real EC2 detail page. (Without an orderId the EC2 Cart
     // link from setCartHeaderMode stays.)
     if (result.orderId) setEc2Link(modal, 'EC2 Details', ec2OrderDetailUrl(result.orderId));
+    // The cart just became an order — a storefront cart link would show empty.
+    setDdCartLink(modal, null);
 
     const successHeader = document.createElement('div');
     successHeader.className = 'cim-checkout-success-header';

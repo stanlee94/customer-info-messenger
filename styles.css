@@ -1410,6 +1410,38 @@
   display: flex;
 }
 
+/* Drag grip at the very top of the cart modal. */
+.cim-cart-drag-handle {
+  flex-shrink: 0;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #b0b3b8;
+  font-size: 15px;
+  line-height: 1;
+  letter-spacing: 2px;
+  cursor: grab;
+  user-select: none;
+  transition: background 0.15s, color 0.15s;
+}
+
+.cim-cart-drag-handle:hover {
+  background: #f0f2f5;
+  color: #65676b;
+}
+
+.cim-cart-drag-handle:active {
+  cursor: grabbing;
+}
+
+/* Once dragged the modal drives its own position — position:fixed takes it out
+   of the overlay's flex centring while still anchoring the undo toast. */
+#cim-cart-modal.cim-cart-modal--moved {
+  position: fixed;
+  margin: 0;
+}
+
 #cim-cart-modal {
   position: relative; /* anchors the undo toast */
   background: #ffffff;
@@ -1530,6 +1562,62 @@
 
 /* display:flex above would defeat the hidden attribute — restore it */
 .cim-ec2-link-btn[hidden] {
+  display: none;
+}
+
+/* Footer search — flex:1 so it eats the free width left of the link buttons. */
+.cim-cart-search-input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 12px;
+  border: 1px solid #d8dadf;
+  border-radius: 8px;
+  background: #fff;
+  color: #050505;
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.cim-cart-search-input::placeholder {
+  color: #8a8d91;
+}
+
+.cim-cart-search-input:focus {
+  border-color: #0a7cff;
+  box-shadow: 0 0 0 2px rgba(10, 124, 255, 0.15);
+}
+
+.cim-cart-search-input[hidden] {
+  display: none;
+}
+
+/* Sits beside EC2 Cart — green so the customer-facing storefront link is never
+   mistaken for the internal EC2 one. */
+.cim-dd-link-btn {
+  padding: 8px 14px;
+  border: 1px solid #bbf0cd;
+  border-radius: 8px;
+  background: #eafaf0;
+  color: #1a8a4a;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+  text-decoration: none;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.cim-dd-link-btn:hover {
+  background: #d8f5e5;
+  border-color: #93e3b3;
+  text-decoration: none;
+}
+
+.cim-dd-link-btn[hidden] {
   display: none;
 }
 
@@ -1726,6 +1814,23 @@
   border-left-color: #dc2626;
 }
 
+/* Search hit — additive only. The row keeps its place in the list; nothing is
+   filtered away, so the highlight can't be read as "this is the whole cart".
+   Declared after the base/hover/expired rules so it survives the cascade, and
+   repeated for :hover so pointing at a match doesn't wash the amber out. */
+.cim-cart-item-row--match,
+.cim-cart-item-row--match:hover {
+  background: #fff8e1;
+  border-color: #f0b429;
+  box-shadow: 0 0 0 1px #f0b429;
+}
+
+/* An expired row that also matches keeps its red left edge — the amber
+   border-color above would otherwise swallow the expiry signal. */
+.cim-cart-item-row--expired.cim-cart-item-row--match {
+  border-left-color: #dc2626;
+}
+
 .cim-cart-item-chk-wrap {
   padding-top: 1px;
   cursor: pointer;
@@ -1790,6 +1895,12 @@
   padding: 1px 4px;
   border-radius: 4px;
   letter-spacing: 0.03em;
+  /* Holds the live code instead of "LIVE" when EC2 gives us one; operators
+     sometimes append a note, so cap the width rather than let it eat the name. */
+  white-space: nowrap;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .cim-cart-origin-badge--live {
