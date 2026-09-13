@@ -3793,6 +3793,18 @@
   margin-bottom: 12px;
 }
 
+/* First-order buyer: EC2 returned an empty recipient form (customer.isNewCustomer). */
+.cim-checkout-newcust {
+  font-size: 12px;
+  line-height: 1.45;
+  color: #7a4b00;
+  background: #fff4e0;
+  border: 1px solid #ffd89b;
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-bottom: 12px;
+}
+
 .cim-checkout-field {
   display: flex;
   flex-direction: column;

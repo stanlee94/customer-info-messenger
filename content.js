@@ -3795,6 +3795,21 @@
     summary.textContent = `${selectedItems.length} item${selectedItems.length === 1 ? '' : 's'} · RM${itemTotal.toFixed(2)}`;
     body.appendChild(summary);
 
+    // First-time buyer: EC2 holds no recipient for this PSID, so every field below
+    // comes back blank (backend flags it rather than failing the parse). Say so,
+    // and make State/Area an explicit choice: EC2's blank form ships PLACEHOLDER
+    // region rows with real-looking ids — state 1318 named "state" (flagged
+    // selected), one area 1319 named "district", postcode "00000" — which are
+    // non-empty enough to pass the required-field checks and create the order
+    // against a nonsense region.
+    const isNewCustomer = !!customer.isNewCustomer;
+    if (isNewCustomer) {
+      const notice = document.createElement('div');
+      notice.className = 'cim-checkout-newcust';
+      notice.textContent = '🆕 First order — no saved address in EC2. Fill in the recipient details below.';
+      body.appendChild(notice);
+    }
+
     function makeField(labelText, input, required) {
       const row = document.createElement('div');
       row.className = 'cim-checkout-field';
@@ -3829,32 +3844,47 @@
     emailInput.value = customer.email || '';
     body.appendChild(makeField('Email', emailInput, false));
 
+    function placeholderOption(text) {
+      const o = document.createElement('option');
+      o.value = '';                     // '' so the required-field check catches it
+      o.textContent = text;
+      o.selected = true;
+      return o;
+    }
+
     const stateSelect = document.createElement('select');
     stateSelect.className = 'cim-checkout-select';
+    if (isNewCustomer) stateSelect.appendChild(placeholderOption('— Select state —'));
     (customer.stateOptions || []).forEach((opt) => {
       const o = document.createElement('option');
       o.value = opt.id;
       o.textContent = opt.name;
-      if (String(opt.id) === String(customer.regionCity)) o.selected = true;
+      if (!isNewCustomer && String(opt.id) === String(customer.regionCity)) o.selected = true;
       stateSelect.appendChild(o);
     });
     body.appendChild(makeField('State', stateSelect, true));
 
     const areaSelect = document.createElement('select');
     areaSelect.className = 'cim-checkout-select';
-    (customer.areaOptions || []).forEach((opt) => {
-      const o = document.createElement('option');
-      o.value = opt.id;
-      o.textContent = opt.name;
-      if (String(opt.id) === String(customer.regionArea)) o.selected = true;
-      areaSelect.appendChild(o);
-    });
+    if (isNewCustomer) {
+      // areaOptions belong to EC2's default state, not a chosen one — picking a
+      // State reloads this list through the change handler below.
+      areaSelect.appendChild(placeholderOption('— Select state first —'));
+    } else {
+      (customer.areaOptions || []).forEach((opt) => {
+        const o = document.createElement('option');
+        o.value = opt.id;
+        o.textContent = opt.name;
+        if (String(opt.id) === String(customer.regionArea)) o.selected = true;
+        areaSelect.appendChild(o);
+      });
+    }
     body.appendChild(makeField('Area', areaSelect, true));
 
     const postcodeInput = document.createElement('input');
     postcodeInput.type = 'text';
     postcodeInput.className = 'cim-checkout-input';
-    postcodeInput.value = customer.regionCode || '';
+    postcodeInput.value = isNewCustomer ? '' : (customer.regionCode || '');
     body.appendChild(makeField('Postcode', postcodeInput, true));
 
     stateSelect.addEventListener('change', () => {
