@@ -1168,6 +1168,45 @@ function parseFbViewers(html) {
 }
 
 /**
+ * The live's Facebook description (the post text), as plain text with line
+ * breaks. The plugin is embedded with show_text=1, so its server HTML carries
+ * <div data-testid="post_message" class="_5pbx userContent"><p>我要飞啦<br /> 中秋节最后一场</p></div>
+ * (verified on 557246, 556923 and 8 earlier lives). Long posts may add
+ * Facebook's "See more" parts (text_exposed_hide / text_exposed_link), which
+ * are dropped; text_exposed_show holds the rest and is kept. '' when there is
+ * no post text, null when the block is not found. No DOMParser in a worker.
+ */
+function parseFbDescription(html) {
+  const open = html.match(/<div[^>]*data-testid="post_message"[^>]*>/);
+  if (!open) return null;
+  // Walk to the matching </div>: the "See more" rest is itself a <div>.
+  const start = open.index + open[0].length;
+  const tagRe = /<\/?div\b[^>]*>/g;
+  tagRe.lastIndex = start;
+  let depth = 1;
+  let end = -1;
+  for (let m; (m = tagRe.exec(html));) {
+    depth += m[0][1] === '/' ? -1 : 1;
+    if (!depth) { end = m.index; break; }
+  }
+  if (end < 0) return null;
+  const entities = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
+  return html.slice(start, end)
+    .replace(/<span[^>]*class="[^"]*text_exposed_(?:hide|link)[^"]*"[^>]*>[\s\S]*?<\/span>(?:\s*<\/span>)?/g, '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&(#x[\da-f]+|#\d+|\w+);/gi, (all, e) => {
+      if (e[0] !== '#') return entities[e.toLowerCase()] ?? all;
+      const n = e[1].toLowerCase() === 'x' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
+      return Number.isFinite(n) ? String.fromCodePoint(n) : all;
+    })
+    .split('\n').map((l) => l.trim()).join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+/**
  * How long the broadcast has been public, in ms, from the live DASH manifest
  * the plugin HTML links (hd_src/sd_src …/live-dash/….mpd on *.fbcdn.net):
  * currentServerTimeMs (the manifest's own clock, so no local clock skew) minus
@@ -1215,6 +1254,7 @@ async function getFbVideoStats(url, wantElapsed) {
       likes: parseFbCount(html, 'Like'),
       comments: parseFbCount(html, 'Comment'),
       shares: parseFbCount(html, 'Share'),
+      description: parseFbDescription(html),
     };
   } catch (err) {
     return { ok: false, error: String(err && err.message || err) };

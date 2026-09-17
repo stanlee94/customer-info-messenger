@@ -367,7 +367,7 @@ async function ec2Cookie() {
   const SHOT = process.env.SHOT_DIR || OUT;
   const clip = await page.evaluate(() => {
     const a = document.querySelector('.ddr-col-left .l-group-btn').getBoundingClientRect();
-    const b = document.querySelector('.ddr-goods .widget-box > div:first-child').getBoundingClientRect();
+    const b = document.querySelector('.ddr-goods .ddr-refresh-row').getBoundingClientRect();
     return { x: a.left, y: a.top, width: Math.max(a.width, b.right - a.left), height: Math.min(b.bottom, innerHeight) - a.top };
   });
   await page.screenshot({ path: path.join(SHOT, 'card-closed.png'), clip });
@@ -375,7 +375,7 @@ async function ec2Cookie() {
   await page.waitForTimeout(200);
   const clip2 = await page.evaluate(() => {
     const a = document.querySelector('.ddr-col-left .l-group-btn').getBoundingClientRect();
-    const b = document.querySelector('.ddr-goods .widget-box > div:first-child').getBoundingClientRect();
+    const b = document.querySelector('.ddr-goods .ddr-refresh-row').getBoundingClientRect();
     return { x: a.left, y: a.top, width: Math.max(a.width, b.right - a.left), height: Math.min(Math.max(b.bottom, a.bottom), innerHeight) - a.top };
   });
   await page.screenshot({ path: path.join(SHOT, 'card-open.png'), clip: clip2 });

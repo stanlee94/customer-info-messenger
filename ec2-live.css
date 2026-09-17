@@ -1125,7 +1125,7 @@ html:not(.ddr-vid-menu-open) #edit_marquee_div { display: none !important; }
 .ddr-flip .ddr-col-right { float: left !important; }
 .ddr-flip .ddr-col-left .l-iframe,
 .ddr-flip .ddr-col-left .l-group-btn,
-.ddr-flip .ddr-goods .widget-box > div:first-child { grid-column: 2; }
+.ddr-flip .ddr-goods .ddr-refresh-row { grid-column: 2; }
 .ddr-flip .ddr-goods #flowDivOne {
   grid-column: 1;
   border-left: 0 !important;
@@ -1155,7 +1155,7 @@ html:not(.ddr-vid-menu-open) #edit_marquee_div { display: none !important; }
    #refresh keeps EC2's 刷新 text node at font-size 0 (icon only, aria-label set
    in wireReloadButton). The converter (.ddr-fx) is our node appended to this
    header; living.js never rewrites it. */
-.ddr-goods .widget-box > div:first-child {
+.ddr-goods .ddr-refresh-row {
   grid-column: 1;
   grid-row: 3;
   min-height: 0;
@@ -1174,7 +1174,7 @@ html:not(.ddr-vid-menu-open) #edit_marquee_div { display: none !important; }
   container-type: inline-size;
 }
 
-.ddr-goods .widget-box > div:first-child > .btn-group {
+.ddr-goods .ddr-refresh-row > .btn-group {
   flex: none;
   display: flex !important;
   flex-direction: column;
@@ -1223,9 +1223,9 @@ html:not(.ddr-vid-menu-open) #edit_marquee_div { display: none !important; }
 .ddr-goods #refresh + .dropdown-toggle:focus-visible { outline: 2px solid #2563EB !important; outline-offset: 1px; }
 .ddr-goods #refresh.ddr-refresh-failed { border-color: #DC2626 !important; box-shadow: 0 0 0 2px #FECACA !important; }
 /* 自动刷新 menu opens to the right of the small ▾, over the converter. */
-.ddr-goods .widget-box > div:first-child .dropdown-menu,
-.ddr-goods .widget-box > div:first-child .dropdown-menu * { font-family: var(--ddr-font) !important; }
-.ddr-goods .widget-box > div:first-child .dropdown-menu {
+.ddr-goods .ddr-refresh-row .dropdown-menu,
+.ddr-goods .ddr-refresh-row .dropdown-menu * { font-family: var(--ddr-font) !important; }
+.ddr-goods .ddr-refresh-row .dropdown-menu {
   top: auto !important;
   bottom: 0 !important;
   left: calc(100% + 6px) !important;
@@ -1462,10 +1462,10 @@ html:not(.ddr-vid-menu-open) #edit_marquee_div { display: none !important; }
 
 /* Narrow column (1280 screens): smaller square and amounts, flag-only pill. */
 @container (max-width: 220px) {
-  .ddr-goods .widget-box > div:first-child > .btn-group,
+  .ddr-goods .ddr-refresh-row > .btn-group,
   .ddr-goods #refresh,
   .ddr-goods #refresh + .dropdown-toggle { width: 50px; }
-  .ddr-goods .widget-box > div:first-child { grid-template-columns: 50px minmax(0, 1fr); }
+  .ddr-goods .ddr-refresh-row { grid-template-columns: 50px minmax(0, 1fr); }
   .ddr-goods #refresh { min-height: 50px; border-radius: 12px !important; }
   .ddr-goods #refresh .fa { font-size: 22px !important; }
   .ddr-fx-in, .ddr-fx-out { font-size: 18px !important; height: 26px; line-height: 26px; }
@@ -1646,6 +1646,14 @@ html:not(.ddr-vid-menu-open) #edit_marquee_div { display: none !important; }
   .ddr-goods #allGroup thead th { font-size: 10.5px; padding: 7px 3px 6px !important; }
   .ddr-goods #allGroup thead th i[onclick] { padding: 3px 1px !important; }
   .ddr-goods #allGroup tbody td { padding: 4px 6px !important; }
+}
+
+/* The card gutter (modular cards) takes 8px more at 1280: the header's icons and
+   得标数 no longer fit at 10.5px, so one more step tighter. */
+@container (max-width: 96px) {
+  .ddr-goods #allGroup thead th { font-size: 9.5px; letter-spacing: -0.2px; padding: 7px 2px 6px !important; }
+  .ddr-goods #allGroup thead th i[onclick] { padding: 3px 0 !important; font-size: 12px !important; }
+  .ddr-goods #allGroup tbody td { padding: 4px 5px !important; }
 }
 
 /* EC2's custom scrollbar rail (mCustomScrollbar) reserved 16px of a ~115px
@@ -2760,3 +2768,151 @@ html:not(.ddr-vid-menu-open) #edit_marquee_div { display: none !important; }
 @media (prefers-reduced-motion: reduce) {
   .ddr-chat-overlay { animation: none; }
 }
+
+/* ===========================================================================
+   Modular cards (2026-09-18)
+
+   The three panels - Live (video, controls, converter, timer) · Bid summary
+   (EC2's goods list) · Comments - sit as separate rounded white cards on a
+   light grey page with an 8px gutter. CSS only, nothing moved:
+     Live         .ddr-col-left::before is a grid item spanning the live
+                  column's rows - the card behind the video/controls/timer,
+                  which paint above it (later in the DOM). Its outline is a
+                  box-shadow ring so the items on top never cover it.
+     Bid summary  #flowDivOne itself (one element).
+     Comments     .l-table itself.
+   Grid percentages resolve against the column's content box (width − 16px
+   padding), so the overlays positioned from the padding box (video ···, the
+   stats badge, 结束直播/跑马灯) move in by the gutter.
+   Contrast unchanged: every card is #FFF; the page grey #EEF1F5 carries no text.
+   =========================================================================== */
+
+:root { --ddr-page: #EEF1F5; --ddr-card-ring: 0 0 0 1px #E2E8F0, 0 1px 3px rgba(15, 23, 42, 0.06); --ddr-card-r: 14px; --ddr-gutter: 8px; }
+
+body:has(.ddr-col-left) { background: var(--ddr-page) !important; }
+.ddr-col-left,
+.ddr-col-right { background: var(--ddr-page) !important; }
+
+/* Page scrollbar (2026-09-18): the columns were 100vh − 14px, but EC2 adds
+   .live-wrap padding (width-based rem, 5.3px each side at 1440) and the
+   comments column's .grid-margin bottom margin (10.7px at 1440), so the page
+   was ~7px taller than the window at every size and always scrolled. The
+   gutter is ours now: both removed, columns exactly 100vh. */
+.live-wrap:has(> .row > .ddr-col-left) { padding: 0 !important; }
+.ddr-col-right.grid-margin { margin-bottom: 0 !important; }
+
+/* Live + Bid summary column. Tripled class: EC2 live.css .live-wrap .no-padding sets padding: 0 !important and loads after this file. */
+.ddr-col-left.ddr-col-left.ddr-col-left {
+  padding: var(--ddr-gutter) !important;
+  column-gap: var(--ddr-gutter);
+  height: 100vh;
+}
+.ddr-col-left::before {
+  content: "";
+  grid-column: 1;
+  grid-row: 1 / -1;
+  border-radius: var(--ddr-card-r);
+  background: var(--ddr-surface);
+  box-shadow: var(--ddr-card-ring);
+}
+.ddr-flip .ddr-col-left::before { grid-column: 2; }
+
+/* Rounded top (video) and bottom (converter + timer row) of the Live card. */
+.ddr-col-left .l-iframe {
+  border-radius: var(--ddr-card-r) var(--ddr-card-r) 0 0;
+  overflow: hidden;
+}
+.ddr-goods .ddr-refresh-row {
+  border-radius: 0 0 var(--ddr-card-r) var(--ddr-card-r);
+}
+
+/* Bid summary card */
+.ddr-goods #flowDivOne,
+.ddr-flip .ddr-goods #flowDivOne {
+  border: 0 !important;
+  border-radius: var(--ddr-card-r);
+  box-shadow: var(--ddr-card-ring);
+  overflow: hidden;
+}
+
+/* Comments card */
+.ddr-col-right.ddr-col-right.ddr-col-right {
+  padding: var(--ddr-gutter) var(--ddr-gutter) var(--ddr-gutter) 0 !important;
+  box-sizing: border-box;
+}
+.ddr-flip .ddr-col-right.ddr-col-right.ddr-col-right { padding: var(--ddr-gutter) 0 var(--ddr-gutter) var(--ddr-gutter) !important; }
+.ddr-col-right .l-table {
+  height: calc(100vh - 2 * var(--ddr-gutter)) !important;
+  /* EC2 adds a 10.7px left margin (at 1440), making the gap to the bid list 19px; the gutter is ours. */
+  margin: 0 !important;
+  border: 0 !important;
+  border-radius: var(--ddr-card-r);
+  box-shadow: var(--ddr-card-ring);
+  background: var(--ddr-surface);
+  overflow: hidden;
+}
+
+/* Overlays placed from the column's padding box: follow the video by the gutter. */
+.ddr-vstats { top: calc(var(--ddr-gutter) + 6px); left: calc(var(--ddr-gutter) + 6px); }
+.ddr-flip .ddr-vstats { left: calc(30% + var(--ddr-gutter) + 2px); }
+.ddr-vid-more { top: calc(var(--ddr-gutter) + 6px); right: calc(30% + 9px); }
+.ddr-flip .ddr-vid-more { right: calc(var(--ddr-gutter) + 6px); }
+/* Video's right edge from the padding box = 30% of the width + ~3px (percentages resolve
+   against the content box, 16px narrower), so 30% + 9px leaves the usual 6px. */
+#endLiveBtnDiv,
+#edit_marquee_div { right: calc(30% + 9px) !important; }
+#endLiveBtnDiv { top: calc(var(--ddr-gutter) + 44px) !important; }
+#edit_marquee_div { top: calc(var(--ddr-gutter) + 82px) !important; }
+.ddr-flip #endLiveBtnDiv,
+.ddr-flip #edit_marquee_div { right: calc(var(--ddr-gutter) + 6px) !important; }
+
+/* One scroll area under the video (2026-09-18). installLiveScroll() moves the
+   controls card (.l-group-btn, incl. the ··· tray) and the 刷新 + converter +
+   timer row (.ddr-refresh-row) into .ddr-live-scroll. Left column rows: video
+   (max-content - never squeezed, never scrolled) · the scroll area (the rest).
+   Inside it the card keeps its height and the refresh row grows to fill; when
+   their total is taller than the area (··· tray open, short window) the area
+   scrolls - the refresh row never shrinks below converter + timer's 50px. */
+.ddr-col-left.ddr-col-left.ddr-col-left {
+  grid-template-rows: max-content minmax(0, 1fr);
+}
+.ddr-live-scroll {
+  grid-column: 1;
+  grid-row: 2;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  border-radius: 0 0 var(--ddr-card-r) var(--ddr-card-r);
+}
+.ddr-flip .ddr-live-scroll { grid-column: 2; }
+.ddr-live-scroll > .l-group-btn { flex: none; }
+.ddr-live-scroll > .ddr-refresh-row { flex: 1 0 auto; }
+
+/* Live name hover (2026-09-18): the full live title and the Facebook
+   description, as labelled paragraphs with their line breaks. Text on #0F172A:
+   label #94A3B8 6.9:1, text #FFFFFF 17.9:1, muted #CBD5E1 12.0:1. */
+.ddr-tip-block + .ddr-tip-block {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #1E293B;
+}
+.ddr-tip-block-k {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  color: #94A3B8;
+}
+.ddr-tip-block-t {
+  margin-top: 2px;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.4;
+  color: #FFFFFF;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+.ddr-tip-block-t.ddr-tip-block-muted { font-weight: 500; font-style: italic; color: #CBD5E1; }

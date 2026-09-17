@@ -45,6 +45,8 @@
   const psidName = new Map();
   /** Our Facebook page id (the feed's fb_account_id) - needed for EC2's Messenger history. */
   let pageAccountId = '';
+  /** Our page's name as the feed prints it on our own posts - the page's sender name in Messenger history. */
+  let pageName = '';
   /** comment ids whose row is on screen but not yet badged */
   const pending = new Set();
   /** psids awaiting a Baserow lookup */
@@ -445,6 +447,7 @@
         // Our own broadcasts. Remember their row keys so badgeRow can retire
         // them instead of re-queueing every tick forever.
         if (row.fb_comment_id) ownRows.add(String(row.fb_comment_id));
+        if (row.fb_user_name && !pageName) pageName = String(row.fb_user_name).trim();
         for (const winKey of [row.win_id, row.hit_live_win_id]) {
           if (winKey && String(winKey) !== '0') ownRows.add(String(winKey));
         }
@@ -1519,7 +1522,7 @@
     whoBtn.addEventListener('click', () => (panelOverlay.hidden ? showPanel() : hidePanel()));
     group.appendChild(whoBtn);
 
-    const menu = document.querySelector('.ddr-goods .widget-box > div:first-child .dropdown-menu');
+    const menu = document.querySelector('.ddr-goods .ddr-refresh-row .dropdown-menu');
     const trayItem = (el) =>
       el.closest('.ddr-who-btn, .ddr-col-left .l-group-btn > .btn') ||
       (menu && menu.contains(el) && el.closest('a, li'));
@@ -1641,6 +1644,10 @@
     };
     const render = (resp, at) => {
       if (resp && resp.ok) last = { ...resp, at };
+      if (resp && resp.ok && (resp.description || '') !== liveDescription) {
+        liveDescription = resp.description || '';
+        setLiveNameTip();
+      }
       if (resp && resp.ok && resp.elapsedMs != null && !startAt) startAt = at - resp.elapsedMs;
       vstatsEl.classList.toggle('ddr-vstats-stale', !(resp && resp.ok));
       if (!last) return;
@@ -2051,6 +2058,24 @@
     if (salesEl) salesEl.classList.remove('ddr-sales-on');
   }
 
+  /**
+   * Hover on the live name (controls card): EC2's live title in full (the card
+   * clamps it) and the live's Facebook description - the post text, which
+   * background.js reads from the same plugin HTML as the video stats, so it
+   * costs no extra request and follows edits within 5 s. Display-only: closes
+   * the moment the pointer leaves (PASSIVE_TIP_SEL).
+   * liveDescription: undefined = no read yet, '' = none on Facebook.
+   */
+  let liveDescription;
+
+  function setLiveNameTip() {
+    const p = document.querySelector('.ddr-col-left .l-group-btn > p[data-ddr-live]');
+    if (!p) return;
+    const desc = liveDescription === undefined ? 'Loading from Facebook…' : liveDescription || 'No description on Facebook';
+    p.dataset.ddrTip = JSON.stringify({ blocks: [['Live title', p.dataset.ddrLive], ['Description', desc, !liveDescription]] });
+    if (tipTarget === p) refreshTip();
+  }
+
   function installSalesButton() {
     if (document.querySelector('.ddr-sales-btn')) return;
     const group = document.querySelector('.ddr-col-left .l-group-btn');
@@ -2061,6 +2086,7 @@
     // EC2's "活动名称:" prefix.
     const nameP = group.querySelector('p');
     if (nameP && liveName) nameP.dataset.ddrLive = liveName;
+    setLiveNameTip();
 
     salesEl = mk('div', 'ddr-sales');
     salesEl.id = 'ddr-sales';
@@ -2225,7 +2251,7 @@
   }
 
   function installConverter() {
-    const header = document.querySelector('.ddr-goods .widget-box > div:first-child');
+    const header = document.querySelector('.ddr-goods .ddr-refresh-row');
     if (!header || fxEl) return;
     fxEl = mk('div', 'ddr-fx');
     fxEl.setAttribute('role', 'group');
@@ -2312,7 +2338,7 @@
   let timerEl = null;
 
   function installTimer() {
-    const header = document.querySelector('.ddr-goods .widget-box > div:first-child');
+    const header = document.querySelector('.ddr-goods .ddr-refresh-row');
     if (!header || !fxEl || timerEl) return;
     const KEY = `ddrTimer:${LIVE_ID}`;
     let acc = 0;
@@ -2419,8 +2445,7 @@
   //   GET a=FBUser&m=dialog&fb_account_id=<page>&fb_user_id=<psid>&page=N
   // Server-rendered HTML (#sample_3), 10 messages per page, newest first,
   // #sample_1_paginate li.next while older pages exist (~180-350 ms a page).
-  // Row cells: ID · sender (avatar + name; the customer's avatar URL carries
-  // psid=) · content (text with its own newlines, img.pimg for images, blank
+  // Row cells: ID · 用户 sender (avatar + name) · content (text with its own newlines, img.pimg for images, blank
   // when EC2 could not show an attachment) · 状态 · 时间 (MYT).
   // Read-only: that page also has a send form (ajax_sendMessageContent), which
   // this never calls. Parsed with DOMParser (inert) and rendered as text nodes.
@@ -2455,7 +2480,14 @@
       const img = td[1].querySelector('img');
       const src = img ? img.getAttribute('src') || '' : '';
       const sender = ((td[1].querySelector('span') || {}).textContent || '').trim();
-      const fromCustomer = src ? /[?&]psid=/.test(src) : !!name && sender === name;
+      // Who sent it = the 用户 column's name, the only reliable signal: on 394
+      // rows of 55 customers it was always our page's name or exactly the
+      // caption's customer name. Not the avatar - a customer without a profile
+      // photo gets Facebook's default image with no psid= in the URL
+      // (8323459854391014: all her messages were drawn as ours).
+      const fromCustomer = sender && name ? sender === name
+        : sender && pageName ? sender !== pageName
+          : /[?&]psid=/.test(src);
       if (fromCustomer && src && !avatar) avatar = src;
       const images = [...td[2].querySelectorAll('img')].map((i) => i.getAttribute('src')).filter(Boolean);
       msgs.push({
@@ -3617,6 +3649,7 @@
   // title tooltip is ~12px grey-on-white after a one-second delay. Every hover
   // target carries a small JSON spec in data-ddr-tip instead:
   //   { h: heading, v: big value, s: subline, mono: monospace value,
+  //     blocks: [[label, paragraph, muted?]],
   //     rows: [[label, value, flag?]], items: [{code, name, qty, amount}], foot }
   // and one shared bubble renders it. Strings go in via textContent only.
   // Targets live in our own nodes (card, 得标 .ddr-won, panel) - never in the
@@ -3689,6 +3722,15 @@
     }
     else if (spec.sPre) tipEl.appendChild(mk('div', 'ddr-tip-s', spec.sPre));
     if (spec.mono) tipEl.appendChild(mk('div', 'ddr-tip-mono', spec.mono));
+    if (spec.blocks && spec.blocks.length) {
+      // Labelled paragraphs kept as written (line breaks shown): [label, text, muted?].
+      spec.blocks.forEach(([k, t, muted]) => {
+        const b = mk('div', 'ddr-tip-block');
+        b.appendChild(mk('div', 'ddr-tip-block-k', k));
+        b.appendChild(mk('div', `ddr-tip-block-t${muted ? ' ddr-tip-block-muted' : ''}`, t));
+        tipEl.appendChild(b);
+      });
+    }
     if (spec.rows && spec.rows.length) {
       const dl = mk('dl', 'ddr-tip-rows');
       spec.rows.forEach(([k, v, flag]) => {
@@ -3787,10 +3829,11 @@
    * Display-only tooltips that close the instant the pointer leaves (host's
    * request): goods list rows, a card's Lifetime spend, Average order value
    * and Customer since, the `N known · N new` count beside 留言用户, and the
-   * PSID button (clicking it still copies the PSID).
+   * PSID button (clicking it still copies the PSID), and the live name on the
+   * controls card (title + Facebook description).
    * Not enterable, no close grace, no fade.
    */
-  const PASSIVE_TIP_SEL = '#allGroup, .ddr-vstats, .ddr-ltv, .ddr-aov, .ddr-since, .ddr-live-count, .ddr-psid';
+  const PASSIVE_TIP_SEL = '#allGroup, .ddr-vstats, .ddr-ltv, .ddr-aov, .ddr-since, .ddr-live-count, .ddr-psid, .l-group-btn > p[data-ddr-live]';
   const isPassiveTip = (target) => !!(target && target.closest && target.closest(PASSIVE_TIP_SEL));
 
   function hideTip() {
@@ -3919,6 +3962,34 @@
     return true;
   }
 
+  /**
+   * One scroll area under the video: the controls card (.l-group-btn, with the
+   * ··· tray) and the 刷新 + converter + timer row are moved into
+   * .ddr-live-scroll, which scrolls when their total height is more than the
+   * space left under the video; the video never scrolls. Two EC2 blocks can't
+   * share a scroll container with CSS alone, so these two nodes are moved (like
+   * 竞标开始 in placeStartButton). Safe: living.js reaches them only by id
+   * (#refresh, #oneClickStartBtn) and inline onclick, Bootstrap's dropdown
+   * is delegated on document, and nothing walks from their parents. The row is
+   * tagged .ddr-refresh-row first - it is no longer .widget-box's first child.
+   * The wrapper sits inside .ddr-goods .widget-box (display: contents) so it is
+   * a grid item of the left column and .ddr-goods #refresh rules still match.
+   */
+  let liveScrollEl = null;
+
+  function installLiveScroll() {
+    if (liveScrollEl) return;
+    const group = document.querySelector('.ddr-col-left .l-group-btn');
+    const row = document.querySelector('.ddr-goods .widget-box > div:first-child');
+    const box = row && row.parentElement;
+    if (!group || !row || !box) return;
+    row.classList.add('ddr-refresh-row');
+    liveScrollEl = mk('div', 'ddr-live-scroll');
+    box.insertBefore(liveScrollEl, row);
+    liveScrollEl.appendChild(group);
+    liveScrollEl.appendChild(row);
+  }
+
   function start() {
     installTips();
     buildPanel();
@@ -3926,6 +3997,7 @@
 
     const layout = () => {
       if (!(tagTables() && reclaimSpace())) return false;
+      installLiveScroll();
       installDock();
       installVideoMenu();
       installVideoStats();
