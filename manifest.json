@@ -1,14 +1,23 @@
 {
   "manifest_version": 3,
   "name": "Customer Purchase Info for Messenger",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Shows customer purchase details in the Meta Business Suite inbox panel.",
-  "permissions": ["storage"],
+  "permissions": [
+    "storage",
+    "scripting"
+  ],
   "content_scripts": [
     {
-      "matches": ["https://business.facebook.com/latest/inbox/*"],
-      "js": ["content.js"],
-      "css": ["styles.css"],
+      "matches": [
+        "https://business.facebook.com/latest/inbox/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "css": [
+        "styles.css"
+      ],
       "run_at": "document_idle"
     }
   ],
@@ -21,6 +30,7 @@
     "https://baserow.dd-herbs.com/*",
     "https://yxch9n4n6e.execute-api.ap-southeast-1.amazonaws.com/*",
     "https://7n881aguj8.execute-api.ap-southeast-1.amazonaws.com/*",
-    "http://localhost:8000/*"
+    "http://localhost:8000/*",
+    "https://ec2.full2house.com/*"
   ]
 }

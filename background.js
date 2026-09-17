@@ -9,6 +9,38 @@ try {
   chrome.storage.session?.setAccessLevel?.({ accessLevel: 'TRUSTED_AND_UNTRUSTED_CONTEXTS' });
 } catch (e) { /* older Chrome — content falls back to in-memory */ }
 
+// EC2 live overlay (ec2-live.js/.css) is opt-in: registered as a dynamic
+// content script only while `ec2LiveEnabled` is true in the options page.
+// Not in manifest.json on purpose — its CSS restyles EC2's own page, so it
+// must not load at all when off. Calls are chained so a quick on/off/on
+// never races into a double register.
+const EC2_LIVE_SCRIPT_ID = 'ec2-live';
+let ec2LiveSync = Promise.resolve();
+function syncEc2LiveOverlay() {
+  ec2LiveSync = ec2LiveSync.then(async () => {
+    const { ec2LiveEnabled } = await chrome.storage.local.get('ec2LiveEnabled');
+    const registered = await chrome.scripting.getRegisteredContentScripts({ ids: [EC2_LIVE_SCRIPT_ID] });
+    if (ec2LiveEnabled === true && !registered.length) {
+      await chrome.scripting.registerContentScripts([{
+        id: EC2_LIVE_SCRIPT_ID,
+        matches: ['https://ec2.full2house.com/Ent/index.php*'],
+        js: ['ec2-live.js'],
+        css: ['ec2-live.css'],
+        runAt: 'document_idle',
+        persistAcrossSessions: true,
+      }]);
+    } else if (ec2LiveEnabled !== true && registered.length) {
+      await chrome.scripting.unregisterContentScripts({ ids: [EC2_LIVE_SCRIPT_ID] });
+    }
+  }).catch((e) => console.warn('[ec2-live] sync failed', e));
+  return ec2LiveSync;
+}
+chrome.runtime.onInstalled.addListener(syncEc2LiveOverlay);
+chrome.runtime.onStartup.addListener(syncEc2LiveOverlay);
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && 'ec2LiveEnabled' in changes) syncEc2LiveOverlay();
+});
+
 function getAiHealth() {
   return new Promise((resolve) => {
     chrome.storage.local.get(['aiApiUrl', 'aiApiToken'], ({ aiApiUrl, aiApiToken }) => {
@@ -571,6 +603,308 @@ function withBaserowConfig(handler) {
   });
 }
 
+// ---------------------------------------------------------------------------
+// EC2 live-page RFM lookup (used by ec2-live.js)
+//
+// Batched PSID -> RFM from the Baserow users table, with a persistent cache.
+//
+// The RFM rollups in table 749 are recomputed ONCE A DAY, so a value fetched
+// during a live cannot change before the live ends. Re-fetching it is pure
+// waste. Entries are therefore cached in chrome.storage.local and considered
+// fresh for the rest of the Malaysia calendar day on which they were fetched
+// (and never longer than 24h). First live of the day pays for the lookups;
+// every later page load, tab and reload that day is free.
+//
+// Cache layout: one key per customer, "rfm:<psid>" -> { v, t } where v is the
+// mapped record or null ("not in Baserow" = new customer, worth caching too -
+// on a typical night that is a third of the room). One key per customer rather
+// than a single blob so a lookup reads and writes only the PSIDs it touches.
+// ---------------------------------------------------------------------------
+
+// Baserow takes the whole OR filter in the query string. Benchmarked against
+// table 749 (39k rows) with 613 real PSIDs: 20/chunk = 40.3s, 40 = 15.9s,
+// 60 = 8.2s, 100 = 8.5s. 60 is the knee - past it the per-request cost starts
+// growing faster than the request count falls.
+const LIVE_RFM_CHUNK = 60;
+
+const RFM_PREFIX = 'rfm:';
+const RFM_MAX_ENTRIES = 15000;
+const RFM_PRUNE_INTERVAL_MS = 60 * 60 * 1000;
+const RFM_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+/** Malaysia is UTC+8 and never observes DST, so this is exact. */
+function malaysiaDay(ts) {
+  return new Date(ts + 8 * 3600 * 1000).toISOString().slice(0, 10);
+}
+
+function rfmIsFresh(entry, now) {
+  if (!entry || typeof entry.t !== 'number') return false;
+  if (now - entry.t >= RFM_MAX_AGE_MS) return false;
+  return malaysiaDay(entry.t) === malaysiaDay(now);
+}
+
+/**
+ * Ship-to country from the customer's saved shipping address (table 749
+ * 'Address', already in the row - no extra call). Returns 'sg', 'my' or ''.
+ *
+ * Scored, not keyword-matched, because the obvious keywords lie (measured on
+ * 4,000 addresses):
+ *  - "Sg" is usually Malaysian - Sungai: "Sg Siput, Perak", "Bandar Sg Long".
+ *    "SG" only counts on its own, never followed by a word.
+ *  - "Malaysia" is appended to Singapore addresses too
+ *    ("…SINGAPORE 768859 district-state-768859-Malaysia"), so it is ignored.
+ *  - Malaysian condos use "#09-09" unit numbers and postcodes get typed with 6
+ *    digits ("209000 Kulim, Kedah"), so those are weak signals that a state or
+ *    street word outweighs.
+ * Result: 23 SG (all genuine), 3,932 MY, 45 blank ("-") -> no flag.
+ */
+function countryOfAddress(addr) {
+  const t = String(addr || '');
+  if (!t.replace(/[\s-]/g, '')) return '';
+  let sg = 0;
+  let my = 0;
+  if (/\bsingapore\b|\bs[',.]?pore\b|\bsingore\b|\bsingapura\b/i.test(t)) sg += 3;
+  if (/(?<![a-z])sg(?![a-z])(?!\s*\.?\s*[a-z])/i.test(t)) sg += 2;
+  if (/#\s?\d{1,3}\s?-\s?\d{1,5}/.test(t)) sg += 2;
+  if (/(?<!\d)\d{6}(?!\d)/.test(t)) sg += /\b(blk|block)\b/i.test(t) ? 2 : 1;
+  if (/\b(johor|johore|selangor|kuala lumpur|wilayah persekutuan|penang|pulau pinang|perak|kedah|kelantan|terengganu|pahang|negeri sembilan|melaka|malacca|sabah|sarawak|perlis|putrajaya|labuan)\b/i.test(t)) my += 3;
+  if (/\b(jalan|jln|taman|tmn|lorong|lrg|kampung|kg|persiaran|lebuh|bandar|lot)\b/i.test(t)) my += 2;
+  if (/(?<!\d)\d{5}(?!\d)/.test(t)) my += 1;
+  if (sg > my) return 'sg';
+  if (my > sg) return 'my';
+  return '';
+}
+
+function mapUserRowToRfm(row) {
+  const num = (v) => {
+    const n = parseFloat(v);
+    return Number.isFinite(n) ? n : 0;
+  };
+  return {
+    psid: String(row.PSID),
+    name: row.Name || '',
+    segment: row['RFM_Score'] || '',
+    rfm: row['RFM'] == null ? '' : String(row['RFM']),
+    r: num(row['R_Score']),
+    f: num(row['F_Score']),
+    m: num(row['M_Score']),
+    orderCount: num(row['Order Count']),
+    ltv: num(row['Sum of Order']),
+    lastOrderDate: row['Last Order Date'] || '',
+    firstPurchaseDate: row['First_Purchase_Date'] || '',
+    yearsActive: num(row['Years_Active']),
+    latestOrderId: row['Latest Order ID'] || '',
+    country: countryOfAddress(row['Address']),
+    // Shown in the flag's tooltip. A bare "-" means no address.
+    address: String(row['Address'] || '').replace(/\s+/g, ' ').trim().replace(/^-$/, ''),
+  };
+}
+
+function rfmCacheRead(psids) {
+  const keys = psids.map((p) => RFM_PREFIX + p);
+  return new Promise((resolve) => {
+    chrome.storage.local.get(keys, (stored) => {
+      if (chrome.runtime.lastError) return resolve({ found: {}, misses: psids });
+      const now = Date.now();
+      const found = {};
+      const misses = [];
+      psids.forEach((psid) => {
+        const entry = stored[RFM_PREFIX + psid];
+        // Records cached before `country`/`address` existed are refetched once.
+        const current = entry && (entry.v === null || (entry.v && 'address' in entry.v));
+        if (rfmIsFresh(entry, now) && current) found[psid] = entry.v;
+        else misses.push(psid);
+      });
+      resolve({ found, misses });
+    });
+  });
+}
+
+function rfmCacheWrite(records) {
+  const now = Date.now();
+  const patch = {};
+  Object.keys(records).forEach((psid) => {
+    patch[RFM_PREFIX + psid] = { v: records[psid], t: now };
+  });
+  if (!Object.keys(patch).length) return Promise.resolve();
+  return new Promise((resolve) => {
+    chrome.storage.local.set(patch, () => {
+      void chrome.runtime.lastError; // a full quota must not break the lookup
+      resolve();
+    });
+  });
+}
+
+/**
+ * Drop expired entries, and the oldest ones if the cache has outgrown its cap.
+ * Enumerating all of storage is comparatively expensive, so this runs at most
+ * once an hour and never blocks a lookup.
+ */
+function rfmCachePrune() {
+  chrome.storage.local.get(['rfmLastPrune'], (meta) => {
+    const now = Date.now();
+    if (meta && meta.rfmLastPrune && now - meta.rfmLastPrune < RFM_PRUNE_INTERVAL_MS) return;
+    chrome.storage.local.set({ rfmLastPrune: now }, () => {
+      chrome.storage.local.get(null, (all) => {
+        if (chrome.runtime.lastError) return;
+        const entries = Object.keys(all)
+          .filter((k) => k.startsWith(RFM_PREFIX))
+          .map((k) => ({ k, t: (all[k] && all[k].t) || 0 }));
+        const expired = entries.filter((e) => now - e.t >= RFM_MAX_AGE_MS).map((e) => e.k);
+        const live = entries.filter((e) => now - e.t < RFM_MAX_AGE_MS);
+        let overflow = [];
+        if (live.length > RFM_MAX_ENTRIES) {
+          live.sort((a, b) => a.t - b.t);
+          overflow = live.slice(0, live.length - RFM_MAX_ENTRIES).map((e) => e.k);
+        }
+        const drop = expired.concat(overflow);
+        if (drop.length) chrome.storage.local.remove(drop);
+      });
+    });
+  });
+}
+
+/**
+ * One order from Baserow, with its items - for the live overlay's recency tag.
+ *
+ * Baserow, not EC2: EC2 archives old orders, while table 750 keeps the full
+ * history (156k orders back to 2022-11). 750 holds the order (Order_ID = the
+ * F-prefixed orderSn that table 749's 'Latest Order ID' names, Date in UTC,
+ * Total_Amount); its items are rows of table 751 linked by Order_ID
+ * (Product_Name lookup, Quantity, Product_Price, Subtotal, Description).
+ * Two reads: the order row, then its items.
+ */
+const BASEROW_ORDER_ITEMS_TABLE_ID = '751';
+
+function getBaserowOrderWithItems(orderSn) {
+  return withBaserowConfig((config) => {
+    const ordersTable = config.baserowOrdersTableId || '750';
+    const H = { headers: { Authorization: 'Token ' + config.baserowToken } };
+    const orderUrl =
+      `${config.baserowBaseUrl}/api/database/rows/table/${ordersTable}/` +
+      `?user_field_names=true&size=1&filter__Order_ID__equal=${encodeURIComponent(orderSn)}`;
+    return fetch(orderUrl, H)
+      .then((res) => (res.ok ? res.json() : throwBaserowError(res)))
+      .then((json) => {
+        const row = json && json.results && json.results[0];
+        if (!row) return { found: false };
+        const itemsUrl =
+          `${config.baserowBaseUrl}/api/database/rows/table/${BASEROW_ORDER_ITEMS_TABLE_ID}/` +
+          `?user_field_names=true&size=200&filter__Order_ID__link_row_has=${row.id}`;
+        return fetch(itemsUrl, H)
+          .then((res) => (res.ok ? res.json() : throwBaserowError(res)))
+          .then((items) => ({
+            found: true,
+            order: {
+              orderSn: row.Order_ID,
+              date: row.Date || '',
+              total: row.Total_Amount,
+              items: ((items && items.results) || []).map((it) => ({
+                name: ((it.Product_Name || [])[0] || {}).value || '',
+                description: it.Description || '',
+                qty: parseFloat(it.Quantity) || 0,
+                price: it.Product_Price,
+                subtotal: it.Subtotal,
+              })),
+            },
+          }));
+      });
+  });
+}
+
+function fetchLiveRfmChunk(config, chunk) {
+  const params = new URLSearchParams();
+  params.set('user_field_names', 'true');
+  params.set('filter_type', 'OR');
+  params.set('size', String(Math.max(chunk.length, 1)));
+  chunk.forEach((psid) => params.append('filter__PSID__equal', psid));
+
+  const url =
+    config.baserowBaseUrl +
+    '/api/database/rows/table/' +
+    config.baserowUsersTableId +
+    '/?' +
+    params.toString();
+
+  return fetch(url, { headers: { Authorization: 'Token ' + config.baserowToken } })
+    .then((res) => {
+      if (!res.ok) return throwBaserowError(res);
+      return res.json();
+    })
+    .then((json) => (json && json.results) || []);
+}
+
+function getLiveRfmBatch(psids) {
+  const wanted = [...new Set((psids || []).map(String).filter(Boolean))];
+  if (!wanted.length) {
+    return Promise.resolve({ ok: true, found: {}, missing: [], stats: { requested: 0, cacheHits: 0, fetched: 0, requests: 0 } });
+  }
+
+  return rfmCacheRead(wanted).then(({ found: cached, misses }) => {
+    const split = (records) => {
+      const found = {};
+      const missing = [];
+      Object.keys(records).forEach((psid) => {
+        if (records[psid]) found[psid] = records[psid];
+        else missing.push(psid);
+      });
+      return { found, missing };
+    };
+
+    // Everything was already known today - no network at all.
+    if (!misses.length) {
+      const out = split(cached);
+      return {
+        ok: true,
+        ...out,
+        stats: { requested: wanted.length, cacheHits: wanted.length, fetched: 0, requests: 0 },
+      };
+    }
+
+    return withBaserowConfig((config) => {
+      const chunks = [];
+      for (let i = 0; i < misses.length; i += LIVE_RFM_CHUNK) {
+        chunks.push(misses.slice(i, i + LIVE_RFM_CHUNK));
+      }
+      // Sequential: Baserow here is self-hosted and a cold live can queue
+      // hundreds of PSIDs.
+      return chunks
+        .reduce(
+          (chain, chunk) =>
+            chain.then((acc) =>
+              fetchLiveRfmChunk(config, chunk).then((rows) => {
+                rows.forEach((row) => {
+                  if (row && row.PSID) acc[String(row.PSID)] = mapUserRowToRfm(row);
+                });
+                return acc;
+              })
+            ),
+          Promise.resolve({})
+        )
+        .then((fetched) => {
+          // Cache negatives too: "absent from 749" is a real, reusable answer.
+          const toCache = {};
+          misses.forEach((psid) => {
+            toCache[psid] = fetched[psid] || null;
+          });
+          return rfmCacheWrite(toCache).then(() => {
+            rfmCachePrune();
+            const out = split(Object.assign({}, cached, toCache));
+            return {
+              ...out,
+              stats: {
+                requested: wanted.length,
+                cacheHits: wanted.length - misses.length,
+                fetched: misses.length,
+                requests: chunks.length,
+              },
+            };
+          });
+        });
+    });
+  });
+}
+
 function linkBaserowUid(uid, psid, name) {
   return withBaserowConfig((config) =>
     findBaserowUserRowByPsid(config, psid).then((row) => {
@@ -916,6 +1250,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.type === 'GET_AI_HEALTH') {
     getAiHealth().then(sendResponse);
+    return true;
+  }
+
+  if (message?.type === 'GET_BASEROW_ORDER') {
+    getBaserowOrderWithItems(String(message.orderSn || '')).then(sendResponse);
+    return true;
+  }
+
+  if (message?.type === 'GET_LIVE_RFM_BATCH') {
+    getLiveRfmBatch(message.psids).then(sendResponse);
     return true;
   }
 

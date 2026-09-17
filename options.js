@@ -20,6 +20,24 @@ chrome.storage.local.get(
   }
 );
 
+// Live overlay toggle saves on flip (off by default); background.js
+// registers/unregisters the EC2 content script from this key.
+const ec2LiveInput = document.getElementById('ec2LiveEnabled');
+const liveStatus = document.getElementById('liveStatus');
+let liveStatusTimer;
+chrome.storage.local.get('ec2LiveEnabled', ({ ec2LiveEnabled }) => {
+  ec2LiveInput.checked = ec2LiveEnabled === true;
+});
+ec2LiveInput.addEventListener('change', () => {
+  chrome.storage.local.set({ ec2LiveEnabled: ec2LiveInput.checked }, () => {
+    liveStatus.textContent = ec2LiveInput.checked
+      ? 'Live features on — reload open EC2 live tabs.'
+      : 'Live features off — reload open EC2 live tabs.';
+    clearTimeout(liveStatusTimer);
+    liveStatusTimer = setTimeout(() => { liveStatus.textContent = ''; }, 4000);
+  });
+});
+
 document.getElementById('save').addEventListener('click', () => {
   chrome.storage.local.set(
     {

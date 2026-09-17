@@ -41,9 +41,83 @@
         color: #65676b;
         margin-bottom: 10px;
       }
+      .toggle-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 6px;
+      }
+      .toggle-row label {
+        margin: 0;
+      }
+      .switch {
+        position: relative;
+        flex: none;
+        width: 36px;
+        height: 20px;
+      }
+      .switch input {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        opacity: 0;
+        cursor: pointer;
+        z-index: 1;
+      }
+      .switch span {
+        position: absolute;
+        inset: 0;
+        border-radius: 10px;
+        background: #bcc0c4;
+        transition: background 0.15s;
+      }
+      .switch span::after {
+        content: "";
+        position: absolute;
+        top: 2px;
+        left: 2px;
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        background: #fff;
+        transition: transform 0.15s;
+      }
+      .switch input:checked + span {
+        background: #0a7cff;
+      }
+      .switch input:checked + span::after {
+        transform: translateX(16px);
+      }
+      .switch input:focus-visible + span {
+        outline: 2px solid #0a7cff;
+        outline-offset: 2px;
+      }
+      #liveStatus {
+        font-size: 12px;
+        color: #2e7d32;
+        min-height: 16px;
+        margin-bottom: 16px;
+      }
     </style>
   </head>
   <body>
+    <h3>EC2 Live Overlay</h3>
+    <div class="toggle-row">
+      <label for="ec2LiveEnabled">Enable live features</label>
+      <span class="switch">
+        <input type="checkbox" id="ec2LiveEnabled" role="switch" />
+        <span></span>
+      </span>
+    </div>
+    <p class="hint">
+      Customer cards, won products, batch compare and the restyled comment
+      table on EC2's live manager. Saved immediately; reload any open EC2
+      live tab to apply.
+    </p>
+    <div id="liveStatus"></div>
     <h3>ManyChat API Token</h3>
     <p class="hint">
       Used to search ManyChat subscribers by name when looking up a
