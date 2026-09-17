@@ -422,8 +422,17 @@
    must not gain child nodes.
    --------------------------------------------------------------------------- */
 
-.ddr-msg-body > tbody > tr.ddr-own { background: var(--ddr-surface-2) !important; }
-.ddr-msg-body > tbody > tr.ddr-own:hover { background: #F1F5F9 !important; }
+/* Very light green with diagonal stripes, so our own posts stand apart from customers' rows at a
+   glance. Text on #F0FDF4: #334155 9.9:1 · #475569 7.2:1 · chip #166534 on
+   #DCFCE7 6.5:1 · Show more #1D4ED8 on #DCFCE7 (hover) 5.9:1 */
+.ddr-msg-body > tbody > tr.ddr-own {
+  background-color: #F0FDF4 !important;
+  background-image: repeating-linear-gradient(135deg, rgba(34, 197, 94, 0.09) 0 8px, transparent 8px 16px) !important;
+}
+.ddr-msg-body > tbody > tr.ddr-own:hover {
+  background-color: #E3F9EA !important;
+  background-image: repeating-linear-gradient(135deg, rgba(34, 197, 94, 0.09) 0 8px, transparent 8px 16px) !important;
+}
 
 .ddr-msg-body > tbody > tr.ddr-own > td:nth-child(1):not([colspan]) {
   padding: 8px 6px 6px 10px !important;
@@ -438,9 +447,8 @@
   margin-right: 6px;
   padding: 1px 6px;
   border-radius: var(--ddr-radius);
-  background: #E2E8F0;
-  /* slate-700 on slate-200: 8.1:1 */
-  color: #334155;
+  background: #DCFCE7;
+  color: #166534;
   font-size: 12.5px;
   font-weight: 700;
   letter-spacing: 0.2px;
@@ -719,6 +727,22 @@
 /* Hover keeps the band readable: a blue row must not turn white under the mouse. */
 .ddr-msg-body > tbody > tr[data-ddr-band="b"]:hover { background: #D9E4F2 !important; }
 
+/* 黑名单: living.js puts class="hiuser" on the name cell of every comment from
+   a PSID in its HiUsers list (EC2 only turns the name yellow, which the card
+   hides). Those rows are tinted very light red with diagonal stripes instead, over the band.
+   Text on #FEF2F2: #0F172A 17.4:1 · #334155 9.7:1 · #475569 7.0:1 */
+.ddr-msg-body > tbody > tr:has(> td.hiuser) {
+  background-color: #FEF2F2 !important;
+  background-image: repeating-linear-gradient(135deg, rgba(239, 68, 68, 0.08) 0 8px, transparent 8px 16px) !important;
+}
+/* The band-b hover rule uses the background shorthand (resets the image), so
+   the stripes are repeated here to survive hover. */
+.ddr-msg-body > tbody > tr:has(> td.hiuser):hover {
+  background-color: #FDE6E6 !important;
+  background-image: repeating-linear-gradient(135deg, rgba(239, 68, 68, 0.08) 0 8px, transparent 8px 16px) !important;
+}
+.ddr-msg-body > tbody > tr:has(> td.hiuser) .ddr-psid { background: #FFF7F7; }
+
 /* ===========================================================================
    Reclaimed layout
    =========================================================================== */
@@ -753,7 +777,8 @@
 .ddr-col-left {
   display: grid !important;
   grid-template-columns: 70% minmax(0, 1fr);
-  grid-template-rows: auto auto auto minmax(0, 1fr);
+  /* video · buttons card · big 刷新 (takes the rest) · dock bar */
+  grid-template-rows: auto auto minmax(56px, 1fr) auto;
   height: calc(100vh - 14px);
   box-sizing: border-box;
 }
@@ -768,41 +793,207 @@
 
 .ddr-col-left .l-iframe .iframecon { width: 100% !important; }
 
-/* EC2 sizes these buttons at width: 20% with inline margins (47px, 15px) and
-   <br> line breaks - built for a 390px box. In the 70% column they overlapped,
-   so they become a wrapping row; each ? icon stays right after its button. */
+/* Live controls card (under the video). EC2 sizes these buttons at width:
+   20% with inline margins and <br> breaks for a 390px box; here the block is
+   a white card laid out with flex `order` only - no node moves:
+
+     本场直播
+     15-09-2026(PM) - ANGEL          <p>, name via data-ddr-live
+     [ Live ][ Rev ]                  批次 + 销售额, used all live
+     标组管理 新增标组 得标结果 …        EC2's own buttons, quiet chips
+
+   Contrast: #0F172A on #FFF 17.9:1 · #334155 on #FFF 10.4:1 ·
+   #065F46 on #ECFDF5 7.9:1 · #3730A3 on #EEF2FF 8.9:1 · #FFF on #4338CA 7.9:1 */
 .ddr-col-left .l-group-btn {
   grid-column: 1;
   grid-row: 2;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 5px 4px;
+  gap: 6px 5px;
+  padding: 10px 8px 10px !important;
+  margin: 0 !important;
+  background: var(--ddr-surface) !important;
+  border-bottom: 1px solid #E2E8F0;
 }
+.ddr-col-left .l-group-btn::before,
+.ddr-col-left .l-group-btn::after { display: none !important; }
+.ddr-col-left .l-group-btn *:not(i):not([class*="fa-"]) { font-family: var(--ddr-font) !important; }
 
-.ddr-col-left .l-group-btn > p { flex: 0 0 100%; margin: 0 !important; }
+.ddr-col-left .l-group-btn > p {
+  order: 0;
+  flex: 0 0 100%;
+  margin: 0 0 2px !important;
+  padding: 0 2px !important;
+  font-size: 13px !important;
+  font-weight: 650;
+  line-height: 1.3;
+  color: var(--ddr-ink);
+}
+/* The name comes from data-ddr-live (set by installSalesButton), so the
+   "活动名称:" prefix can go without touching EC2's text. */
+.ddr-col-left .l-group-btn > p[data-ddr-live] { font-size: 0 !important; }
+.ddr-col-left .l-group-btn > p[data-ddr-live]::before {
+  content: "本场直播 · Live";
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  line-height: 1.4;
+  color: var(--ddr-ink-3);
+}
+.ddr-col-left .l-group-btn > p[data-ddr-live]::after {
+  content: attr(data-ddr-live);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.3;
+  color: var(--ddr-ink);
+  word-break: break-word;
+}
 .ddr-col-left .l-group-btn > br { display: none; }
 
-.ddr-col-left .l-group-btn > .btn,
+/* The two everyday buttons: equal halves of the first row. */
 .ddr-col-left .l-group-btn > .ddr-sales-btn,
 .ddr-col-left .l-group-btn > .ddr-batch-btn {
+  flex: 0 0 calc(50% - 2.5px);
+  min-width: 0;
+  justify-content: center;
+  height: 36px;
+  margin: 0 !important;
+  padding: 0 8px !important;
+  border-radius: 8px;
+  font-size: 14px;
+  white-space: nowrap;
+}
+.ddr-col-left .l-group-btn > .ddr-batch-btn { order: 1; }
+.ddr-col-left .l-group-btn > .ddr-sales-btn { order: 2; }
+
+/* EC2's buttons (标组管理 新增标组 得标结果 抽奖 全部起标线): still there,
+   still EC2's handlers, just quiet. */
+.ddr-col-left .l-group-btn > .btn {
+  order: 3;
+  flex: 1 1 auto;
   width: auto !important;
   height: 26px;
   margin: 0 !important;
-  padding: 0 9px !important;
+  padding: 0 7px !important;
+  border: 1px solid #CBD5E1 !important;
+  border-radius: 6px !important;
+  background: var(--ddr-surface) !important;
+  color: var(--ddr-ink-2) !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  line-height: 24px !important;
+  text-shadow: none !important;
+  box-shadow: none !important;
+  transition: background var(--ddr-motion), border-color var(--ddr-motion);
 }
+.ddr-col-left .l-group-btn > .btn .bigger-90,
+.ddr-col-left .l-group-btn > .btn .bigger-110 { font-size: 12px !important; }
+.ddr-col-left .l-group-btn > .btn:hover {
+  background: var(--ddr-surface-2) !important;
+  border-color: #94A3B8 !important;
+  color: var(--ddr-ink) !important;
+}
+.ddr-col-left .l-group-btn > .btn:focus-visible { outline: 2px solid #2563EB !important; outline-offset: 1px; }
 
 /* The ? hints (EC2 tooltips explaining each button) wrapped onto lines of
    their own in the narrower column. */
 .ddr-col-left .l-group-btn > .help-button { display: none !important; }
 
-/* Room for the docked "Who's in the live" bar across both columns, so it never
-   covers a product. A grid row, not padding: EC2's .no-padding wins. */
-.ddr-col-left.ddr-vip-docked { grid-template-rows: auto auto auto minmax(0, 1fr) 46px; }
-.ddr-col-left.ddr-vip-docked::after {
-  content: "";
-  grid-column: 1 / -1;
-  grid-row: 5;
+/* 全部起标线 is hidden at the host's request (EC2's node, still in the DOM);
+   竞标开始 takes its slot - placeStartButton() moves the real button here. */
+.ddr-col-left .l-group-btn > button[onclick^="startAllComment"] { display: none !important; }
+
+.ddr-col-left .l-group-btn > #oneClickStartBtn {
+  position: static !important;
+  top: auto !important;
+  right: auto !important;
+  float: none !important;
+  border-color: #93C5FD !important;
+  color: #1E40AF !important;
+  font-weight: 650 !important;
+}
+.ddr-col-left .l-group-btn > #oneClickStartBtn .bigger-110 { font-size: 12px !important; }
+.ddr-col-left .l-group-btn > #oneClickStartBtn:hover {
+  background: #EFF6FF !important;
+  border-color: #2563EB !important;
+  color: #1E3A8A !important;
+}
+/* EC2 adds .btn-success while the live can still be started - keep that
+   state visible instead of flattening it to a chip. #FFF on #1D4ED8 6.7:1 */
+.ddr-col-left .l-group-btn > #oneClickStartBtn.btn-success {
+  background: #1D4ED8 !important;
+  border-color: #1D4ED8 !important;
+  color: #FFFFFF !important;
+}
+.ddr-col-left .l-group-btn > #oneClickStartBtn.btn-success:hover { background: #1E40AF !important; }
+
+/* Dock bar under the big 刷新: [Who's in the live] (hover popup) [Flip].
+   Our own grid item (.ddr-dock), video column only - the goods list keeps
+   the full height. #334155 on #FFF 10.4:1 · #3730A3 on #EEF2FF 8.9:1 */
+.ddr-dock {
+  grid-column: 1;
+  grid-row: 4;
+  display: flex;
+  gap: 6px;
+  padding: 0 8px 8px;
+  background: var(--ddr-surface);
+  font-family: var(--ddr-font);
+}
+.ddr-dock button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 36px;
+  margin: 0;
+  padding: 0 10px;
+  border: 1px solid #CBD5E1;
+  border-radius: 8px;
+  background: var(--ddr-surface);
+  color: var(--ddr-ink-2);
+  font-family: var(--ddr-font) !important;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1;
+  white-space: nowrap;
+  transition: background var(--ddr-motion), border-color var(--ddr-motion), color var(--ddr-motion);
+}
+.ddr-dock *:not(i) { font-family: var(--ddr-font) !important; }
+.ddr-dock button .ddr-ico { width: 16px; height: 16px; stroke-width: 2.2; flex: none; }
+.ddr-dock button:focus-visible { outline: 2px solid #2563EB; outline-offset: 2px; }
+.ddr-who-btn { flex: 1 1 auto; min-width: 0; cursor: default; }
+.ddr-who-btn span { overflow: hidden; text-overflow: ellipsis; }
+.ddr-who-btn:hover,
+.ddr-who-btn[aria-expanded="true"] { background: var(--ddr-surface-2); border-color: #94A3B8; color: var(--ddr-ink); }
+.ddr-flip-btn { flex: none; cursor: pointer; }
+.ddr-flip-btn:hover { background: var(--ddr-surface-2); border-color: #94A3B8; }
+.ddr-flip-btn[aria-pressed="true"] { background: #EEF2FF; border-color: #818CF8; color: #3730A3; }
+/* Narrow column (1280 screens): Flip goes icon-only so the label fits. */
+.ddr-dock { container-type: inline-size; }
+@container (max-width: 225px) {
+  .ddr-flip-btn { width: 38px; padding: 0 !important; }
+  .ddr-flip-btn span { display: none; }
+}
+
+/* Flip: Comment · Bid summary · Live. The two Bootstrap columns are floats,
+   so swapping their float sides mirrors them; inside the left column the
+   goods list and the video column trade grid columns. CSS only. */
+.ddr-flip .ddr-col-left { float: right !important; grid-template-columns: minmax(0, 1fr) 70%; }
+.ddr-flip .ddr-col-right { float: left !important; }
+.ddr-flip .ddr-col-left .l-iframe,
+.ddr-flip .ddr-col-left .l-group-btn,
+.ddr-flip .ddr-goods .widget-box > div:first-child,
+.ddr-flip .ddr-dock { grid-column: 2; }
+.ddr-flip .ddr-goods #flowDivOne {
+  grid-column: 1;
+  border-left: 0 !important;
+  border-right: 1px solid var(--ddr-line) !important;
 }
 
 /* ===========================================================================
@@ -822,50 +1013,211 @@
   font-family: var(--ddr-font);
 }
 
-/* Header: 刷新 (with its 自动刷新 dropdown) left, 竞标开始 right - under the
-   buttons, in the video column. */
+/* Refresh row (grid row 3, fills the space under the buttons card):
+   [square icon-only Refresh + small 自动刷新 ▾ under it] [MYR → SGD converter].
+   #refresh keeps EC2's 刷新 text node at font-size 0 (icon only, aria-label set
+   in wireReloadButton). The converter (.ddr-fx) is our node appended to this
+   header; living.js never rewrites it. */
 .ddr-goods .widget-box > div:first-child {
   grid-column: 1;
   grid-row: 3;
-  background: var(--ddr-surface);
+  min-height: 0;
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 2px;
+  gap: 8px;
+  padding: 8px;
+  background: var(--ddr-surface);
   position: relative;
+  container-type: inline-size;
 }
 
-.ddr-goods .widget-box > div:first-child > .btn-group { order: 1; margin: 0 !important; }
+.ddr-goods .widget-box > div:first-child > .btn-group {
+  flex: none;
+  display: flex !important;
+  flex-direction: column;
+  gap: 4px;
+  width: 64px;
+  margin: 0 !important;
+}
 
 .ddr-goods #refresh,
 .ddr-goods #refresh + .dropdown-toggle {
-  padding: 5px 10px;
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1.2;
-}
-
-.ddr-goods #oneClickStartBtn {
-  order: 2;
-  position: static !important;
-  top: auto !important;
-  right: auto !important;
   float: none !important;
-  margin-left: auto;
-  background: var(--ddr-surface) !important;
+  margin: 0 !important;
   border: 1px solid #CBD5E1 !important;
-  border-radius: 4px;
-  padding: 5px 12px;
-  font-weight: 600;
-  color: #1E40AF !important;
+  background: var(--ddr-surface-2) !important;
+  color: var(--ddr-ink) !important;
   text-shadow: none !important;
-  line-height: 1.2;
+  box-shadow: none !important;
   transition: background var(--ddr-motion), border-color var(--ddr-motion);
 }
+.ddr-goods #refresh {
+  width: 64px;
+  height: 64px;
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  padding: 0 !important;
+  border-radius: 14px !important;
+  font-size: 0 !important;
+}
+.ddr-goods #refresh .fa { font-size: 26px !important; color: #334155 !important; padding: 0 !important; line-height: 1; }
+.ddr-goods #refresh + .dropdown-toggle {
+  width: 64px;
+  height: 22px;
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  padding: 0 !important;
+  border-radius: 8px !important;
+}
+.ddr-goods #refresh:hover,
+.ddr-goods #refresh + .dropdown-toggle:hover { background: #EEF2F6 !important; border-color: #94A3B8 !important; }
+.ddr-goods #refresh:active { background: #E2E8F0 !important; }
+.ddr-goods #refresh:focus-visible,
+.ddr-goods #refresh + .dropdown-toggle:focus-visible { outline: 2px solid #2563EB !important; outline-offset: 1px; }
+.ddr-goods #refresh.ddr-refresh-failed { border-color: #DC2626 !important; box-shadow: 0 0 0 2px #FECACA !important; }
+/* 自动刷新 menu opens to the right of the small ▾, over the converter. */
+.ddr-goods .widget-box > div:first-child .dropdown-menu,
+.ddr-goods .widget-box > div:first-child .dropdown-menu * { font-family: var(--ddr-font) !important; }
+.ddr-goods .widget-box > div:first-child .dropdown-menu {
+  top: auto !important;
+  bottom: 0 !important;
+  left: calc(100% + 6px) !important;
+  right: auto !important;
+  margin: 0 !important;
+  padding: 6px 8px !important;
+  border: 1px solid #CBD5E1 !important;
+  border-radius: 8px !important;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.16) !important;
+  font-size: 13px;
+  color: var(--ddr-ink-2);
+}
 
-.ddr-goods #oneClickStartBtn:hover {
-  background: #EFF6FF !important;
-  border-color: #2563EB !important;
+/* MYR → SGD converter, Wise-style: two stacked rounded fields, small grey
+   label above a big amount, currency pill with a round flag on the right.
+   Contrast: #0E0F0C on #FFF 19.6:1 · #454745 on #FFF 9.4:1 ·
+   #163300 on #E2F6D5 12.9:1 */
+.ddr-fx {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-family: var(--ddr-font);
+}
+.ddr-fx * { font-family: var(--ddr-font) !important; box-sizing: border-box; }
+
+.ddr-fx-field {
+  display: block;
+  margin: 0 !important;
+  padding: 6px 8px 6px 10px;
+  border: 1px solid #C9CBCE;
+  border-radius: 12px;
+  background: #FFFFFF;
+  font-weight: 400 !important;
+  cursor: text;
+  transition: border-color var(--ddr-motion), box-shadow var(--ddr-motion);
+}
+.ddr-fx-field:focus-within { border-color: #163300; box-shadow: 0 0 0 1px #163300; }
+.ddr-fx-field-out { background: #F7F8F6; cursor: default; }
+
+.ddr-fx-label {
+  display: block;
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: #454745;
+}
+
+.ddr-fx-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ddr-fx-in,
+.ddr-fx-out {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
+  height: 30px;
+  margin: 0;
+  padding: 0;
+  border: 0 !important;
+  outline: 0;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: #0E0F0C !important;
+  font-size: 22px !important;
+  font-weight: 700;
+  line-height: 30px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.3px;
+  text-align: left;
+}
+.ddr-fx-in::placeholder { color: #9CA3AF; font-weight: 600; }
+.ddr-fx-out { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: copy; }
+.ddr-fx[data-state="busy"] .ddr-fx-out { opacity: 0.45; }
+.ddr-fx[data-state="empty"] .ddr-fx-out,
+.ddr-fx[data-state="invalid"] .ddr-fx-out,
+.ddr-fx[data-state="error"] .ddr-fx-out { color: #6B7280 !important; cursor: default; }
+.ddr-fx-out:focus-visible { outline: 2px solid #163300; outline-offset: 2px; border-radius: 4px; }
+.ddr-fx.ddr-fx-copied .ddr-fx-field-out { border-color: #163300; background: #E2F6D5; }
+
+.ddr-fx-cur {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px 3px 4px;
+  border-radius: 999px;
+  background: #EEF0EC;
+  color: #0E0F0C;
+  font-size: 12.5px;
+  font-weight: 700;
+  line-height: 1;
+}
+.ddr-fx-cur .ddr-flag { width: 18px; height: 18px; margin: 0; }
+
+/* Narrow column (1280 screens): smaller square and amounts, flag-only pill. */
+@container (max-width: 220px) {
+  .ddr-goods .widget-box > div:first-child > .btn-group,
+  .ddr-goods #refresh,
+  .ddr-goods #refresh + .dropdown-toggle { width: 50px; }
+  .ddr-goods #refresh { height: 50px; border-radius: 12px !important; }
+  .ddr-goods #refresh .fa { font-size: 22px !important; }
+  .ddr-fx-in, .ddr-fx-out { font-size: 18px !important; height: 26px; line-height: 26px; }
+  .ddr-fx-cur { font-size: 0; padding: 3px; gap: 0; }
+}
+
+/* While both lists reload: they are hidden together and revealed together,
+   the button's icon spins, and the comment area says what is happening. */
+.ddr-lists-loading #liveMessageDiv,
+.ddr-lists-loading .ddr-goods #allGroup { opacity: 0; }
+.ddr-col-right .l-table > .tab-body #liveMessageDiv,
+.ddr-goods #allGroup { transition: opacity 180ms ease-out; }
+.ddr-lists-loading .ddr-col-right .l-table > .tab-body { position: relative; }
+.ddr-lists-loading .ddr-col-right .l-table > .tab-body::after {
+  content: "更新中 · Updating…";
+  position: absolute;
+  top: 48px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-family: var(--ddr-font);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ddr-ink-3);
+}
+.ddr-lists-loading .ddr-goods #refresh { cursor: progress; }
+.ddr-lists-loading .ddr-goods #refresh .fa { animation: ddr-spin 0.9s linear infinite; }
+@keyframes ddr-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .ddr-lists-loading .ddr-goods #refresh .fa { animation: none; }
+  .ddr-col-right .l-table > .tab-body #liveMessageDiv,
+  .ddr-goods #allGroup { transition: none; }
 }
 
 /* Scrolling belongs to EC2: living page runs mCustomScrollbar on #flowDivOne,
@@ -876,7 +1228,7 @@
 .ddr-goods #flowDivOne {
   container-type: inline-size;
   grid-column: 2;
-  grid-row: 1 / 5;
+  grid-row: 1 / -1;
   /* contain: size - the list's length must not stretch the video row; the
      column takes its height from the grid, and mCustomScrollbar scrolls it. */
   contain: size;
@@ -1029,112 +1381,130 @@
    "Who's in the live" panel
    =========================================================================== */
 
-.ddr-panel {
+/* Centred modal (buildPanel), opened by the dock button. Big type for reading
+   from the host's position; the list scrolls inside the card.
+   Contrast on #FFF: #0F172A 17.9:1 · #334155 10.4:1 · #FFF on #DC2626 4.8:1 */
+.ddr-who-overlay {
   position: fixed;
-  left: 12px;
-  bottom: 12px;
-  width: 288px;
-  max-height: 58vh;
+  inset: 0;
+  z-index: 2147482500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.45);
+  animation: ddr-who-in 140ms ease-out;
+}
+.ddr-who-overlay[hidden] { display: none !important; }
+@keyframes ddr-who-in { from { opacity: 0; } to { opacity: 1; } }
+
+.ddr-panel {
+  width: min(760px, 100%);
+  max-height: min(88vh, 100%);
   display: flex;
   flex-direction: column;
   background: var(--ddr-surface);
-  border: 1px solid #CBD5E1;
-  border-radius: 8px;
-  box-shadow: 0 8px 28px rgba(15, 23, 42, 0.16);
+  border-radius: 16px;
+  box-shadow: 0 24px 64px rgba(15, 23, 42, 0.35);
   font-family: var(--ddr-font);
   font-variant-numeric: tabular-nums;
-  font-size: 12px;
-  z-index: 99999;
+  overflow: hidden;
 }
 
 .ddr-panel-head {
-  cursor: move;
+  flex: none;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  border-bottom: 1px solid #EEF2F6;
-  background: var(--ddr-surface-2);
-  border-radius: 8px 8px 0 0;
+  gap: 12px;
+  padding: 18px 20px 16px 26px;
+  border-bottom: 1px solid var(--ddr-line);
 }
 
 .ddr-panel-title {
-  font-weight: 700;
-  font-size: 12.5px;
-  letter-spacing: 0.2px;
+  font-weight: 800;
+  font-size: 28px;
+  letter-spacing: -0.2px;
   color: var(--ddr-ink);
 }
 
-.ddr-panel-count {
+.ddr-panel-close {
   margin-left: auto;
-  color: var(--ddr-ink-3);
-  font-size: 11px;
-}
-
-.ddr-panel-toggle {
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  font-size: 15px;
-  line-height: 1;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--ddr-surface-2);
   color: var(--ddr-ink-2);
-  padding: 2px 4px;
-  border-radius: 3px;
+  font-size: 30px;
+  line-height: 1;
+  cursor: pointer;
 }
+.ddr-panel-close:hover { background: #E2E8F0; color: var(--ddr-ink); }
+.ddr-panel-close:focus-visible { outline: 3px solid #2563EB; outline-offset: 2px; }
 
-.ddr-panel-toggle:hover { background: #E2E8F0; }
-.ddr-panel-toggle:focus-visible { outline: 2px solid #2563EB; outline-offset: 1px; }
+.ddr-panel-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 12px 20px 20px;
+}
+.ddr-panel-body:focus-visible { outline: 3px solid #2563EB; outline-offset: -3px; }
 
-.ddr-panel-body { overflow-y: auto; padding: 4px; }
-/* Docked: a bar along the bottom of the left column; expanded, it opens
-   upward over the goods list, so it keeps a shadow to read as a layer. */
-.ddr-panel.ddr-docked.ddr-collapsed { box-shadow: none; }
-.ddr-panel.ddr-collapsed { width: auto !important; max-height: none !important; bottom: 12px !important; top: auto !important; }
-.ddr-panel.ddr-collapsed .ddr-panel-body { display: none; }
-.ddr-panel.ddr-collapsed .ddr-panel-head { border-bottom: none; border-radius: 8px; }
-
-.ddr-empty {
-  padding: 12px;
+.ddr-panel .ddr-empty {
+  padding: 40px 12px;
+  font-size: 20px;
   color: var(--ddr-ink-3);
   text-align: center;
 }
 
 .ddr-prow {
-  padding: 5px 7px;
-  margin: 2px 0;
-  border-left: 3px solid var(--ddr-tier, #94A3B8);
-  border-radius: 0 3px 3px 0;
+  padding: 12px 16px;
+  margin: 8px 0;
+  border-left: 6px solid var(--ddr-tier, #94A3B8);
+  border-radius: 0 10px 10px 0;
   background: var(--ddr-surface-2);
 }
 
 .ddr-pname {
   display: flex;
   align-items: center;
-  gap: 5px;
-  font-weight: 650;
-  font-size: 12.5px;
+  gap: 10px;
+  font-weight: 750;
+  font-size: 24px;
+  line-height: 1.25;
   color: var(--ddr-ink);
 }
 
 .ddr-ptonight {
   margin-left: auto;
+  flex: none;
   display: inline-flex;
   align-items: center;
-  gap: 3px;
-  font-size: 12px;
+  gap: 6px;
+  font-size: 20px;
   font-weight: 800;
   color: #FFFFFF;
   background: #DC2626;
   border-radius: 999px;
-  padding: 2px 6px;
+  padding: 4px 12px;
 }
 
-.ddr-ptonight .ddr-ico { width: 10px; height: 10px; }
+.ddr-ptonight .ddr-ico { width: 18px; height: 18px; }
 
 .ddr-pmeta {
   color: var(--ddr-ink-2);
-  font-size: 11px;
-  margin-top: 1px;
+  font-size: 19px;
+  line-height: 1.35;
+  margin-top: 4px;
+}
+.ddr-pmeta b { color: var(--ddr-ink); font-weight: 800; }
+
+.ddr-panel .ddr-panel-batch { font-size: 18px; padding: 10px 14px; }
+.ddr-panel .ddr-panel-batch .ddr-ico { width: 18px; height: 18px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ddr-who-overlay { animation: none; }
 }
 
 /* =========================================================================== */
@@ -1145,7 +1515,7 @@
   .ddr-card,
   .ddr-psid,
   .ddr-msg-body > tbody > tr,
-  .ddr-goods #oneClickStartBtn {
+  .ddr-col-left .l-group-btn > #oneClickStartBtn {
     transition: none !important;
     transform: none !important;
   }
@@ -1222,6 +1592,11 @@
 .ddr-tip.ddr-tip-below { transform: translateY(-3px); }
 
 /* Interactive while shown: the pointer can move in to read and copy. */
+/* Bid list tooltips close instantly on mouse-leave (host's request): no
+   fade, and the pointer cannot enter them. */
+.ddr-tip.ddr-tip-passive,
+.ddr-tip.ddr-tip-passive.ddr-tip-on { pointer-events: none !important; user-select: none; transition: none !important; }
+
 .ddr-tip.ddr-tip-on {
   pointer-events: auto;
   user-select: text !important;
@@ -1367,24 +1742,24 @@
 .ddr-sales-btn {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   vertical-align: top;
   height: 26px;
-  margin: 5px 0 0 46px; /* lines up under 抽奖 */
+  margin: 5px 0 0 6px;
   padding: 0 10px 0 8px;
-  border: 0;
-  border-radius: 4px;
-  background: #047857;
-  color: #FFFFFF;
+  border: 1px solid #A7F3D0;
+  border-radius: 6px;
+  background: #ECFDF5;
+  color: #065F46;
   font-size: 13px;
   font-weight: 700;
   line-height: 1;
   cursor: default;
-  transition: background var(--ddr-motion);
+  transition: background var(--ddr-motion), border-color var(--ddr-motion), color var(--ddr-motion);
 }
 
-.ddr-sales-btn .ddr-ico { width: 15px; height: 15px; stroke-width: 2.4; }
-.ddr-sales-btn:hover { background: #065F46; }
+.ddr-sales-btn .ddr-ico { width: 16px; height: 16px; stroke-width: 2.4; }
+.ddr-sales-btn:hover { background: #047857; border-color: #047857; color: #FFFFFF; }
 .ddr-sales-btn:focus-visible { outline: 2px solid #2563EB; outline-offset: 2px; }
 
 .ddr-sales {
@@ -1584,25 +1959,27 @@
 .ddr-batch-btn {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   vertical-align: top;
   height: 26px;
   margin: 5px 0 0 6px;
   padding: 0 10px 0 8px;
-  border: 1.5px solid #4338CA;
-  border-radius: 4px;
-  background: #FFFFFF;
+  border: 1px solid #C7D2FE;
+  border-radius: 6px;
+  background: #EEF2FF;
   color: #3730A3;
   font-size: 13px;
   font-weight: 700;
   line-height: 1;
   cursor: pointer;
-  transition: background var(--ddr-motion), color var(--ddr-motion);
+  transition: background var(--ddr-motion), border-color var(--ddr-motion), color var(--ddr-motion);
 }
-.ddr-batch-btn .ddr-ico { width: 15px; height: 15px; stroke-width: 2.4; }
+.ddr-batch-btn .ddr-ico { width: 16px; height: 16px; stroke-width: 2.4; }
 .ddr-batch-btn:hover,
-.ddr-batch-btn[aria-expanded="true"] { background: #EEF2FF; }
-.ddr-batch-btn.ddr-batch-btn-on { background: #4338CA; color: #FFFFFF; }
+.ddr-batch-btn[aria-expanded="true"] { background: #E0E7FF; border-color: #818CF8; }
+/* Lives ticked: solid, so "batch compare is on" reads from across the room. */
+.ddr-batch-btn.ddr-batch-btn-on { background: #4338CA; border-color: #4338CA; color: #FFFFFF; }
+.ddr-batch-btn.ddr-batch-btn-on:hover { background: #3730A3; }
 .ddr-batch-btn:focus-visible { outline: 2px solid #2563EB; outline-offset: 2px; }
 .ddr-batch-btn-n {
   min-width: 18px;
@@ -1874,8 +2251,232 @@
 .ddr-msg-head #searchMsg:focus-visible,
 .ddr-msg-head #downMsgData:focus-visible { outline: 2px solid #2563EB !important; outline-offset: 1px; }
 
+/* `N known · N new` beside 留言用户 (moved out of the panel bar). */
+.ddr-msg-head .ddr-live-count {
+  margin-left: 10px;
+  font-family: var(--ddr-font) !important;
+  font-weight: 500;
+  letter-spacing: 0;
+  color: #475569;
+  font-variant-numeric: tabular-nums;
+  cursor: default;
+}
+
 .ddr-msg-head .help-button { margin-left: 3px; font-size: 13px; line-height: 1; vertical-align: -1px; }
 
 /* Tooltip item rows without a live code (the last-order list from Baserow):
    the empty chip keeps its grid column but takes no space. */
 .ddr-tip-code:empty { padding: 0; background: none; }
+
+
+/* ===========================================================================
+   Messenger history modal (openChat) - click a customer's 留言用户 cell.
+   Messenger look: customer bubbles left in grey, our page right in blue,
+   runs of one sender grouped with tighter corners, day/time separators.
+   Contrast: #050505 on #F0F2F5 18.1:1 · #FFF on #0866FF 4.8:1 ·
+   #65676B on #FFF 5.7:1 · link #1D4ED8 on #F0F2F5 5.7:1
+   =========================================================================== */
+
+.ddr-chat-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2147482600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.45);
+  animation: ddr-who-in 140ms ease-out;
+}
+.ddr-chat-overlay[hidden] { display: none !important; }
+
+.ddr-chat,
+.ddr-chat *:not(i) { font-family: var(--ddr-font) !important; box-sizing: border-box; }
+
+.ddr-chat:focus { outline: none; }
+.ddr-chat {
+  width: min(640px, 100%);
+  height: min(88vh, 100%);
+  display: flex;
+  flex-direction: column;
+  background: #FFFFFF;
+  border-radius: 16px;
+  box-shadow: 0 24px 64px rgba(15, 23, 42, 0.35);
+  overflow: hidden;
+}
+
+.ddr-chat-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px 12px 18px;
+  border-bottom: 1px solid #E4E6EB;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.ddr-chat-avatar,
+.ddr-chat-row-av-on {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: #D8DADF center / cover no-repeat;
+  color: #FFFFFF;
+  font-weight: 700;
+}
+.ddr-chat-avatar { width: 46px; height: 46px; font-size: 20px; }
+
+.ddr-chat-who { min-width: 0; flex: 1 1 auto; }
+.ddr-chat-name {
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: #050505;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ddr-chat-sub { font-size: 13px; color: #65676B; margin-top: 2px; font-variant-numeric: tabular-nums; }
+
+.ddr-chat-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 38px;
+  min-width: 38px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 19px;
+  background: #F0F2F5;
+  color: #050505 !important;
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none !important;
+  cursor: pointer;
+}
+.ddr-chat-reload { font-size: 18px; }
+.ddr-chat-close { font-size: 26px; line-height: 1; padding: 0; width: 38px; }
+.ddr-chat-btn:hover { background: #E4E6EB; }
+.ddr-chat-btn:focus-visible { outline: 3px solid #0866FF; outline-offset: 2px; }
+
+.ddr-chat-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 8px 16px 16px;
+}
+.ddr-chat-body:focus-visible { outline: 3px solid #0866FF; outline-offset: -3px; }
+
+.ddr-chat-top {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 0 6px;
+  min-height: 34px;
+}
+.ddr-chat-status { font-size: 13.5px; color: #65676B; text-align: center; }
+.ddr-chat-retry {
+  border: 0;
+  border-radius: 16px;
+  padding: 6px 14px;
+  background: #F0F2F5;
+  color: #050505;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ddr-chat-sep {
+  margin: 18px 0 8px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: #65676B;
+}
+
+.ddr-chat-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  margin-top: 2px;
+}
+.ddr-chat-row.ddr-chat-first,
+.ddr-chat-row.ddr-chat-solo { margin-top: 10px; }
+.ddr-chat-out { justify-content: flex-end; }
+
+.ddr-chat-row-av { flex: none; width: 30px; height: 30px; }
+.ddr-chat-row-av-on { font-size: 13px; }
+
+.ddr-chat-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 74%;
+  min-width: 0;
+}
+.ddr-chat-in .ddr-chat-stack { align-items: flex-start; }
+.ddr-chat-out .ddr-chat-stack { align-items: flex-end; }
+
+.ddr-chat-bubble {
+  padding: 9px 14px;
+  border-radius: 20px;
+  font-size: 16.5px;
+  line-height: 1.38;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  user-select: text;
+}
+.ddr-chat-in .ddr-chat-bubble { background: #F0F2F5; color: #050505; }
+.ddr-chat-out .ddr-chat-bubble { background: #0866FF; color: #FFFFFF; }
+.ddr-chat-in .ddr-chat-bubble a { color: #1D4ED8; text-decoration: underline; }
+.ddr-chat-out .ddr-chat-bubble a { color: #FFFFFF; text-decoration: underline; }
+
+/* Grouped runs: the corners on the sender's side tighten (Messenger). */
+.ddr-chat-in.ddr-chat-first .ddr-chat-bubble { border-bottom-left-radius: 6px; }
+.ddr-chat-in.ddr-chat-mid .ddr-chat-bubble { border-top-left-radius: 6px; border-bottom-left-radius: 6px; }
+.ddr-chat-in.ddr-chat-last .ddr-chat-bubble { border-top-left-radius: 6px; }
+.ddr-chat-out.ddr-chat-first .ddr-chat-bubble { border-bottom-right-radius: 6px; }
+.ddr-chat-out.ddr-chat-mid .ddr-chat-bubble { border-top-right-radius: 6px; border-bottom-right-radius: 6px; }
+.ddr-chat-out.ddr-chat-last .ddr-chat-bubble { border-top-right-radius: 6px; }
+
+/* An attachment EC2 does not show (sticker, file, template) or an image link that has expired. */
+.ddr-chat-row .ddr-chat-bubble.ddr-chat-attach {
+  background: transparent;
+  color: #65676B;
+  border: 1.5px dashed #CED0D4;
+  font-size: 14.5px;
+  font-style: italic;
+}
+
+.ddr-chat-img {
+  display: block;
+  border-radius: 16px;
+  overflow: hidden;
+  border: 1px solid #E4E6EB;
+  background: #F0F2F5;
+  line-height: 0;
+  cursor: zoom-in;
+}
+.ddr-chat-img img { display: block; max-width: 260px; max-height: 260px; width: auto; height: auto; object-fit: cover; }
+
+.ddr-chat-foot {
+  flex: none;
+  padding: 8px 16px;
+  border-top: 1px solid #E4E6EB;
+  font-size: 12.5px;
+  color: #65676B;
+  text-align: center;
+}
+
+/* The 留言用户 cell opens the chat. */
+.ddr-msg-body > tbody > tr[id^="win_tr_"]:not(.ddr-own) > td:first-child { cursor: pointer; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ddr-chat-overlay { animation: none; }
+}

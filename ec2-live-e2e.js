@@ -203,7 +203,7 @@ async function ec2Cookie() {
       nameSize: getComputedStyle(document.querySelector('.ddr-name')).fontSize,
       contrast: [
         check('.ddr-name', 'name'),
-        check('.ddr-ltv', 'LTV headline'),
+        check('.ddr-ltv:not(.ddr-ltv-none)', 'LTV headline'),
         check('.ddr-m', 'metric'),
         check('.ddr-chip', 'tier chip'),
         check('.ddr-tonight', 'tonight pill'),
@@ -230,22 +230,77 @@ async function ec2Cookie() {
     };
   });
 
-  // --- OVERLAP TEST --------------------------------------------------------
-  const overlap = await page.evaluate(() => {
+  // --- WHO'S IN THE LIVE ---------------------------------------------------
+  // A button in the dock opens a centred modal (big type, list scrolls inside);
+  // ×, the backdrop and Escape close it.
+  const hiddenAtRest = await page.evaluate(() => document.querySelector('.ddr-who-overlay').hidden);
+  await page.hover('.ddr-who-btn');
+  await page.waitForTimeout(300);
+  const hoverOpens = await page.evaluate(() => !document.querySelector('.ddr-who-overlay').hidden);
+  await page.click('.ddr-who-btn');
+  await page.waitForTimeout(300);
+  const overlap = await page.evaluate((a) => {
     const pa = document.querySelector(".ddr-panel").getBoundingClientRect();
-    const bar = document.querySelector(".ddr-col-left .l-group-btn").getBoundingClientRect();
-    const tbl = document.querySelector("#liveMessageDiv").getBoundingClientRect();
-    const hit = (a,b) => !(a.right<=b.left||a.left>=b.right||a.bottom<=b.top||a.top>=b.bottom);
+    const body = document.querySelector(".ddr-panel-body");
+    const name = document.querySelector(".ddr-pname");
     return {
-      panelOpen: !document.querySelector(".ddr-panel").classList.contains("ddr-collapsed"),
-      docked: document.querySelector(".ddr-panel").classList.contains("ddr-docked"),
+      hiddenAtRest: a.hiddenAtRest,
+      hoverOpens: a.hoverOpens,
+      openOnClick: !document.querySelector(".ddr-who-overlay").hidden,
       panel: {x:Math.round(pa.left),y:Math.round(pa.top),w:Math.round(pa.width),h:Math.round(pa.height)},
-      overlapsControls: hit(pa,bar),
-      overlapsCommentTable: hit(pa,tbl),
+      centred: Math.abs((pa.left + pa.right) / 2 - innerWidth / 2) < 2 && Math.abs((pa.top + pa.bottom) / 2 - innerHeight / 2) < 2,
+      fitsWindow: pa.top >= 0 && pa.bottom <= innerHeight,
+      scrolls: body.scrollHeight > body.clientHeight && getComputedStyle(body).overflowY === 'auto',
+      nameFontPx: name ? parseFloat(getComputedStyle(name).fontSize) : 0,
       vipRows: document.querySelectorAll(".ddr-prow").length,
     };
+  }, { hiddenAtRest, hoverOpens });
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(200);
+  overlap.closedOnEscape = await page.evaluate(() => document.querySelector('.ddr-who-overlay').hidden);
+  await page.click('.ddr-who-btn');
+  await page.mouse.click(8, 8);
+  await page.waitForTimeout(200);
+  overlap.closedOnBackdrop = await page.evaluate(() => document.querySelector('.ddr-who-overlay').hidden);
+  // --- MESSENGER HISTORY ---------------------------------------------------
+  // Clicking a customer's 留言用户 cell opens their EC2 Messenger history
+  // (GET a=FBUser&m=dialog, read-only); the PSID copy button does not.
+  const chatRow = await page.evaluate(() => {
+    const tr = [...document.querySelectorAll('#liveMessageDiv tbody > tr[id^="win_tr_"]:not(.ddr-own)')].find((r) => r.querySelector('.ddr-name'));
+    return tr && tr.id;
   });
-  console.log("\n=== PANEL DOCK ===");
+  const chatReqs = [];
+  page.on('request', (q) => { if (/m=dialog|sendMessage/.test(q.url())) chatReqs.push(q.method() + ' ' + q.url().replace(/^.*[?&]m=/, '')); });
+  let chatCheck = { row: !!chatRow };
+  if (chatRow) {
+    await page.locator(`#${chatRow} > td:first-child .ddr-name`).click();
+    await page.waitForFunction(() => { const t = document.querySelector('.ddr-chat-top'); return t && !/Loading/.test(t.textContent); }, null, { timeout: 30000 });
+    await page.waitForTimeout(800);
+    chatCheck = await page.evaluate(() => {
+      const o = document.querySelector('.ddr-chat-overlay');
+      const b = o.querySelector('.ddr-chat-body');
+      const p = o.querySelector('.ddr-chat').getBoundingClientRect();
+      return {
+        open: !o.hidden,
+        name: o.querySelector('.ddr-chat-name').textContent,
+        bubbles: o.querySelectorAll('.ddr-chat-row').length,
+        inAndOut: [o.querySelectorAll('.ddr-chat-in').length, o.querySelectorAll('.ddr-chat-out').length],
+        atNewest: Math.abs(b.scrollHeight - b.clientHeight - b.scrollTop) < 4,
+        fitsWindow: p.top >= 0 && p.bottom <= innerHeight,
+      };
+    });
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(200);
+    chatCheck.closedOnEscape = await page.evaluate(() => document.querySelector('.ddr-chat-overlay').hidden);
+    await page.locator(`#${chatRow} .ddr-psid`).click({ force: true });
+    await page.waitForTimeout(300);
+    chatCheck.psidCopyDoesNotOpen = await page.evaluate(() => document.querySelector('.ddr-chat-overlay').hidden);
+  }
+  chatCheck.onlyGets = chatReqs.length > 0 && chatReqs.every((r) => r.startsWith('GET dialog'));
+  console.log("\n=== MESSENGER HISTORY ===");
+  Object.entries(chatCheck).forEach(([k, v]) => console.log("  " + k.padEnd(22), JSON.stringify(v)));
+
+  console.log("\n=== WHO'S IN THE LIVE ===");
   Object.entries(overlap).forEach(([k,v])=>console.log("  "+k.padEnd(22), JSON.stringify(v)));
 
   const p = (k, v) => console.log('  ' + String(k).padEnd(24), v);

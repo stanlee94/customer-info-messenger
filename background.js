@@ -1061,7 +1061,74 @@ function getCustomerSummaryByPsid(psid) {
   });
 }
 
+/**
+ * Runs in the EC2 live page's MAIN world (chrome.scripting, world: 'MAIN') for
+ * the overlay's big 刷新: re-runs living.js's own loaders for the comment list
+ * (getCommentsPage, first page) and the bid list (freshGroupsFor4) without a
+ * page reload, and resolves once both requests have landed (jQuery ajaxStop).
+ * Must be self-contained - it is serialised into the page.
+ *
+ * living.js's 5 s comment poll prepends rows newer than `lastTime`. To keep it
+ * from adding duplicates while the list is rebuilt: wait for an in-flight poll
+ * to finish, then park `lastTime` in the far future (polls return nothing);
+ * getCommentsPage(live_id, 1) sets the real cursor from the fresh first page.
+ */
+function ec2ReloadListsInPage() {
+  return new Promise((resolve) => {
+    const $ = window.jQuery;
+    const liveId = window.live_id || new URLSearchParams(location.search).get('live_id');
+    if (!$ || typeof window.getCommentsPage !== 'function' || typeof window.freshGroupsFor4 !== 'function' || !liveId) {
+      resolve({ ok: false, error: 'EC2 page functions not found' });
+      return;
+    }
+    const started = Date.now();
+    const go = () => {
+      const prevLastTime = window.lastTime;
+      let finished = false;
+      let timer = 0;
+      const finish = (error) => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timer);
+        $(document).off('ajaxStop', onStop);
+        // The first page never arrived: give the poll its old cursor back.
+        if (String(window.lastTime).startsWith('9999')) window.lastTime = prevLastTime;
+        const rows = document.querySelectorAll('#liveMessageDiv tbody > tr[id^="win_tr_"]').length;
+        const ok = !error && rows > 0;
+        resolve({ ok, error: ok ? '' : error || 'no comments loaded', rows, ms: Date.now() - started });
+      };
+      const onStop = () => finish('');
+      timer = setTimeout(() => finish('timeout'), 20000);
+      window.lastTime = '9999-12-31 23:59:59';
+      window.pageLastTime = '';
+      window.pageReIds = [];
+      $('#tr_page').remove();
+      $('#liveMessageDiv tbody').empty();
+      $(document).on('ajaxStop', onStop);
+      window.getCommentsPage(liveId, 1);
+      window.freshGroupsFor4();
+    };
+    const wait = (n) => {
+      if (!$.active || n >= 50) go();
+      else setTimeout(() => wait(n + 1), 100);
+    };
+    wait(0);
+  });
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === 'EC2_RELOAD_LISTS') {
+    chrome.scripting
+      .executeScript({
+        target: { tabId: sender.tab.id, frameIds: [sender.frameId || 0] },
+        world: 'MAIN',
+        func: ec2ReloadListsInPage,
+      })
+      .then((res) => sendResponse((res && res[0] && res[0].result) || { ok: false, error: 'no result' }))
+      .catch((e) => sendResponse({ ok: false, error: String((e && e.message) || e) }));
+    return true;
+  }
+
   if (message?.type === 'SEARCH_MANYCHAT_BY_NAME') {
     searchManyChatByName(message.name).then(sendResponse);
     return true;

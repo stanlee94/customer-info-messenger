@@ -43,6 +43,8 @@
   const rfmCache = new Map();
   /** psid -> display name from the comment feed */
   const psidName = new Map();
+  /** Our Facebook page id (the feed's fb_account_id) - needed for EC2's Messenger history. */
+  let pageAccountId = '';
   /** comment ids whose row is on screen but not yet badged */
   const pending = new Set();
   /** psids awaiting a Baserow lookup */
@@ -425,6 +427,7 @@
     /** products whose EC2 wins may have changed in this batch of rows */
     const changed = new Set();
     for (const row of list) {
+      if (row.fb_account_id && !pageAccountId) pageAccountId = String(row.fb_account_id);
       const psid = String(row.fb_user_id || '');
       if (!psid || psid === String(row.fb_account_id)) {
         // Our own broadcasts. Remember their row keys so badgeRow can retire
@@ -645,7 +648,7 @@
         })}>` +
         `${escapeHtml(money(rfm.ltv))}</span>` +
         spendBar(rfm.m, rfm.ltv) +
-        `<span class="ddr-m" ${tipAttr({
+        `<span class="ddr-m ddr-aov" ${tipAttr({
           h: 'Average order value', v: moneyFull(aov),
           rows: [['Lifetime spend', moneyFull(rfm.ltv)], ['Orders', String(rfm.orderCount)]],
         })}>` +
@@ -1255,6 +1258,23 @@
 
   let panel;
 
+  /**
+   * `N known · N new` sits beside the 留言用户 column label, not in the panel
+   * bar, so the docked bar stays short. The header is a separate table that
+   * living.js never reads (okWin walks the body rows), so a child span is safe.
+   */
+  function liveCountNode() {
+    const th = document.querySelector('.ddr-msg-head thead th, .ddr-msg-head th');
+    if (!th) return null;
+    let node = th.querySelector('.ddr-live-count');
+    if (!node) {
+      node = document.createElement('span');
+      node.className = 'ddr-live-count';
+      th.appendChild(node);
+    }
+    return node;
+  }
+
   function renderPanel() {
     if (!panel) return;
 
@@ -1273,9 +1293,9 @@
     const ranked = [...seen.values()].sort((a, b) => b.ltv - a.ltv).slice(0, 15);
     const newCount = [...new Set(commentPsid.values())].filter((p) => rfmCache.get(p) === null).length;
 
-    const count = panel.querySelector('.ddr-panel-count');
-    count.textContent = `${seen.size} known · ${newCount} new`;
-    count.dataset.ddrTip = JSON.stringify({
+    const count = liveCountNode();
+    if (count) count.textContent = `${seen.size} known · ${newCount} new`;
+    if (count) count.dataset.ddrTip = JSON.stringify({
       h: 'Customers in this live',
       rows: [['In Baserow', String(seen.size)], ['New (not in Baserow)', String(newCount)],
         ['RFM reused from cache', String(lookupStats.cacheHits)], ['RFM fetched', String(lookupStats.fetched)],
@@ -1312,147 +1332,124 @@
       .join('');
   }
 
-  const POS_KEY = 'ddrPanelPos';
-  // v2: the docked panel now shares the left column with the goods list and
-  // defaults to collapsed. Every earlier load stored '0', so the old key would
-  // force it open over the list.
-  const COLLAPSE_KEY = 'ddrPanelCollapsed.v2';
-
-  /**
-   * The live page has no free corner - bottom-right sits on the comment table,
-   * bottom-left on the 标组 buttons. So the panel starts collapsed to a header
-   * bar and the operator can drag it wherever their layout has room.
-   */
-  function makeDraggable(el, handle) {
-    let startX = 0;
-    let startY = 0;
-    let originX = 0;
-    let originY = 0;
-    let dragging = false;
-
-    const onMove = (e) => {
-      if (!dragging) return;
-      const x = Math.max(0, Math.min(window.innerWidth - 60, originX + e.clientX - startX));
-      const y = Math.max(0, Math.min(window.innerHeight - 30, originY + e.clientY - startY));
-      el.style.left = x + 'px';
-      el.style.top = y + 'px';
-      el.style.right = 'auto';
-      el.style.bottom = 'auto';
-    };
-
-    const onUp = () => {
-      if (!dragging) return;
-      dragging = false;
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
-      try {
-        localStorage.setItem(POS_KEY, JSON.stringify({ left: el.style.left, top: el.style.top }));
-      } catch (err) {
-        /* private mode - position just will not persist */
-      }
-    };
-
-    handle.addEventListener('mousedown', (e) => {
-      if (e.target.closest('.ddr-panel-toggle')) return;
-      const rect = el.getBoundingClientRect();
-      startX = e.clientX;
-      startY = e.clientY;
-      originX = rect.left;
-      originY = rect.top;
-      dragging = true;
-      e.preventDefault();
-      document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup', onUp);
-    });
+  // The panel used to be a draggable, collapsible bar; it is now a hover popup
+  // opened from the dock. Drop what those versions stored.
+  try {
+    localStorage.removeItem('ddrPanelPos');
+    localStorage.removeItem('ddrPanelCollapsed.v2');
+  } catch (err) {
+    /* ignore */
   }
 
+  const FLIP_KEY = 'ddrLayoutFlip';
+  let dock = null;
+  let whoBtn = null;
+  let panelOverlay = null;
+
+  /**
+   * "Who's in the live" is a centred modal opened by the dock button - big
+   * type for reading at a distance, the list scrolls inside it. Closes on ×,
+   * a click on the backdrop, or Escape.
+   */
   function buildPanel() {
+    panelOverlay = mk('div', 'ddr-who-overlay');
+    panelOverlay.hidden = true;
     panel = document.createElement('div');
     panel.className = 'ddr-panel';
+    panel.id = 'ddr-who-panel';
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-modal', 'true');
+    panel.setAttribute('aria-labelledby', 'ddr-who-title');
     panel.innerHTML =
       '<div class="ddr-panel-head">' +
-      '<span class="ddr-panel-title">Who\'s in the live</span>' +
-      '<span class="ddr-panel-count"></span>' +
-      '<button class="ddr-panel-toggle" type="button" aria-label="Toggle panel">+</button>' +
+      '<span class="ddr-panel-title" id="ddr-who-title">Who\'s in the live</span>' +
+      '<button class="ddr-panel-close" type="button" aria-label="Close">×</button>' +
       '</div>' +
-      '<div class="ddr-panel-body"><div class="ddr-empty">Waiting for comments…</div></div>';
+      '<div class="ddr-panel-body" tabindex="0"><div class="ddr-empty">Waiting for comments…</div></div>';
+    panel.querySelector('.ddr-panel-close').addEventListener('click', hidePanel);
+    panelOverlay.addEventListener('click', (e) => {
+      if (e.target === panelOverlay) hidePanel();
+    });
+    panelOverlay.appendChild(panel);
+    document.body.appendChild(panelOverlay);
+  }
 
-    const toggle = panel.querySelector('.ddr-panel-toggle');
-    const setCollapsed = (collapsed) => {
-      panel.classList.toggle('ddr-collapsed', collapsed);
-      toggle.textContent = collapsed ? '+' : '–';
+  function showPanel() {
+    if (!panelOverlay || !panelOverlay.hidden) return;
+    panelOverlay.hidden = false;
+    whoBtn.setAttribute('aria-expanded', 'true');
+    renderPanel();
+    panel.querySelector('.ddr-panel-body').scrollTop = 0;
+    panel.querySelector('.ddr-panel-close').focus();
+  }
+
+  function hidePanel() {
+    if (!panelOverlay || panelOverlay.hidden) return;
+    panelOverlay.hidden = true;
+    whoBtn.setAttribute('aria-expanded', 'false');
+    whoBtn.focus();
+  }
+
+  function applyFlip(on, flipBtn) {
+    document.documentElement.classList.toggle('ddr-flip', on);
+    flipBtn.setAttribute('aria-pressed', String(on));
+  }
+
+  /**
+   * The bar under the big 刷新: [Who's in the live] opens the centred modal
+   * on click, [Flip] mirrors the page. Our own node, appended to the left
+   * column as a grid item - living.js never rewrites that column (it holds the
+   * video iframe).
+   */
+  function installDock() {
+    const col = document.querySelector('.ddr-col-left');
+    if (!col || dock) return;
+    dock = mk('div', 'ddr-dock');
+
+    whoBtn = document.createElement('button');
+    whoBtn.type = 'button';
+    whoBtn.className = 'ddr-who-btn';
+    whoBtn.setAttribute('aria-haspopup', 'dialog');
+    whoBtn.setAttribute('aria-expanded', 'false');
+    whoBtn.setAttribute('aria-controls', 'ddr-who-panel');
+    whoBtn.innerHTML =
+      ico('<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.6-3.6 3.2-5.5 6.5-5.5s5.9 1.9 6.5 5.5"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8"/><path d="M18.5 14.8c1.7.7 2.8 2.4 3 5.2"/>') +
+      '<span>Who\'s in the live</span>';
+    whoBtn.addEventListener('click', () => (panelOverlay.hidden ? showPanel() : hidePanel()));
+    dock.appendChild(whoBtn);
+
+    const flipBtn = document.createElement('button');
+    flipBtn.type = 'button';
+    flipBtn.className = 'ddr-flip-btn';
+    flipBtn.setAttribute('aria-label', 'Flip layout');
+    flipBtn.innerHTML = ico('<path d="M7 4 3 8l4 4"/><path d="M3 8h13"/><path d="m17 12 4 4-4 4"/><path d="M21 16H8"/>') + '<span>Flip</span>';
+    let flipped = false;
+    try {
+      flipped = localStorage.getItem(FLIP_KEY) === '1';
+    } catch (err) {
+      /* ignore */
+    }
+    applyFlip(flipped, flipBtn);
+    flipBtn.addEventListener('click', () => {
+      const on = !document.documentElement.classList.contains('ddr-flip');
+      applyFlip(on, flipBtn);
       try {
-        localStorage.setItem(COLLAPSE_KEY, collapsed ? '1' : '0');
+        localStorage.setItem(FLIP_KEY, on ? '1' : '0');
       } catch (err) {
         /* ignore */
       }
-    };
+      // Fixed-position pieces (composer button, open bubbles) follow the columns.
+      window.dispatchEvent(new Event('resize'));
+    });
+    dock.appendChild(flipBtn);
 
-    toggle.addEventListener('click', () => setCollapsed(!panel.classList.contains('ddr-collapsed')));
-
-    // Default COLLAPSED: docked, it sits as a bar under the goods list and
-    // opens upward over it on demand - the list is a live control, the panel
-    // is reference.
-    let startCollapsed = true;
-    try {
-      startCollapsed = localStorage.getItem(COLLAPSE_KEY) !== '0';
-    } catch (err) {
-      /* ignore */
-    }
-    setCollapsed(startCollapsed);
-
-    try {
-      const saved = JSON.parse(localStorage.getItem(POS_KEY) || 'null');
-      if (saved && saved.left && saved.top) {
-        panel.style.left = saved.left;
-        panel.style.top = saved.top;
-        panel.style.right = 'auto';
-        panel.style.bottom = 'auto';
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && panelOverlay && !panelOverlay.hidden) {
+        e.stopPropagation();
+        hidePanel();
       }
-    } catch (err) {
-      /* ignore */
-    }
-
-    makeDraggable(panel, panel.querySelector('.ddr-panel-head'));
-    document.body.appendChild(panel);
-  }
-
-  /**
-   * Park the panel as a bar along the bottom of the left column, under the
-   * goods list. The column reserves room for the bar (.ddr-vip-docked), so the
-   * collapsed bar never covers a product; expanded, it grows upward over the
-   * list (CSS). Left and width follow the real column, re-measured on resize.
-   * Skipped entirely once the operator has dragged it somewhere of their own
-   * choosing.
-   */
-  function dockPanel() {
-    if (!panel) return;
-    const col = document.querySelector('.ddr-col-left');
-    try {
-      if (localStorage.getItem(POS_KEY)) {
-        if (col) col.classList.remove('ddr-vip-docked');
-        return;
-      }
-    } catch (err) {
-      /* ignore */
-    }
-    if (!col) return;
-    const r = col.getBoundingClientRect();
-    if (!r.width) return;
-    col.classList.add('ddr-vip-docked');
-    panel.style.left = Math.round(r.left + 5) + 'px';
-    panel.style.top = 'auto';
-    panel.style.right = 'auto';
-    panel.style.bottom = '8px';
-    // !important: .ddr-collapsed shrinks width to the header's content.
-    panel.style.setProperty('width', Math.max(230, Math.round(r.width - 10)) + 'px', 'important');
-    // Expanded, it may cover the goods list but never the live controls above.
-    // Expanded, it rises into the space under 刷新/竞标开始 in the video
-    // column. (.ddr-goods itself is display: contents and has no box.)
-    const controls = col.querySelector('.ddr-goods .widget-box > div:first-child');
-    const top = controls ? controls.getBoundingClientRect().bottom : window.innerHeight * 0.4;
-    panel.style.maxHeight = Math.max(200, Math.round(window.innerHeight - 8 - top)) + 'px';
-    panel.classList.add('ddr-docked');
+    }, true);
+    col.appendChild(dock);
   }
 
   // ---------------------------------------------------------------- layout
@@ -1825,6 +1822,10 @@
     if (!group) return;
 
     const liveName = ((group.querySelector('p') || {}).textContent || '').replace(/^\s*活动名称\s*[:：]\s*/, '').trim();
+    // Attribute only (no child nodes): CSS shows it as the card title without
+    // EC2's "活动名称:" prefix.
+    const nameP = group.querySelector('p');
+    if (nameP && liveName) nameP.dataset.ddrLive = liveName;
 
     salesEl = mk('div', 'ddr-sales');
     salesEl.id = 'ddr-sales';
@@ -1863,7 +1864,7 @@
     btn.className = 'ddr-sales-btn';
     btn.setAttribute('aria-describedby', 'ddr-sales');
     btn.innerHTML =
-      ico('<path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/>') + '<span>销售额</span>';
+      ico('<path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/>') + '<span>Rev</span>';
     // Hover (or keyboard focus) only - a click does nothing, so it can never
     // be mistaken for one of EC2's action buttons.
     // Instant: leaving the button closes the panel at once (host's choice -
@@ -1877,6 +1878,509 @@
     });
     // Beside EC2's buttons, never inside or around them.
     group.appendChild(btn);
+  }
+
+  /**
+   * 竞标开始 in the buttons card, where 全部起标线 was (that one is CSS-hidden
+   * at the host's request). The real node is moved, not copied: living.js binds
+   * its click by id at load and toggles .btn-success on it by id, and nothing
+   * rewrites the header it came from, so handler and state go with it.
+   */
+  function placeStartButton() {
+    const group = document.querySelector('.ddr-col-left .l-group-btn');
+    const startBtn = document.getElementById('oneClickStartBtn');
+    if (!group || !startBtn || startBtn.parentElement === group) return;
+    const allLines = group.querySelector('button[onclick^="startAllComment"]');
+    group.insertBefore(startBtn, allLines ? allLines.nextSibling : null);
+  }
+
+  /**
+   * The big 刷新 refreshes both lists in place, like a single-page app: the
+   * comment list (first page) and the bid list are reloaded by living.js's own
+   * loaders in the page's MAIN world (background.js ec2ReloadListsInPage), and
+   * shown together only once both have landed and our cards are drawn. Our own
+   * feed poll and tonight's win records are re-read alongside, so the cards and
+   * 🛒 totals are current too. A capture listener on document runs before
+   * living.js's jQuery handler on #refresh (which only re-read the bid list)
+   * and stops the click there. Rows added with 点击加载更多 are not kept - the
+   * list restarts at the newest page, as on a page load.
+   */
+  let reloadWired = false;
+  let listsBusy = false;
+
+  function reloadListsInPage() {
+    return new Promise((resolve) => {
+      try {
+        chrome.runtime.sendMessage({ type: 'EC2_RELOAD_LISTS' }, (resp) => {
+          resolve(chrome.runtime.lastError ? { ok: false, error: chrome.runtime.lastError.message } : resp || { ok: false });
+        });
+      } catch (err) {
+        resolve({ ok: false, error: String(err) }); // extension reloaded under the page
+      }
+    });
+  }
+
+  async function refreshLists() {
+    if (listsBusy) return;
+    listsBusy = true;
+    const btn = document.getElementById('refresh');
+    const root = document.documentElement;
+    root.classList.add('ddr-lists-loading');
+    if (btn) {
+      btn.classList.remove('ddr-refresh-failed');
+      btn.setAttribute('aria-busy', 'true');
+    }
+    const feed = poll().catch(() => {});
+    const res = await reloadListsInPage();
+    await feed;
+    badgeAll();
+    const body = document.querySelector('.ddr-col-right .l-table > .tab-body');
+    if (body) body.scrollTop = 0;
+    // Two frames: MutationObserver work and layout land before the reveal.
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    root.classList.remove('ddr-lists-loading');
+    if (btn) {
+      btn.removeAttribute('aria-busy');
+      // Icon-only button: a failed refresh shows as a red outline for a few seconds.
+      if (!res.ok) {
+        btn.classList.add('ddr-refresh-failed');
+        setTimeout(() => btn.classList.remove('ddr-refresh-failed'), 4000);
+      }
+    }
+    listsBusy = false;
+    loadAbandoned().then(loadTonightAll);
+  }
+
+  function wireReloadButton() {
+    const btn = document.getElementById('refresh');
+    if (!btn) return;
+    // Icon only (host's request): EC2's 刷新 text stays in the node, hidden by
+    // CSS (font-size 0); the button itself (bound by id in living.js) is untouched.
+    btn.setAttribute('aria-label', 'Refresh comments and bid list');
+    delete btn.dataset.ddrSub;
+    if (reloadWired) return;
+    reloadWired = true;
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest || !e.target.closest('#refresh')) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      refreshLists();
+    }, true);
+  }
+
+
+  // ------------------------------------------------------------ MYR → SGD converter
+  //
+  // Beside the square Refresh: type a MYR price, the SGD price appears as you
+  // type (no Enter). SGD comes from the host's Cloudflare Worker (SGD_API) - a
+  // price formula, not a plain exchange rate (100 → 37.00, 128 → 48.00), so
+  // no rate is shown. Answers are cached per input (sgdByMyr, shared with the
+  // goods tooltips); a burst of keystrokes sends one request after a short
+  // pause, and only the latest request's answer is ever shown.
+  const FX_DEBOUNCE_MS = 180;
+  let fxEl = null;
+
+  /** "RM 1,234.50" -> "1234.50"; '' when empty; null when not a price. */
+  function fxParse(raw) {
+    const t = String(raw || '').replace(/rm|myr|,|\s/gi, '');
+    if (!t) return '';
+    if (!/^\d*\.?\d{0,2}$/.test(t) || t === '.') return null;
+    const n = Number(t);
+    return n > 0 ? String(n) : null;
+  }
+
+  function installConverter() {
+    const header = document.querySelector('.ddr-goods .widget-box > div:first-child');
+    if (!header || fxEl) return;
+    fxEl = mk('div', 'ddr-fx');
+    fxEl.setAttribute('role', 'group');
+    fxEl.setAttribute('aria-label', 'MYR to SGD price converter');
+    fxEl.innerHTML =
+      '<label class="ddr-fx-field">' +
+      '<span class="ddr-fx-label">MYR price</span>' +
+      '<span class="ddr-fx-row"><input class="ddr-fx-in" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="0" aria-label="Price in MYR">' +
+      '<span class="ddr-fx-cur"><span class="ddr-flag ddr-flag-my" aria-hidden="true"></span>MYR</span></span>' +
+      '</label>' +
+      '<div class="ddr-fx-field ddr-fx-field-out">' +
+      '<span class="ddr-fx-label">SGD price</span>' +
+      '<span class="ddr-fx-row"><button type="button" class="ddr-fx-out" aria-live="polite" aria-label="SGD price, click to copy">0.00</button>' +
+      '<span class="ddr-fx-cur"><span class="ddr-flag ddr-flag-sg" aria-hidden="true"></span>SGD</span></span>' +
+      '</div>';
+    header.appendChild(fxEl);
+
+    const input = fxEl.querySelector('.ddr-fx-in');
+    const out = fxEl.querySelector('.ddr-fx-out');
+    let timer = 0;
+    let seq = 0;
+
+    const show = (text, state) => {
+      out.textContent = text;
+      fxEl.dataset.state = state || '';
+    };
+
+    const run = () => {
+      clearTimeout(timer);
+      const myr = fxParse(input.value);
+      const mine = ++seq;
+      if (myr === '') return show('0.00', 'empty');
+      if (myr === null) return show('—', 'invalid');
+      if (sgdByMyr.has(myr)) return show(moneyTwo(sgdByMyr.get(myr)), 'ok');
+      fxEl.dataset.state = 'busy'; // keep the last figure, dimmed, until the answer lands
+      timer = setTimeout(() => {
+        fetch(SGD_API, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prices: [myr] }),
+        })
+          .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))))
+          .then((json) => {
+            const r = (json.results || [])[0];
+            if (!r || r.sgd == null) throw new Error('no result');
+            sgdByMyr.set(myr, String(r.sgd));
+            if (mine === seq) show(moneyTwo(r.sgd), 'ok');
+          })
+          .catch(() => {
+            if (mine === seq) show('—', 'error');
+          });
+      }, FX_DEBOUNCE_MS);
+    };
+
+    input.addEventListener('input', run);
+    // Keys typed here are ours: EC2's page shortcuts (and our Escape handlers) never see them.
+    input.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Escape') {
+        input.value = '';
+        run();
+      }
+    });
+    out.addEventListener('click', () => {
+      if (fxEl.dataset.state !== 'ok') return;
+      navigator.clipboard.writeText(out.textContent).then(() => {
+        fxEl.classList.add('ddr-fx-copied');
+        setTimeout(() => fxEl.classList.remove('ddr-fx-copied'), 900);
+      }).catch(() => {});
+    });
+    show('0.00', 'empty');
+  }
+
+  // ------------------------------------------------------------ Messenger history
+  //
+  // Click anywhere in a customer's 留言用户 cell -> a Messenger-style modal of
+  // their conversation with our page, read from EC2's 讯息管理 dialog page:
+  //   GET a=FBUser&m=dialog&fb_account_id=<page>&fb_user_id=<psid>&page=N
+  // Server-rendered HTML (#sample_3), 10 messages per page, newest first,
+  // #sample_1_paginate li.next while older pages exist (~180-350 ms a page).
+  // Row cells: ID · sender (avatar + name; the customer's avatar URL carries
+  // psid=) · content (text with its own newlines, img.pimg for images, blank
+  // when EC2 could not show an attachment) · 状态 · 时间 (MYT).
+  // Read-only: that page also has a send form (ajax_sendMessageContent), which
+  // this never calls. Parsed with DOMParser (inert) and rendered as text nodes.
+
+  let chatOverlay = null;
+  const chat = { psid: '', seq: 0, page: 0, done: false, loading: false, error: false, msgs: [], name: '', avatar: '', back: null, stick: true };
+
+  const dialogUrl = (psid, page) =>
+    `${location.origin}${location.pathname}?fb_account_id=${encodeURIComponent(pageAccountId)}` +
+    `&fb_user_id=${encodeURIComponent(psid)}&a=FBUser&m=dialog${page > 1 ? `&page=${page}` : ''}`;
+
+  async function fetchDialogPage(psid, page) {
+    let html;
+    try {
+      const res = await fetch(dialogUrl(psid, page), { credentials: 'same-origin' });
+      if (!res.ok) return null;
+      html = await res.text();
+    } catch (err) {
+      return null;
+    }
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const table = doc.getElementById('sample_3');
+    if (!table) return null; // not the dialog page (logged out)
+    const caption = doc.querySelector('.portlet-title .caption');
+    const nameMatch = caption && caption.textContent.match(/与\s*\((.*)\)\s*聊天记录/);
+    const name = nameMatch ? nameMatch[1].trim() : '';
+    let avatar = '';
+    const msgs = [];
+    table.querySelectorAll('tbody > tr').forEach((tr) => {
+      const td = tr.children;
+      if (td.length < 5) return;
+      const img = td[1].querySelector('img');
+      const src = img ? img.getAttribute('src') || '' : '';
+      const sender = ((td[1].querySelector('span') || {}).textContent || '').trim();
+      const fromCustomer = src ? /[?&]psid=/.test(src) : !!name && sender === name;
+      if (fromCustomer && src && !avatar) avatar = src;
+      const images = [...td[2].querySelectorAll('img')].map((i) => i.getAttribute('src')).filter(Boolean);
+      msgs.push({
+        id: td[0].textContent.trim(),
+        fromCustomer,
+        text: td[2].textContent.replace(/^\s+|\s+$/g, ''),
+        images,
+        time: td[4].textContent.trim(),
+      });
+    });
+    const pag = doc.getElementById('sample_1_paginate');
+    return { msgs, hasNext: !!(pag && pag.querySelector('li.next')), name, avatar };
+  }
+
+  const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const localDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  function chatDayLabel(day) {
+    const today = new Date();
+    const yest = new Date(Date.now() - 86400000);
+    if (day === localDay(today)) return 'Today';
+    if (day === localDay(yest)) return 'Yesterday';
+    const [y, m, d] = day.split('-').map(Number);
+    const wd = WEEKDAYS[new Date(y, m - 1, d).getDay()];
+    return `${wd}, ${d} ${MONTHS[m - 1]}${y !== today.getFullYear() ? ` ${y}` : ''}`;
+  }
+  const chatMs = (t) => {
+    const m = String(t).match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):?(\d{2})?/);
+    return m ? new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0)).getTime() : 0;
+  };
+
+  /** Text with links made clickable - text nodes only, never HTML. */
+  function linkified(text) {
+    const frag = document.createDocumentFragment();
+    const re = /(https?:\/\/[^\s<>"']+|(?:www\.)?ddherbs\.com\.my\/[^\s<>"']*)/gi;
+    let last = 0;
+    let m;
+    while ((m = re.exec(text))) {
+      if (m.index > last) frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+      const a = document.createElement('a');
+      a.href = /^https?:/i.test(m[0]) ? m[0] : `https://${m[0]}`;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.textContent = m[0];
+      frag.appendChild(a);
+      last = m.index + m[0].length;
+    }
+    if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+    return frag;
+  }
+
+  function buildChat() {
+    chatOverlay = mk('div', 'ddr-chat-overlay');
+    chatOverlay.hidden = true;
+    const box = mk('div', 'ddr-chat');
+    box.setAttribute('role', 'dialog');
+    box.setAttribute('aria-modal', 'true');
+    box.setAttribute('aria-labelledby', 'ddr-chat-name');
+    box.tabIndex = -1;
+    box.innerHTML =
+      '<div class="ddr-chat-head">' +
+      '<span class="ddr-chat-avatar" aria-hidden="true"></span>' +
+      '<div class="ddr-chat-who"><div class="ddr-chat-name" id="ddr-chat-name"></div>' +
+      '<div class="ddr-chat-sub"></div></div>' +
+      '<button type="button" class="ddr-chat-btn ddr-chat-reload" aria-label="Reload messages">↻</button>' +
+      '<a class="ddr-chat-btn ddr-chat-ec2" target="_blank" rel="noopener">EC2 ↗</a>' +
+      '<button type="button" class="ddr-chat-btn ddr-chat-close" aria-label="Close">×</button>' +
+      '</div>' +
+      '<div class="ddr-chat-body" tabindex="0"><div class="ddr-chat-top"></div><div class="ddr-chat-list"></div></div>' +
+      '<div class="ddr-chat-foot">Read-only · Messenger history from EC2 讯息管理</div>';
+    chatOverlay.appendChild(box);
+    document.body.appendChild(chatOverlay);
+
+    box.querySelector('.ddr-chat-close').addEventListener('click', closeChat);
+    box.querySelector('.ddr-chat-reload').addEventListener('click', () => openChat(chat.psid));
+    chatOverlay.addEventListener('click', (e) => {
+      if (e.target === chatOverlay) closeChat();
+    });
+    const body = box.querySelector('.ddr-chat-body');
+    body.addEventListener('scroll', () => {
+      // At the newest message = stay there while images finish loading.
+      chat.stick = body.scrollHeight - body.clientHeight - body.scrollTop < 40;
+      if (body.scrollTop < 160) loadOlderChat();
+    }, { passive: true });
+    box.querySelector('.ddr-chat-top').addEventListener('click', (e) => {
+      if (e.target.closest('.ddr-chat-retry')) loadOlderChat();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && chatOverlay && !chatOverlay.hidden) {
+        e.stopPropagation();
+        closeChat();
+      }
+    }, true);
+  }
+
+  function setChatHead() {
+    const box = chatOverlay.querySelector('.ddr-chat');
+    const name = chat.name || psidName.get(chat.psid) || chat.psid;
+    box.querySelector('.ddr-chat-name').textContent = name;
+    const count = chat.msgs.length;
+    box.querySelector('.ddr-chat-sub').textContent =
+      `${chat.psid}${count ? ` · ${count}${chat.done ? '' : '+'} message${count === 1 ? '' : 's'}` : ''}`;
+    const av = box.querySelector('.ddr-chat-avatar');
+    av.textContent = '';
+    av.style.backgroundImage = '';
+    if (chat.avatar) av.style.backgroundImage = `url("${chat.avatar.replace(/["\\]/g, '')}")`;
+    else av.textContent = (name.trim()[0] || '?').toUpperCase();
+    box.querySelector('.ddr-chat-ec2').href = dialogUrl(chat.psid, 1);
+  }
+
+  function setChatTop() {
+    const top = chatOverlay.querySelector('.ddr-chat-top');
+    top.replaceChildren();
+    if (chat.loading) top.appendChild(mk('span', 'ddr-chat-status', chat.msgs.length ? 'Loading older messages…' : 'Loading messages…'));
+    else if (chat.error) {
+      top.appendChild(mk('span', 'ddr-chat-status', 'Could not load messages from EC2.'));
+      const retry = mk('button', 'ddr-chat-retry', 'Try again');
+      retry.type = 'button';
+      top.appendChild(retry);
+    } else if (chat.done) {
+      top.appendChild(mk('span', 'ddr-chat-status', chat.msgs.length
+        ? 'Start of the conversation in EC2'
+        : 'No Messenger messages in EC2 for this customer.'));
+    }
+  }
+
+  function renderChatList() {
+    const list = chatOverlay.querySelector('.ddr-chat-list');
+    const frag = document.createDocumentFragment();
+    const msgs = chat.msgs;
+    let prevDay = '';
+    for (let i = 0; i < msgs.length; i += 1) {
+      const m = msgs[i];
+      const prev = msgs[i - 1];
+      const next = msgs[i + 1];
+      const t = chatMs(m.time);
+      const day = m.time.slice(0, 10);
+      if (day !== prevDay) {
+        frag.appendChild(mk('div', 'ddr-chat-sep', `${chatDayLabel(day)} · ${m.time.slice(11, 16)}`));
+        prevDay = day;
+      } else if (prev && t - chatMs(prev.time) > 3600000) {
+        frag.appendChild(mk('div', 'ddr-chat-sep', m.time.slice(11, 16)));
+      }
+      // A group is one sender's run, a few minutes apart, on the same day.
+      const joinsPrev = prev && prev.fromCustomer === m.fromCustomer && prev.time.slice(0, 10) === day && t - chatMs(prev.time) <= 300000;
+      const joinsNext = next && next.fromCustomer === m.fromCustomer && next.time.slice(0, 10) === day && chatMs(next.time) - t <= 300000;
+      const pos = joinsPrev && joinsNext ? 'mid' : joinsPrev ? 'last' : joinsNext ? 'first' : 'solo';
+
+      const row = mk('div', `ddr-chat-row ${m.fromCustomer ? 'ddr-chat-in' : 'ddr-chat-out'} ddr-chat-${pos}`);
+      if (m.fromCustomer) {
+        const av = mk('span', 'ddr-chat-row-av');
+        if (pos === 'last' || pos === 'solo') {
+          if (chat.avatar) av.style.backgroundImage = `url("${chat.avatar.replace(/["\\]/g, '')}")`;
+          else av.textContent = ((chat.name || '?').trim()[0] || '?').toUpperCase();
+          av.classList.add('ddr-chat-row-av-on');
+        }
+        row.appendChild(av);
+      }
+      const stack = mk('div', 'ddr-chat-stack');
+      m.images.forEach((src) => {
+        const a = document.createElement('a');
+        a.className = 'ddr-chat-img';
+        a.href = src;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        const img = document.createElement('img');
+        img.loading = 'lazy';
+        img.alt = 'Image';
+        img.src = src;
+        img.addEventListener('load', keepChatPinned, { once: true });
+        img.addEventListener('error', () => {
+          const gone = mk('div', 'ddr-chat-bubble ddr-chat-attach', 'Image no longer available');
+          a.replaceWith(gone);
+          keepChatPinned();
+        }, { once: true });
+        a.appendChild(img);
+        stack.appendChild(a);
+      });
+      if (m.text) {
+        const b = mk('div', 'ddr-chat-bubble');
+        b.appendChild(linkified(m.text));
+        stack.appendChild(b);
+      } else if (!m.images.length) {
+        const b = mk('div', 'ddr-chat-bubble ddr-chat-attach', 'Attachment · not shown by EC2');
+        stack.appendChild(b);
+      }
+      row.appendChild(stack);
+      frag.appendChild(row);
+    }
+    list.replaceChildren(frag);
+    setChatTop();
+    setChatHead();
+  }
+
+  /** An image above the fold finished loading: newest message stays in view if it was. */
+  function keepChatPinned() {
+    if (!chat.stick || !chatOverlay || chatOverlay.hidden) return;
+    const body = chatOverlay.querySelector('.ddr-chat-body');
+    body.scrollTop = body.scrollHeight;
+  }
+
+  async function loadOlderChat() {
+    if (!chatOverlay || chatOverlay.hidden || chat.loading || chat.done) return;
+    const seq = chat.seq;
+    const first = chat.page === 0;
+    chat.loading = true;
+    chat.error = false;
+    setChatTop();
+    const res = await fetchDialogPage(chat.psid, chat.page + 1);
+    if (seq !== chat.seq) return; // another customer was opened meanwhile
+    chat.loading = false;
+    if (!res) {
+      chat.error = true;
+      setChatTop();
+      return;
+    }
+    chat.page += 1;
+    if (res.name) chat.name = res.name;
+    if (res.avatar) chat.avatar = res.avatar;
+    // A message that arrived since page 1 shifts every page by one: skip repeats.
+    const have = new Set(chat.msgs.map((m) => m.id));
+    const older = res.msgs.filter((m) => !have.has(m.id)).reverse();
+    chat.done = !res.hasNext || !res.msgs.length;
+    const body = chatOverlay.querySelector('.ddr-chat-body');
+    const fromBottom = body.scrollHeight - body.scrollTop;
+    chat.msgs = older.concat(chat.msgs);
+    renderChatList();
+    // Newest at the bottom on open; when older pages are prepended the view
+    // stays on the message the host was reading.
+    body.scrollTop = first || chat.stick ? body.scrollHeight : body.scrollHeight - fromBottom;
+    // A short first page may not fill the box - keep going until it scrolls.
+    if (!chat.done && body.scrollHeight <= body.clientHeight + 160) loadOlderChat();
+  }
+
+  function openChat(psid) {
+    if (!psid) return;
+    if (!chatOverlay) buildChat();
+    if (chatOverlay.hidden) chat.back = document.activeElement;
+    Object.assign(chat, { psid, seq: chat.seq + 1, page: 0, done: false, loading: false, error: false, msgs: [], name: psidName.get(psid) || '', avatar: '', stick: true });
+    chatOverlay.querySelector('.ddr-chat-list').replaceChildren();
+    chatOverlay.hidden = false;
+    setChatHead();
+    if (!pageAccountId) {
+      chat.error = true;
+      setChatTop();
+      return;
+    }
+    // Focus the dialog itself: keyboard users land inside it (Tab reaches the
+    // buttons, arrows scroll after one Tab) without a ring drawn on ×.
+    chatOverlay.querySelector('.ddr-chat').focus({ preventScroll: true });
+    loadOlderChat();
+  }
+
+  function closeChat() {
+    if (!chatOverlay || chatOverlay.hidden) return;
+    chatOverlay.hidden = true;
+    chat.seq += 1; // drop any page still loading
+    chat.loading = false;
+    hideTip();
+    if (chat.back && chat.back.focus && chat.back.isConnected) chat.back.focus();
+  }
+
+  /** Delegated: a click anywhere in a customer row's 留言用户 cell opens their chat. */
+  function installChatClicks() {
+    document.addEventListener('click', (e) => {
+      if (e.button !== 0 || !e.target.closest) return;
+      const cell = e.target.closest(`${TBODY_SEL} > tr[id^="win_tr_"] > td:first-child`);
+      if (!cell) return;
+      const tr = cell.parentElement;
+      if (tr.classList.contains('ddr-own') || e.target.closest('a, button, .ddr-psid')) return;
+      if (String(window.getSelection() || '')) return; // selecting a name to copy it
+      const psid = commentPsid.get(tr.dataset.index || tr.id.replace(/^win_tr_/, ''));
+      if (psid) openChat(psid);
+    });
   }
 
   // -------------------------------------------------------- EC2 win records
@@ -2693,7 +3197,7 @@
     batchBtn.className = 'ddr-batch-btn';
     batchBtn.setAttribute('aria-haspopup', 'dialog');
     batchBtn.setAttribute('aria-expanded', 'false');
-    batchBtn.innerHTML = `${ICO_CHAT}<span>批次 Batch</span><span class="ddr-batch-btn-n" hidden></span>`;
+    batchBtn.innerHTML = `${ICO_CHAT}<span>Live</span><span class="ddr-batch-btn-n" hidden></span>`;
     group.appendChild(batchBtn);
 
     batchPop = mk('div', 'ddr-bp');
@@ -2884,6 +3388,8 @@
     // crossed) must not close the bubble that is opening now.
     clearTimeout(tipHideTimer);
     tipTarget = target;
+    // Bid list rows: display-only, closes the instant the pointer leaves.
+    tipEl.classList.toggle('ddr-tip-passive', isPassiveTip(target));
     tipEl.classList.add('ddr-tip-on');
     tipEl.classList.remove('ddr-tip-capped');
     let cap = 12;
@@ -2904,6 +3410,16 @@
     if (!keepPlace) placeTip(target);
     target.setAttribute('aria-describedby', 'ddr-tip');
   }
+
+  /**
+   * Display-only tooltips that close the instant the pointer leaves (host's
+   * request): goods list rows, a card's Lifetime spend, Average order value
+   * and Customer since, the `N known · N new` count beside 留言用户, and the
+   * PSID button (clicking it still copies the PSID).
+   * Not enterable, no close grace, no fade.
+   */
+  const PASSIVE_TIP_SEL = '#allGroup, .ddr-ltv, .ddr-aov, .ddr-since, .ddr-live-count, .ddr-psid';
+  const isPassiveTip = (target) => !!(target && target.closest && target.closest(PASSIVE_TIP_SEL));
 
   function hideTip() {
     clearTimeout(tipTimer);
@@ -2971,6 +3487,11 @@
       if (!from) return;
       const to = e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest('[data-ddr-tip]');
       if (to === from) return;
+      if (isPassiveTip(from)) {
+        clearTimeout(tipTimer);
+        if (from === tipTarget) hideTip();
+        return;
+      }
       if (e.relatedTarget && tipEl.contains(e.relatedTarget)) return; // into the bubble
       scheduleHideTip();
     });
@@ -3029,17 +3550,20 @@
   function start() {
     installTips();
     buildPanel();
+    installChatClicks();
 
     const layout = () => {
       if (!(tagTables() && reclaimSpace())) return false;
-      dockPanel();
+      installDock();
       installSalesButton();
+      placeStartButton();
+      wireReloadButton();
+      installConverter();
       watchGoods();
       installBatchButton();
       installComposerToggle();
       return true;
     };
-    window.addEventListener('resize', dockPanel);
     let refit;
     window.addEventListener('resize', () => {
       clearTimeout(refit);
