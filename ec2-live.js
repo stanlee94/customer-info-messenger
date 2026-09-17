@@ -1761,7 +1761,11 @@
   /** A reload for a code we do not know yet waits at least this long. */
   const GROUPS_RETRY_MS = 15000;
 
-  /** "J1" -> { name, price: "29.90" } */
+  /**
+   * group_id -> { code, name, price: "29.90", stopped }. Keyed by product, not
+   * code: a live can carry the same code twice (the host re-adds J3 mid-live;
+   * the old product is left with stop_budan = 1 and its own win_num/price).
+   */
   const goodsInfo = new Map();
   /** "29.90" -> "10.90" */
   const sgdByMyr = new Map();
@@ -1781,7 +1785,7 @@
       .then((text) => {
         const list = (JSON.parse(text) || {}).data || [];
         list.forEach((g) => {
-          if (g && g.group_num) goodsInfo.set(String(g.group_num).trim(), { name: String(g.group_name || '').trim(), price: g.price });
+          if (g && g.group_id) setGoodsInfo(g);
         });
         return convertPrices();
       })
@@ -1793,6 +1797,30 @@
         decorateGoods();
         refreshTip();
       });
+  }
+
+  function setGoodsInfo(g) {
+    goodsInfo.set(String(g.group_id), {
+      code: String(g.group_num || '').trim().toUpperCase(),
+      name: String(g.group_name || '').trim(),
+      price: g.price,
+      stopped: String(g.stop_budan) === '1',
+    });
+  }
+
+  /**
+   * The product a goods row belongs to: living.js prints its group_id in the
+   * row's 开始/结束 icon (startEndComment('<group_id>', this)). Falls back to
+   * the code only when that code is on one product.
+   */
+  function goodsRowGroupId(tr) {
+    const icon = tr.querySelector('[onclick*="startEndComment"]');
+    const m = icon && /startEndComment\(\s*['"]?(\d+)/.exec(icon.getAttribute('onclick') || '');
+    if (m) return m[1];
+    const code = ((tr.children[0] && tr.children[0].textContent) || '').trim().toUpperCase();
+    if (!code) return null;
+    const ids = [...goodsInfo].filter(([, g]) => g.code === code).map(([id]) => id);
+    return ids.length === 1 ? ids[0] : null;
   }
 
   function convertPrices() {
@@ -1818,14 +1846,14 @@
 
   const moneyTwo = (v) => Number(v).toFixed(2);
 
-  function goodsTip(code) {
-    const info = goodsInfo.get(code);
+  function goodsTip(code, id) {
+    const info = id && goodsInfo.get(id);
     if (!info) return { h: code, s: groupsReq ? 'Loading product…' : 'Product details not loaded yet' };
     const price = String(info.price);
     const sgd = sgdByMyr.get(price);
     return {
       h: info.name || code,
-      s: code,
+      s: info.stopped ? `${code} · Stopped` : code,
       rows: [
         ['MYR', moneyFull(price), 'my'],
         ['SGD', sgd != null ? `S$ ${moneyExact(sgd)}` : sgdFailed ? 'converter unavailable' : 'converting…', 'sg'],
@@ -1834,7 +1862,8 @@
   }
 
   /**
-   * Per goods row: .ddr-goods-zero (no wins yet, muted by CSS) and the hover
+   * Per goods row: .ddr-goods-zero (no wins yet, muted by CSS),
+   * .ddr-goods-stopped (stop_budan = 1, red - the old copy of a re-added code) and the hover
    * tooltip spec. living.js rewrites #allGroup's tbody on refresh, dropping
    * both, so the list is watched and re-decorated; our attribute writes do not
    * re-trigger the observer (it does not watch attributes).
@@ -1849,8 +1878,11 @@
 
       const code = (cells[0].textContent || '').trim();
       if (!code) return;
-      if (!goodsInfo.has(code)) unknown = true;
-      const spec = JSON.stringify(goodsTip(code));
+      const id = goodsRowGroupId(tr);
+      const info = id && goodsInfo.get(id);
+      if (!info) unknown = true;
+      tr.classList.toggle('ddr-goods-stopped', !!(info && info.stopped));
+      const spec = JSON.stringify(goodsTip(code, id));
       if (tr.dataset.ddrTip !== spec) tr.dataset.ddrTip = spec;
     });
     // A code we have not seen (a product added mid-live): reload, throttled.
@@ -2840,6 +2872,7 @@
       name: String(g.group_name || '').trim(),
       price: Number.isFinite(parseFloat(g.price)) ? parseFloat(g.price) : null,
       winNum: String(g.win_num),
+      stopped: String(g.stop_budan) === '1',
     }));
   }
 
@@ -2977,6 +3010,10 @@
   function setGroups(groups) {
     tonightWins.groups = new Map(groups.map((g) => [g.id, g]));
     tonightWins.stats.groupLists += 1;
+    groups.forEach((g) => {
+      const info = goodsInfo.get(g.id);
+      if (info) info.stopped = g.stopped;
+    });
     patchGoodsCounts(groups);
   }
 
@@ -2987,17 +3024,24 @@
    * the fresh win_num into the rows already there: the leading text node of
    * the 得标数 cell only (living.js appends <br/>style(n) lines after it), so
    * no node is added, moved or removed and EC2's icons and handlers stay. Rows
-   * are matched by code; a product not in the list (added mid-live) still needs
-   * EC2's 刷新. The goods observer re-applies .ddr-goods-zero.
+   * are matched by product id (goodsRowGroupId), never by code alone: a code
+   * re-added mid-live is two products, and a code map wrote the new product's
+   * count into the stopped row too (556923: old J3/J4 = 1/0 showed 141/167).
+   * A product not in the list (added mid-live) still needs EC2's 刷新. The goods
+   * observer re-applies .ddr-goods-zero.
    */
   function patchGoodsCounts(groups) {
-    const byCode = new Map(groups.filter((g) => g.code).map((g) => [g.code, g.winNum]));
+    const byId = new Map(groups.map((g) => [g.id, g]));
     document.querySelectorAll('#allGroup tbody tr').forEach((tr) => {
       const cells = tr.children;
       if (cells.length < 3) return;
-      const n = byCode.get((cells[0].textContent || '').trim().toUpperCase());
+      const id = goodsRowGroupId(tr);
+      const g = id && byId.get(id);
+      if (!g) return;
+      tr.classList.toggle('ddr-goods-stopped', g.stopped);
+      const n = g.winNum;
       const text = cells[2].firstChild;
-      if (n == null || !/^\d+$/.test(n) || !text || text.nodeType !== Node.TEXT_NODE) return;
+      if (!/^\d+$/.test(n) || !text || text.nodeType !== Node.TEXT_NODE) return;
       if (text.nodeValue.trim() !== n) text.nodeValue = n;
     });
   }

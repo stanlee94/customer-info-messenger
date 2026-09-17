@@ -1641,6 +1641,12 @@ html:not(.ddr-vid-menu-open) #edit_marquee_div { display: none !important; }
 .ddr-goods #allGroup tbody tr.ddr-goods-zero td:nth-child(1) { color: #475569; font-weight: 600; }
 .ddr-goods #allGroup tbody tr.ddr-goods-zero td:nth-child(3) { color: #64748B; font-weight: 600; }
 
+/* Stopped product (EC2 stop_budan = 1): the old copy of a code the host
+   re-added mid-live. Red, after the zero rule so a stopped 0 is red too.
+   #DC2626 is 4.8:1 on white. */
+.ddr-goods #allGroup tbody tr.ddr-goods-stopped td:nth-child(1),
+.ddr-goods #allGroup tbody tr.ddr-goods-stopped td:nth-child(3) { color: #DC2626; }
+
 /* Narrow strip (1280px screens: ~99px): tighter header and rows. */
 @container (max-width: 112px) {
   .ddr-goods #allGroup thead th { font-size: 10.5px; padding: 7px 3px 6px !important; }

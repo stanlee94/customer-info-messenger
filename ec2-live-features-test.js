@@ -4,7 +4,8 @@
 //   Refresh       in place: no navigation, no duplicate rows, rows kept, still none after 3 polls
 //   Rev           hover figures = EC2's 得标结果 #totalPrice / #totalNums (read independently)
 //   converter     100 -> 37.00, 128 -> 48.00 and a live price = the Worker's own answer; bad input -> —; Escape clears
-//   goods hover   every code's name + RM price = ajax_getGroups; S$ = the Worker's answer
+//   goods hover   every row's name + RM price = ITS product in ajax_getGroups (matched by
+//                 group_id, since a re-added code is two products); S$ = the Worker's answer
 //   last order    hover loads the order from Baserow: total = table 750 Total_Amount
 //   flags         every flag says Ships to Malaysia/Singapore and carries the address
 //   banding       same PSID as the customer row above keeps the band, a new PSID flips it
@@ -157,18 +158,22 @@ const two = (n) => Number(n).toLocaleString('en-MY', { minimumFractionDigits: 2,
 
   // --- goods hover ---------------------------------------------------------------
   await page.waitForTimeout(3000);
-  const tips = await page.$$eval('#allGroup tbody tr[data-ddr-tip]', (trs) => trs.map((tr) => ({ code: tr.children[0].textContent.trim(), tip: JSON.parse(tr.dataset.ddrTip) })));
-  const byCode = new Map(groups.map((g) => [String(g.group_num || '').trim(), g]));
+  const tips = await page.$$eval('#allGroup tbody tr[data-ddr-tip]', (trs) => trs.map((tr) => {
+    const icon = tr.querySelector('[onclick*="startEndComment"]');
+    const m = icon && /startEndComment\(\s*['"]?(\d+)/.exec(icon.getAttribute('onclick') || '');
+    return { code: tr.children[0].textContent.trim(), id: m ? m[1] : '', tip: JSON.parse(tr.dataset.ddrTip) };
+  }));
+  const byId = new Map(groups.map((g) => [String(g.group_id), g]));
   const sgdAll = await sgdOf([...new Set(groups.map((g) => String(parseFloat(g.price))))]);
   const sgdMap = new Map(sgdAll.map((x) => [String(parseFloat(x.input)), x.sgd]));
   const goodsBad = [];
-  tips.forEach(({ code, tip }) => {
-    const g = byCode.get(code);
-    if (!g) { goodsBad.push(`${code}: not in ajax_getGroups`); return; }
+  tips.forEach(({ code, id, tip }) => {
+    const g = byId.get(id);
+    if (!g) { goodsBad.push(`${code}#${id}: not in ajax_getGroups`); return; }
     const price = String(parseFloat(g.price));
     const rows = Object.fromEntries((tip.rows || []).map((x) => [x[0], x[1]]));
     const sgd = sgdMap.get(price);
-    if (tip.h !== String(g.group_name).trim() || rows.MYR !== `RM ${two(price)}` || sgd == null || rows.SGD !== `S$ ${two(sgd)}`) goodsBad.push(`${code}: page ${tip.h} ${rows.MYR} ${rows.SGD} · EC2 ${g.group_name} RM ${price} S$ ${sgd}`);
+    if (tip.h !== String(g.group_name).trim() || rows.MYR !== `RM ${two(price)}` || sgd == null || rows.SGD !== `S$ ${two(sgd)}`) goodsBad.push(`${code}#${id}: page ${tip.h} ${rows.MYR} ${rows.SGD} · EC2 ${g.group_name} RM ${price} S$ ${sgd}`);
   });
   check(tips.length > 0 && tips.length === groups.length && goodsBad.length === 0, 'goods hover: name, RM price and S$ for every product', `${tips.length - goodsBad.length}/${groups.length} products`);
   goodsBad.slice(0, 4).forEach((b) => console.log('        ', b));

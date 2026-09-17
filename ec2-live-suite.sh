@@ -9,7 +9,7 @@ OUT="${1:-live-suite-$TONIGHT-$(date +%H%M)}"
 mkdir -p "$OUT"
 export TONIGHT
 export LIVES="${LIVES:-{\"556923\":\"15-09-2026\",\"556369\":\"11-09-2026\"}}"
-tests=(ec2-live-features-test.js ec2-live-e2e.js ec2-live-truth-test.js ec2-live-winfix-test.js ec2-live-batch-test.js ec2-live-composer-test.js ec2-live-cache-test.js ec2-live-measure-api.js ec2-live-tally-test.js)
+tests=(ec2-live-features-test.js ec2-live-goods-test.js ec2-live-e2e.js ec2-live-truth-test.js ec2-live-winfix-test.js ec2-live-batch-test.js ec2-live-composer-test.js ec2-live-cache-test.js ec2-live-measure-api.js ec2-live-tally-test.js)
 printf '%-32s %-6s %s\n' test result "PASS/FAIL lines" > "$OUT/summary.txt"
 for t in "${tests[@]}"; do
   start=$(date +%s)
