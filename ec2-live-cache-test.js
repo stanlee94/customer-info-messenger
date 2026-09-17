@@ -5,7 +5,7 @@ const ENVF = '/Users/stanleemok/Documents/Personal/claude-code/ec2-login/lambda/
 for (const l of fs.readFileSync(ENVF,'utf8').split('\n')) { const m=l.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)$/); if(m&&!process.env[m[1]])process.env[m[1]]=m[2].trim().replace(/^["']|["']$/g,''); }
 const UA='Mozilla/5.0 (Macintosh) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36';
 async function ec2Cookie(){const url=process.env.BASEROW_URL.replace(/\/+$/,'')+`/api/database/rows/table/${process.env.BASEROW_TABLE_ID}/?user_field_names=true&size=200`;const r=await fetch(url,{headers:{Authorization:'Token '+process.env.BASEROW_TOKEN,'User-Agent':UA}});const j=await r.json();return String((j.results||[]).find(x=>String(x.Name)==='EC2').Value||'');}
-const LIVE='https://ec2.full2house.com/Ent/index.php?live_id=556923&a=EntLive&m=liveingManager';
+const LIVE='https://ec2.full2house.com/Ent/index.php?live_id=' + (process.env.TONIGHT || '556923') + '&a=EntLive&m=liveingManager';
 
 (async()=>{
   const cookieStr=await ec2Cookie();

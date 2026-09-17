@@ -26,7 +26,7 @@ for (const l of fs.readFileSync(ENVF, 'utf8').split('\n')) {
   if (m && !process.env[m[1]]) process.env[m[1]] = m[2].trim().replace(/^["']|["']$/g, '');
 }
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36';
-const LIVE = '556923';
+const LIVE = process.env.TONIGHT || '556923';
 const P = require(path.join(EXT, 'ec2-live-reply-parser.js'));
 let failures = 0;
 const check = (ok, label, detail) => {
@@ -78,7 +78,9 @@ const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
     const lastTime = new URLSearchParams(route.request().postData() || '').get('lastTime') || '';
     const fresh = injectedComments.filter((x) => lastTime && x.comment_created_time > lastTime);
     if (!fresh.length) return route.continue();
-    const res = await route.fetch();
+    // A dropped connection fails this one request (the overlay retries next tick) instead of crashing the test.
+    const res = await route.fetch().catch(() => null);
+    if (!res) return route.abort().catch(() => {});
     const json = JSON.parse(await res.text());
     json.data = json.data || {};
     json.data.list = [...fresh].sort((a, b) => (a.comment_created_time < b.comment_created_time ? 1 : -1)).concat(json.data.list || []);
@@ -89,7 +91,9 @@ const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
     const group = new URLSearchParams(route.request().postData() || '').get('group_id');
     const mine = [...injectedRecords.values()].filter((x) => x.group === group);
     if (!mine.length && !hiddenWins.size && !extraWins.size) return route.continue();
-    const res = await route.fetch();
+    // A dropped connection fails this one request (the overlay retries next tick) instead of crashing the test.
+    const res = await route.fetch().catch(() => null);
+    if (!res) return route.abort().catch(() => {});
     const json = JSON.parse(await res.text());
     const list = (Array.isArray(json.data) ? json.data : []).filter((w) => !hiddenWins.has(String(w.win_id))).concat(extraWins.get(group) || []);
     json.error = 0;
@@ -100,7 +104,9 @@ const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
   // ajax_getGroups: a product's win_num moves with its synthetic wins, as EC2's would.
   await page.route(/m=ajax_getGroups/, async (route) => {
     if (!injectedRecords.size && !hiddenWins.size && !extraWins.size) return route.continue();
-    const res = await route.fetch();
+    // A dropped connection fails this one request (the overlay retries next tick) instead of crashing the test.
+    const res = await route.fetch().catch(() => null);
+    if (!res) return route.abort().catch(() => {});
     const json = JSON.parse(await res.text());
     (json.data || []).forEach((g) => {
       const gid = String(g.group_id);
@@ -135,10 +141,14 @@ const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
   const n0 = before[0].n;
   const total0 = Number(String(before[0].tip.v).replace(/[^\d.]/g, ''));
   const had = new Set((before[0].tip.items || []).map((it) => it.name));
+  // By code too: a reply's product name can differ from EC2's group_name (e.g. a 【买3送1】 prefix),
+  // so a product the customer already owns could otherwise be picked as "new".
+  const hadCodes = new Set((before[0].tip.items || []).map((it) => String(it.code || '').toUpperCase()).filter(Boolean));
 
   const own = (x) => !x.fb_user_id || String(x.fb_user_id) === String(x.fb_account_id);
   const pick = (skip) => feed.find((x) => !own(x) && x.win_id && x.win_id !== '0' && P.replyNames(x.reply_message).length === 1 &&
     P.replyCode(x.reply_message) && P.replyPrice(x.reply_message) && !had.has(P.replyNames(x.reply_message)[0]) &&
+    !hadCodes.has(String(P.replyCode(x.reply_message)).toUpperCase()) &&
     P.replyNames(x.reply_message)[0] !== skip);
   const p1 = pick();
   const X = { name: P.replyNames(p1.reply_message)[0], code: P.replyCode(p1.reply_message), price: P.replyPrice(p1.reply_message), group: String(p1.group_id), reply: p1.reply_message };
@@ -319,6 +329,8 @@ const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
   check(writes.length === 0, 'no EC2 write requests', writes.slice(0, 2).join(' | '));
   check(errs.length === 0, 'no page errors', errs.slice(0, 2).join(' | '));
   console.log(`\n${failures ? failures + ' FAILED' : 'ALL PASSED'}`);
+  // The mocked EC2 routes can still be mid-request; closing under them threw and exited 1.
+  await page.unrouteAll({ behavior: 'ignoreErrors' });
   await ctx.close();
   process.exit(failures ? 1 : 0);
 })().catch((e) => { console.error('FAILED:', e); process.exit(1); });

@@ -42,7 +42,7 @@ const check = (ok, label, detail) => {
   page.on('request', (req) => { if (req.method() === 'POST' && /ec2\.full2house\.com/.test(req.url()) && !/getLivingMessage|getWinLists|liveGoods|getGroup|getLastGroups|get_cur_wins|ajax_getGroups/i.test(req.url())) posts.push(req.url() + ' ' + (req.postData() || '').slice(0, 80)); });
   const errs = [];
   page.on('pageerror', (e) => errs.push(e.message));
-  await page.goto('https://ec2.full2house.com/Ent/index.php?live_id=556923&a=EntLive&m=liveingManager', { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await page.goto('https://ec2.full2house.com/Ent/index.php?live_id=' + (process.env.TONIGHT || '556923') + '&a=EntLive&m=liveingManager', { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.waitForSelector('.ddr-composer-btn', { timeout: 60000 });
   await page.waitForTimeout(8000);
 
@@ -84,10 +84,18 @@ const check = (ok, label, detail) => {
   check(s1.btn.bottom <= s1.footTop, 'button moves above the bar', `btn bottom ${Math.round(s1.btn.bottom)} / bar top ${Math.round(s1.footTop)}`);
   await page.screenshot({ path: path.join(EXT, `composer-open-${VW}.png`) });
 
+  // "Pointer off the bar": a point on EC2's own page (the comment table header).
+  // Not (10, 10) - that is the Facebook video iframe since 结束直播 moved into the
+  // video ···, and a headless jump straight into a cross-process iframe never
+  // sends the page the bar's mouseleave.
+  const awayFromBar = async () => {
+    const p = await page.evaluate(() => { const r = document.querySelector('.ddr-msg-head, #searchMsg').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+    await page.mouse.move(p.x, p.y, { steps: 5 });
+  };
   console.log('\n== auto-hide ==');
   await page.keyboard.type('draft only');
   await page.evaluate(() => document.activeElement.blur());
-  await page.mouse.move(10, 10);
+  await awayFromBar();
   await page.waitForTimeout(1200);
   check(!(await state()).hidden, 'a draft keeps the bar open');
   await page.evaluate(() => { const t = document.getElementById('message'); t.value = ''; t.focus(); t.blur(); });

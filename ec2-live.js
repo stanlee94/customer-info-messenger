@@ -403,10 +403,22 @@
     }
   }
 
+  // EC2 stores some comments 10-80 s after newer ones (measured on 557246), and
+  // lastTime filters on comment_created_time, so each poll asks for this much
+  // overlap; ingest() is idempotent for comments it has already seen.
+  const FEED_OVERLAP_MS = 180000;
+  const feedSince = (t) => {
+    const ms = Date.parse(String(t).replace(' ', 'T') + '+08:00');
+    if (!t || !Number.isFinite(ms)) return t;
+    const d = new Date(ms - FEED_OVERLAP_MS + 8 * 3600 * 1000);
+    const p2 = (n) => String(n).padStart(2, '0');
+    return `${d.getUTCFullYear()}-${p2(d.getUTCMonth() + 1)}-${p2(d.getUTCDate())} ${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())}:${p2(d.getUTCSeconds())}`;
+  };
+
   async function poll() {
-    const list = await fetchFeed(lastTime);
+    const list = await fetchFeed(feedSince(lastTime));
     if (list && list.length) {
-      lastTime = list[0].comment_created_time || lastTime;
+      list.forEach((x) => { if (String(x.comment_created_time || '') > lastTime) lastTime = String(x.comment_created_time); });
       ingest(list);
     }
     // Every tick, not only when comments arrive: the case it catches is an
@@ -588,16 +600,24 @@
    * "Already bought tonight" moves during the live but cards are built once,
    * so the count is refreshed in place on every poll.
    */
+  // Once per customer, not per row (a customer's pill repeats on each of
+  // their comments), and only changed values are written back to the DOM.
   function refreshTallies() {
+    const memo = new Map();
+    const setText = (node, v) => { if (node && node.textContent !== v) node.textContent = v; };
     document.querySelectorAll('.ddr-tonight').forEach((el) => {
-      const n = productCount(el.dataset.psid);
-      const num = el.querySelector('.ddr-tonight-n');
-      if (num) num.textContent = String(n);
-      const amt = el.querySelector('.ddr-tonight-amt');
-      if (amt) amt.textContent = tonightAmount(el.dataset.psid);
-      el.dataset.ddrTip = JSON.stringify(tonightTip(el.dataset.psid, n));
-      el.setAttribute('aria-label', tonightLabel(n));
-      el.classList.toggle('ddr-hide', n === 0);
+      const psid = el.dataset.psid;
+      let t = memo.get(psid);
+      if (!t) {
+        const n = productCount(psid);
+        t = { n, num: String(n), amt: tonightAmount(psid), tip: JSON.stringify(tonightTip(psid, n)), label: tonightLabel(n) };
+        memo.set(psid, t);
+      }
+      setText(el.querySelector('.ddr-tonight-n'), t.num);
+      setText(el.querySelector('.ddr-tonight-amt'), t.amt);
+      if (el.dataset.ddrTip !== t.tip) el.dataset.ddrTip = t.tip;
+      if (el.getAttribute('aria-label') !== t.label) el.setAttribute('aria-label', t.label);
+      if (el.classList.contains('ddr-hide') !== (t.n === 0)) el.classList.toggle('ddr-hide', t.n === 0);
     });
     refreshTip();
   }
@@ -921,8 +941,15 @@
    * width - the column is a percentage, so a fixed count would overflow on a
    * small screen and waste space on a large one.
    */
+  // Every 得标 cell has the column's width, so it is measured once, not per
+  // row: a getBoundingClientRect per won row after a new comment forced a
+  // layout of the whole table each time (237 of 304 ms at 1,579 rows, live
+  // 557246). Reset on resize/Flip; the 2 s tick re-checks it (checkWonWidth).
+  let wonCellWidth = 0;
+
   function nameBudget(cell) {
-    const w = cell.getBoundingClientRect().width || 190;
+    if (!wonCellWidth) wonCellWidth = cell.getBoundingClientRect().width || 0;
+    const w = wonCellWidth || 190;
     // cell padding (10px + 20px, clear of the overlay scrollbar) + code tag +
     // ×qty + gaps; ~6.6px per unit at 12.5px
     return Math.max(8, Math.floor((w - 102) / 6.6));
@@ -1012,6 +1039,15 @@
   function fitAllWonNames() {
     const body = document.querySelector('.ddr-msg-body');
     if (body) fitWonNames(body);
+  }
+
+  /** One read every 2 s: when the 得标 column settled to another width, redraw the won names. */
+  function checkWonWidth() {
+    const cell = document.querySelector(`${TBODY_SEL} > tr > td:nth-child(4) .ddr-won`);
+    const w = cell ? cell.parentElement.getBoundingClientRect().width : 0;
+    if (!w || Math.abs(w - wonCellWidth) < 1) return;
+    wonCellWidth = w;
+    badgeAll();
   }
 
   /**
@@ -1244,13 +1280,34 @@
     }
   }
 
+  function decorateRow(tr) {
+    decorateTime(tr);
+    badgeRow(tr);
+    decorateWin(tr);
+    decoratePrev(tr);
+  }
+
   function badgeAll() {
-    document.querySelectorAll(`${TBODY_SEL} > tr[id^="win_tr_"]`).forEach((tr) => {
-      decorateTime(tr);
-      badgeRow(tr);
-      decorateWin(tr);
-      decoratePrev(tr);
-    });
+    document.querySelectorAll(`${TBODY_SEL} > tr[id^="win_tr_"]`).forEach(decorateRow);
+    paintBands();
+  }
+
+  /**
+   * New rows only. living.js prepends a row per comment and never removes one,
+   * so re-decorating every row per comment grew with the live (76 ms freeze
+   * per comment at 1,500 rows). Data changes (wins, RFM, batch) still run
+   * badgeAll from their own paths; a big insert (Refresh, load more) does too.
+   */
+  function badgeAdded(records) {
+    const rows = [];
+    for (const r of records) {
+      r.addedNodes.forEach((n) => {
+        if (n.nodeType === 1 && n.tagName === 'TR' && /^win_tr_/.test(n.id)) rows.push(n);
+      });
+    }
+    if (!rows.length) return;
+    if (rows.length > 100) return badgeAll();
+    rows.forEach(decorateRow);
     paintBands();
   }
 
@@ -1332,8 +1389,8 @@
       .join('');
   }
 
-  // The panel used to be a draggable, collapsible bar; it is now a hover popup
-  // opened from the dock. Drop what those versions stored.
+  // The panel used to be a draggable, collapsible bar; it is now a modal
+  // opened from the card's ··· tray. Drop what those versions stored.
   try {
     localStorage.removeItem('ddrPanelPos');
     localStorage.removeItem('ddrPanelCollapsed.v2');
@@ -1347,7 +1404,7 @@
   let panelOverlay = null;
 
   /**
-   * "Who's in the live" is a centred modal opened by the dock button - big
+   * "Who's in the live" is a centred modal opened from the ··· tray - big
    * type for reading at a distance, the list scrolls inside it. Closes on ×,
    * a click on the backdrop, or Escape.
    */
@@ -1387,7 +1444,7 @@
     if (!panelOverlay || panelOverlay.hidden) return;
     panelOverlay.hidden = true;
     whoBtn.setAttribute('aria-expanded', 'false');
-    whoBtn.focus();
+    (whoBtn.offsetParent ? whoBtn : moreBtn || whoBtn).focus();
   }
 
   function applyFlip(on, flipBtn) {
@@ -1396,33 +1453,31 @@
   }
 
   /**
-   * The bar under the big 刷新: [Who's in the live] opens the centred modal
-   * on click, [Flip] mirrors the page. Our own node, appended to the left
-   * column as a grid item - living.js never rewrites that column (it holds the
-   * video iframe).
+   * Card tools, in the live controls card (.l-group-btn): [⇄ Flip] and [···]
+   * sit beside the live name; ··· opens the "More" tray inside the card with
+   * the things not used during a live - 竞标开始 (run by someone else),
+   * Who's in the live, EC2's 标组管理 / 新增标组 / 得标结果 / 抽奖, and the
+   * 自动刷新 ▾ under 刷新. Only our nodes are added; EC2's buttons stay where
+   * living.js put them and are shown or hidden by html.ddr-more-open (CSS).
+   * The tray closes on a click outside it, Escape, or after any item in it.
    */
-  function installDock() {
-    const col = document.querySelector('.ddr-col-left');
-    if (!col || dock) return;
-    dock = mk('div', 'ddr-dock');
+  let moreBtn = null;
 
-    whoBtn = document.createElement('button');
-    whoBtn.type = 'button';
-    whoBtn.className = 'ddr-who-btn';
-    whoBtn.setAttribute('aria-haspopup', 'dialog');
-    whoBtn.setAttribute('aria-expanded', 'false');
-    whoBtn.setAttribute('aria-controls', 'ddr-who-panel');
-    whoBtn.innerHTML =
-      ico('<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.6-3.6 3.2-5.5 6.5-5.5s5.9 1.9 6.5 5.5"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8"/><path d="M18.5 14.8c1.7.7 2.8 2.4 3 5.2"/>') +
-      '<span>Who\'s in the live</span>';
-    whoBtn.addEventListener('click', () => (panelOverlay.hidden ? showPanel() : hidePanel()));
-    dock.appendChild(whoBtn);
+  function setMore(open) {
+    document.documentElement.classList.toggle('ddr-more-open', open);
+    if (moreBtn) moreBtn.setAttribute('aria-expanded', String(open));
+  }
+
+  function installDock() {
+    const group = document.querySelector('.ddr-col-left .l-group-btn');
+    if (!group || dock) return;
+    dock = group;
 
     const flipBtn = document.createElement('button');
     flipBtn.type = 'button';
-    flipBtn.className = 'ddr-flip-btn';
+    flipBtn.className = 'ddr-card-tool ddr-flip-btn';
     flipBtn.setAttribute('aria-label', 'Flip layout');
-    flipBtn.innerHTML = ico('<path d="M7 4 3 8l4 4"/><path d="M3 8h13"/><path d="m17 12 4 4-4 4"/><path d="M21 16H8"/>') + '<span>Flip</span>';
+    flipBtn.innerHTML = ico('<path d="M7 4 3 8l4 4"/><path d="M3 8h13"/><path d="m17 12 4 4-4 4"/><path d="M21 16H8"/>');
     let flipped = false;
     try {
       flipped = localStorage.getItem(FLIP_KEY) === '1';
@@ -1441,15 +1496,195 @@
       // Fixed-position pieces (composer button, open bubbles) follow the columns.
       window.dispatchEvent(new Event('resize'));
     });
-    dock.appendChild(flipBtn);
+    group.appendChild(flipBtn);
 
+    moreBtn = document.createElement('button');
+    moreBtn.type = 'button';
+    moreBtn.className = 'ddr-card-tool ddr-more-btn';
+    moreBtn.setAttribute('aria-label', 'More: 竞标开始, Who\'s in the live, EC2 pages');
+    moreBtn.setAttribute('aria-expanded', 'false');
+    moreBtn.innerHTML = ico('<circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/>');
+    moreBtn.addEventListener('click', () => setMore(!document.documentElement.classList.contains('ddr-more-open')));
+    group.appendChild(moreBtn);
+
+    whoBtn = document.createElement('button');
+    whoBtn.type = 'button';
+    whoBtn.className = 'ddr-who-btn';
+    whoBtn.setAttribute('aria-haspopup', 'dialog');
+    whoBtn.setAttribute('aria-expanded', 'false');
+    whoBtn.setAttribute('aria-controls', 'ddr-who-panel');
+    whoBtn.innerHTML =
+      ico('<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.6-3.6 3.2-5.5 6.5-5.5s5.9 1.9 6.5 5.5"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8"/><path d="M18.5 14.8c1.7.7 2.8 2.4 3 5.2"/>') +
+      '<span>Who\'s in the live</span>';
+    whoBtn.addEventListener('click', () => (panelOverlay.hidden ? showPanel() : hidePanel()));
+    group.appendChild(whoBtn);
+
+    const menu = document.querySelector('.ddr-goods .widget-box > div:first-child .dropdown-menu');
+    const trayItem = (el) =>
+      el.closest('.ddr-who-btn, .ddr-col-left .l-group-btn > .btn') ||
+      (menu && menu.contains(el) && el.closest('a, li'));
+    // After the click has reached EC2's own handler.
+    document.addEventListener('click', (e) => {
+      if (document.documentElement.classList.contains('ddr-more-open') && trayItem(e.target)) setMore(false);
+    });
+    document.addEventListener('mousedown', (e) => {
+      if (!document.documentElement.classList.contains('ddr-more-open')) return;
+      if (group.contains(e.target)) return;
+      const toggle = document.querySelector('.ddr-goods #refresh + .dropdown-toggle');
+      if ((toggle && toggle.contains(e.target)) || (menu && menu.contains(e.target))) return;
+      setMore(false);
+    });
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && panelOverlay && !panelOverlay.hidden) {
         e.stopPropagation();
         hidePanel();
+      } else if (e.key === 'Escape' && document.documentElement.classList.contains('ddr-more-open')) {
+        e.stopPropagation();
+        setMore(false);
+        moreBtn.focus();
       }
     }, true);
-    col.appendChild(dock);
+  }
+
+  /**
+   * EC2's 结束直播 and 跑马灯 sit over the top of the video (absolutely placed
+   * divs in the left column, click handlers bound by id in living.js) and
+   * cover Facebook's LIVE / viewer badge. Both are hidden (CSS, never moved)
+   * behind a small ··· button at the top right of the video; opening it shows
+   * them stacked under it. Closes on a click outside, Escape, or after either.
+   */
+  let vidMenuBtn = null;
+
+  function setVidMenu(open) {
+    document.documentElement.classList.toggle('ddr-vid-menu-open', open);
+    if (vidMenuBtn) vidMenuBtn.setAttribute('aria-expanded', String(open));
+  }
+
+  function installVideoMenu() {
+    const col = document.querySelector('.ddr-col-left');
+    if (!col || vidMenuBtn) return;
+    vidMenuBtn = document.createElement('button');
+    vidMenuBtn.type = 'button';
+    vidMenuBtn.className = 'ddr-vid-more';
+    vidMenuBtn.setAttribute('aria-label', 'More: 结束直播, 跑马灯');
+    vidMenuBtn.setAttribute('aria-expanded', 'false');
+    vidMenuBtn.innerHTML = ico('<circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/>');
+    vidMenuBtn.addEventListener('click', () => setVidMenu(!document.documentElement.classList.contains('ddr-vid-menu-open')));
+    col.appendChild(vidMenuBtn);
+
+    const items = () => [document.getElementById('endLiveBtnDiv'), document.getElementById('edit_marquee_div')].filter(Boolean);
+    const isOpen = () => document.documentElement.classList.contains('ddr-vid-menu-open');
+    document.addEventListener('click', (e) => {
+      if (isOpen() && items().some((d) => d.contains(e.target) && e.target.closest('button'))) setVidMenu(false);
+    });
+    document.addEventListener('mousedown', (e) => {
+      if (!isOpen() || vidMenuBtn.contains(e.target) || items().some((d) => d.contains(e.target))) return;
+      setVidMenu(false);
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && isOpen()) {
+        e.stopPropagation();
+        setVidMenu(false);
+        vidMenuBtn.focus();
+      }
+    }, true);
+  }
+
+  /**
+   * Video stats badge, top left of the video: LIVE + viewers, then likes ·
+   * comments · shares. EC2's Facebook plugin prints these once at load and
+   * never updates them; background.js GET_FB_VIDEO_STATS re-reads the
+   * plugin page's server HTML every VSTATS_MS instead - the video itself is
+   * never reloaded. Hidden until the first answer; the last figures stay
+   * (dimmed) if a read fails.
+   */
+  const VSTATS_MS = 5000;
+  let vstatsEl = null;
+
+  function installVideoStats() {
+    const col = document.querySelector('.ddr-col-left');
+    const frame = document.querySelector('.l-iframe iframe[src*="facebook.com/plugins/video.php"]');
+    if (!col || !frame || vstatsEl) return;
+    const url = frame.getAttribute('src').replace(/&amp;/g, '&');
+
+    vstatsEl = mk('div', 'ddr-vstats');
+    vstatsEl.hidden = true;
+    vstatsEl.setAttribute('role', 'status');
+    vstatsEl.innerHTML =
+      '<div class="ddr-vstats-top">' +
+      '<span class="ddr-vstats-live">LIVE</span>' +
+      '<span class="ddr-vstats-viewers">' + ico('<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>') + '<b></b></span>' +
+      '<span class="ddr-vstats-elapsed" hidden></span>' +
+      '</div>' +
+      '<div class="ddr-vstats-row">' +
+      '<span data-k="likes">' + ico('<path d="M7 10v11H3V10h4z"/><path d="M7 10l4-8a3 3 0 0 1 3 3v4h5.6a2 2 0 0 1 2 2.3l-1.3 8A2 2 0 0 1 18.3 21H7"/>') + '<b></b></span>' +
+      '<span data-k="comments">' + ico('<path d="M21 12a8 8 0 0 1-11.6 7.1L3 21l1.9-6.4A8 8 0 1 1 21 12z"/>') + '<b></b></span>' +
+      '<span data-k="shares">' + ico('<path d="M4 12v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7"/><path d="M16 6l-4-4-4 4"/><path d="M12 2v13"/>') + '<b></b></span>' +
+      '</div>';
+    col.appendChild(vstatsEl);
+
+    let last = null;
+    let busy = false;
+    // Broadcast start on this machine's clock, from the live manifest's
+    // elapsed time (asked for only until known); the timer ticks locally.
+    let startAt = null;
+    const hh = (n) => String(n).padStart(2, '0');
+    const elapsedText = () => {
+      const s = Math.max(0, Math.floor((Date.now() - startAt) / 1000));
+      const h = Math.floor(s / 3600);
+      return (h ? `${h}:${hh(Math.floor(s / 60) % 60)}` : String(Math.floor(s / 60))) + ':' + hh(s % 60);
+    };
+    const tickElapsed = () => {
+      const el = vstatsEl.querySelector('.ddr-vstats-elapsed');
+      el.hidden = !(startAt && last && last.live === true);
+      if (!el.hidden) el.textContent = elapsedText();
+    };
+    const render = (resp, at) => {
+      if (resp && resp.ok) last = { ...resp, at };
+      if (resp && resp.ok && resp.elapsedMs != null && !startAt) startAt = at - resp.elapsedMs;
+      vstatsEl.classList.toggle('ddr-vstats-stale', !(resp && resp.ok));
+      if (!last) return;
+      vstatsEl.hidden = false;
+      vstatsEl.querySelector('.ddr-vstats-live').hidden = last.live !== true;
+      const v = vstatsEl.querySelector('.ddr-vstats-viewers');
+      v.hidden = last.viewers == null;
+      v.querySelector('b').textContent = last.viewers == null ? '' : Number(last.viewers).toLocaleString('en-MY');
+      vstatsEl.querySelector('.ddr-vstats-top').hidden = last.live !== true && last.viewers == null;
+      ['likes', 'comments', 'shares'].forEach((k) => {
+        const el = vstatsEl.querySelector(`[data-k="${k}"]`);
+        el.hidden = last[k] == null;
+        el.querySelector('b').textContent = last[k] || '';
+      });
+      const t = new Date(last.at);
+      tickElapsed();
+      const rows = [];
+      if (startAt && last.live === true) {
+        const s = new Date(startAt);
+        rows.push(['Live since', `${hh(s.getHours())}:${hh(s.getMinutes())}:${hh(s.getSeconds())}`]);
+      }
+      if (last.viewers != null) rows.push(['Watching now', Number(last.viewers).toLocaleString('en-MY')]);
+      rows.push(['Reactions', last.likes || '—'], ['Comments', last.comments || '—'], ['Shares', last.shares || '—']);
+      vstatsEl.dataset.ddrTip = JSON.stringify({
+        h: last.live ? 'Live on Facebook' : 'Facebook video',
+        rows,
+        foot: `Updated ${hh(t.getHours())}:${hh(t.getMinutes())}:${hh(t.getSeconds())} · every ${VSTATS_MS / 1000} s` +
+          (resp && resp.ok ? '' : ' · last read failed'),
+      });
+    };
+    const read = () => {
+      if (busy || document.hidden) return;
+      busy = true;
+      const sent = Date.now();
+      chrome.runtime.sendMessage({ type: 'GET_FB_VIDEO_STATS', url, wantElapsed: !startAt }, (resp) => {
+        busy = false;
+        // elapsedMs was measured mid-request; the midpoint splits the error.
+        render(chrome.runtime.lastError ? null : resp, Math.round((sent + Date.now()) / 2));
+      });
+    };
+    read();
+    setInterval(read, VSTATS_MS);
+    setInterval(() => { if (startAt && !document.hidden) tickElapsed(); }, 1000);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) read(); });
   }
 
   // ---------------------------------------------------------------- layout
@@ -1539,7 +1774,7 @@
       .then((text) => {
         const list = (JSON.parse(text) || {}).data || [];
         list.forEach((g) => {
-          if (g && g.group_num) goodsInfo.set(String(g.group_num).trim(), { name: g.group_name || '', price: g.price });
+          if (g && g.group_num) goodsInfo.set(String(g.group_num).trim(), { name: String(g.group_name || '').trim(), price: g.price });
         });
         return convertPrices();
       })
@@ -1585,8 +1820,8 @@
       h: info.name || code,
       s: code,
       rows: [
-        ['MYR', `RM ${moneyTwo(price)}`, 'my'],
-        ['SGD', sgd != null ? `S$ ${moneyTwo(sgd)}` : sgdFailed ? 'converter unavailable' : 'converting…', 'sg'],
+        ['MYR', moneyFull(price), 'my'],
+        ['SGD', sgd != null ? `S$ ${moneyExact(sgd)}` : sgdFailed ? 'converter unavailable' : 'converting…', 'sg'],
       ],
     };
   }
@@ -2064,6 +2299,119 @@
     show('0.00', 'empty');
   }
 
+  // ------------------------------------------------------------ product timer
+  //
+  // A big stopwatch in the empty space under 刷新 + the converter, for timing
+  // how long the host talks about one product: Start, Pause, Clear. Our own
+  // node appended to that header (like .ddr-fx), spanning both of its columns
+  // and filling the rest of the row. Time = accumulated ms + (now − start) while
+  // running, so it never drifts with the tick; kept in sessionStorage per live,
+  // so ⌘R or a crash does not lose a running timer.
+
+  const TIMER_TICK_MS = 200;
+  let timerEl = null;
+
+  function installTimer() {
+    const header = document.querySelector('.ddr-goods .widget-box > div:first-child');
+    if (!header || !fxEl || timerEl) return;
+    const KEY = `ddrTimer:${LIVE_ID}`;
+    let acc = 0;
+    let startedAt = null;
+    try {
+      const saved = JSON.parse(sessionStorage.getItem(KEY) || 'null');
+      if (saved && Number.isFinite(saved.acc)) {
+        acc = Math.max(0, saved.acc);
+        startedAt = Number.isFinite(saved.startedAt) ? saved.startedAt : null;
+      }
+    } catch (err) { /* storage unavailable - start fresh */ }
+    const save = () => {
+      try { sessionStorage.setItem(KEY, JSON.stringify({ acc, startedAt })); } catch (err) { /* ignore */ }
+    };
+
+    timerEl = mk('div', 'ddr-timer');
+    timerEl.setAttribute('role', 'group');
+    timerEl.setAttribute('aria-label', 'Product timer');
+    // Icon-only buttons, named by aria-label only - no hover tip (host's request). .ddr-timer is the size
+    // container; .ddr-timer-in is what its container queries lay out.
+    const btn = (cls, label, path) =>
+      `<button type="button" class="ddr-timer-btn ${cls}" aria-label="${label}">${ico(path)}</button>`;
+    timerEl.innerHTML =
+      '<div class="ddr-timer-in">' +
+      '<div class="ddr-timer-face">' +
+      '<span class="ddr-timer-state"></span>' +
+      '<span class="ddr-timer-time" role="timer" aria-live="off">00:00</span>' +
+      '</div>' +
+      '<div class="ddr-timer-btns">' +
+      btn('ddr-timer-start', 'Start', '<path d="M7 4.5v15l12-7.5-12-7.5Z"/>') +
+      btn('ddr-timer-pause', 'Pause', '<path d="M8 5v14M16 5v14"/>') +
+      btn('ddr-timer-clear', 'Clear', '<path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/>') +
+      '</div>' +
+      '</div>';
+    header.appendChild(timerEl);
+
+    const timeEl = timerEl.querySelector('.ddr-timer-time');
+    const stateEl = timerEl.querySelector('.ddr-timer-state');
+    const startBtn = timerEl.querySelector('.ddr-timer-start');
+    const pauseBtn = timerEl.querySelector('.ddr-timer-pause');
+    const clearBtn = timerEl.querySelector('.ddr-timer-clear');
+    const p2 = (n) => String(n).padStart(2, '0');
+    const elapsed = () => acc + (startedAt != null ? Math.max(0, Date.now() - startedAt) : 0);
+
+    let shown = '';
+    const render = () => {
+      const s = Math.floor(elapsed() / 1000);
+      const h = Math.floor(s / 3600);
+      const text = h ? `${h}:${p2(Math.floor(s / 60) % 60)}:${p2(s % 60)}` : `${p2(Math.floor(s / 60))}:${p2(s % 60)}`;
+      if (text !== shown) {
+        shown = text;
+        timeEl.textContent = text;
+        timerEl.classList.toggle('ddr-timer-hours', h > 0);
+      }
+    };
+    let ticker = 0;
+    const sync = () => {
+      const running = startedAt != null;
+      const state = running ? 'running' : acc > 0 ? 'paused' : 'idle';
+      timerEl.dataset.state = state;
+      stateEl.textContent = running ? 'Running' : acc > 0 ? 'Paused' : 'Timer';
+      const startLabel = state === 'paused' ? 'Resume' : 'Start';
+      startBtn.setAttribute('aria-label', startLabel);
+      startBtn.disabled = running;
+      pauseBtn.disabled = !running;
+      clearBtn.disabled = state === 'idle';
+      clearInterval(ticker);
+      if (running) ticker = setInterval(render, TIMER_TICK_MS);
+      render();
+    };
+
+    startBtn.addEventListener('click', () => {
+      if (startedAt != null) return;
+      startedAt = Date.now();
+      save();
+      sync();
+      pauseBtn.focus();
+    });
+    pauseBtn.addEventListener('click', () => {
+      if (startedAt == null) return;
+      acc = elapsed();
+      startedAt = null;
+      save();
+      sync();
+      startBtn.focus();
+    });
+    clearBtn.addEventListener('click', () => {
+      acc = 0;
+      startedAt = null;
+      save();
+      sync();
+      startBtn.focus();
+    });
+    // Keys pressed on our buttons are ours: EC2's page shortcuts never see them.
+    timerEl.addEventListener('keydown', (e) => e.stopPropagation());
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) render(); });
+    sync();
+  }
+
   // ------------------------------------------------------------ Messenger history
   //
   // Click anywhere in a customer's 留言用户 cell -> a Messenger-style modal of
@@ -2402,12 +2750,13 @@
   //   load              products + every product's wins, 4 at a time; 弃标 list
   //   feed shows a win  re-read THAT product (from the feed row's group_id and the
   //                     comment's codes) at +1.5 s and +10 s
-  //   every 30 s        products only; re-read the products whose win_num changed
-  //                     (catches System Add, edits and cancels with no comment)
+  //   every 5 s         products only; re-read the products whose win_num changed
+  //                     (catches System Add, edits and cancels with no comment), and
+  //                     write each win_num into EC2's goods list (patchGoodsCounts)
   //   every 5 min       弃标 list; every 10 min all products (safety net)
   // Read-only: only EC2's own read calls, nothing clicked or posted.
 
-  const WINS_GROUPS_POLL_MS = 30000;
+  const WINS_GROUPS_POLL_MS = 5000;
   const WINS_ABANDON_MS = 300000;
   const WINS_FULL_MS = 600000;
   const WINS_HOVER_STALE_MS = 20000;
@@ -2596,6 +2945,29 @@
   function setGroups(groups) {
     tonightWins.groups = new Map(groups.map((g) => [g.id, g]));
     tonightWins.stats.groupLists += 1;
+    patchGoodsCounts(groups);
+  }
+
+  /**
+   * EC2's goods list (#allGroup, 关键字 | 得标数) is only redrawn by its own
+   * 刷新 / 自动刷新 (freshGroupsFor4, which blanks the tbody to "...loading..."
+   * and rebuilds it - a flicker every time). Instead, every product poll writes
+   * the fresh win_num into the rows already there: the leading text node of
+   * the 得标数 cell only (living.js appends <br/>style(n) lines after it), so
+   * no node is added, moved or removed and EC2's icons and handlers stay. Rows
+   * are matched by code; a product not in the list (added mid-live) still needs
+   * EC2's 刷新. The goods observer re-applies .ddr-goods-zero.
+   */
+  function patchGoodsCounts(groups) {
+    const byCode = new Map(groups.filter((g) => g.code).map((g) => [g.code, g.winNum]));
+    document.querySelectorAll('#allGroup tbody tr').forEach((tr) => {
+      const cells = tr.children;
+      if (cells.length < 3) return;
+      const n = byCode.get((cells[0].textContent || '').trim().toUpperCase());
+      const text = cells[2].firstChild;
+      if (n == null || !/^\d+$/.test(n) || !text || text.nodeType !== Node.TEXT_NODE) return;
+      if (text.nodeValue.trim() !== n) text.nodeValue = n;
+    });
   }
 
   async function readGroup(id) {
@@ -3418,7 +3790,7 @@
    * PSID button (clicking it still copies the PSID).
    * Not enterable, no close grace, no fade.
    */
-  const PASSIVE_TIP_SEL = '#allGroup, .ddr-ltv, .ddr-aov, .ddr-since, .ddr-live-count, .ddr-psid';
+  const PASSIVE_TIP_SEL = '#allGroup, .ddr-vstats, .ddr-ltv, .ddr-aov, .ddr-since, .ddr-live-count, .ddr-psid';
   const isPassiveTip = (target) => !!(target && target.closest && target.closest(PASSIVE_TIP_SEL));
 
   function hideTip() {
@@ -3543,7 +3915,7 @@
   function watchTable() {
     const tbody = document.querySelector(TBODY_SEL);
     if (!tbody) return false;
-    new MutationObserver(() => badgeAll()).observe(tbody, { childList: true });
+    new MutationObserver(badgeAdded).observe(tbody, { childList: true });
     return true;
   }
 
@@ -3555,10 +3927,13 @@
     const layout = () => {
       if (!(tagTables() && reclaimSpace())) return false;
       installDock();
+      installVideoMenu();
+      installVideoStats();
       installSalesButton();
       placeStartButton();
       wireReloadButton();
       installConverter();
+      installTimer();
       watchGoods();
       installBatchButton();
       installComposerToggle();
@@ -3569,6 +3944,7 @@
       clearTimeout(refit);
       refit = setTimeout(() => {
         winFitDone = false;
+        wonCellWidth = 0;
         fitWinCells();
         badgeAll();
       }, 250);
@@ -3594,6 +3970,7 @@
     setInterval(() => {
       if (pending.size) badgeAll();
       fitWinCells(); // a quiet live may draw its first won row between polls
+      checkWonWidth();
       fitAllWonNames();
     }, 2000);
   }

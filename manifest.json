@@ -31,6 +31,8 @@
     "https://yxch9n4n6e.execute-api.ap-southeast-1.amazonaws.com/*",
     "https://7n881aguj8.execute-api.ap-southeast-1.amazonaws.com/*",
     "http://localhost:8000/*",
-    "https://ec2.full2house.com/*"
+    "https://ec2.full2house.com/*",
+    "https://www.facebook.com/plugins/*",
+    "https://*.fbcdn.net/*"
   ]
 }

@@ -131,7 +131,10 @@ function recount(list) {
   await page.click('.ddr-batch-btn');
   await page.waitForFunction(() => document.querySelectorAll('.ddr-bp-row').length > 0, null, { timeout: 30000 });
   const listed = await page.$$eval('.ddr-bp-row', (rows) => rows.map((r) => r.textContent));
-  check(!listed.some((t) => t.includes('15-09-2026')), 'the live on screen is not offered', `${listed.length} lives listed`);
+  // Tonight's own name, as the page shows it (was a hardcoded '15-09-2026', right only for 556923).
+  const norm = (t) => String(t || '').replace(/\s+/g, ' ').trim();
+  const tonightName = norm(await page.$eval('p[data-ddr-live]', (p) => p.dataset.ddrLive).catch(() => ''));
+  check(!!tonightName && !listed.some((t) => norm(t).includes(tonightName)), 'the live on screen is not offered', `${listed.length} lives listed · tonight "${tonightName}"`);
   const t0 = Date.now();
   for (const id of EARLIER) {
     const clicked = await page.evaluate(async (date) => {

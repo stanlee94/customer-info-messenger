@@ -95,6 +95,19 @@ function truthByPsid(records) {
     if (req.method() === 'POST' && /ec2\.full2house\.com/.test(u) && !/getLivingMessage|getLastGroups|get_cur_wins|getLivingMessagePaged|ajax_getGroups/.test(u)) writes.push(u);
   });
   page.on('pageerror', (e) => errs.push(e.message));
+  // Products whose win_num moved between two of the page's own product polls
+  // (every 5 s): reading those is the overlay doing its job on a live that is
+  // selling, not a burst - see the full-feed re-read check.
+  const changedGroups = new Set();
+  let lastWinNums = null;
+  page.on('response', async (res) => {
+    if (!/m=ajax_getGroups/.test(res.url())) return;
+    try {
+      const now = new Map((JSON.parse(await res.text()).data || []).map((g) => [String(g.group_id), String(g.win_num)]));
+      if (lastWinNums) now.forEach((n, id) => { if (lastWinNums.get(id) !== n) changedGroups.add(id); });
+      lastWinNums = now;
+    } catch (e) { /* not JSON */ }
+  });
   await page.goto(`https://ec2.full2house.com/Ent/index.php?live_id=${TONIGHT}&a=EntLive&m=liveingManager`, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.waitForSelector('.ddr-card', { timeout: 60000 });
   await page.waitForTimeout(20000);
@@ -172,6 +185,10 @@ function truthByPsid(records) {
   page.on('request', (req) => { if (/getLivingMessage/.test(req.url()) && /lastTime=$/.test(req.postData() || '')) feedGets.push(Date.now()); });
   const before = allWinGets.length;
   const beforeProducts = productReads.length;
+  const readGroups = [];
+  const onRead = (req) => { if (/m=get_cur_wins/.test(req.url())) readGroups.push(new URLSearchParams(req.postData() || '').get('group_id')); };
+  page.on('request', onRead);
+  changedGroups.clear();
   const planted = await page.evaluate(() => {
     const tr = [...document.querySelectorAll('#liveMessageDiv tbody > tr[id^="win_tr_"]')]
       .find((row) => row.querySelector('td:nth-child(4) .okWin') && !row.querySelector('td:nth-child(4) .cancelWin') && row.querySelector('.ddr-card'));
@@ -185,10 +202,14 @@ function truthByPsid(records) {
   await page.waitForTimeout(40000);
   await page.evaluate(() => document.querySelectorAll('.ddr-test-fake').forEach((x) => x.remove()));
   const afterResync = allWinGets.slice(before);
+  page.off('request', onRead);
   const productAfter = productReads.length - beforeProducts;
-  check(planted && feedGets.length >= 1 && productAfter <= 3 && !afterResync.some((u) => !/ordered=4/.test(u)),
+  // Reads of products whose win_num really changed in the window are expected
+  // (5 s product poll on a selling live); only the rest could be a burst.
+  const unexplained = readGroups.filter((g) => !changedGroups.has(g)).length;
+  check(planted && feedGets.length >= 1 && unexplained <= 3 && !afterResync.some((u) => !/ordered=4/.test(u)),
     'full feed re-read does not trigger a burst of EC2 win reads',
-    `full feed re-reads ${feedGets.length} · product win reads ${productAfter} · 得标结果 pages ${afterResync.length}`);
+    `full feed re-reads ${feedGets.length} · product win reads ${productAfter} (${productAfter - unexplained} of products whose win_num changed, ${unexplained} other) · 得标结果 pages ${afterResync.length}`);
 
   if (process.env.BATCH) {
     console.log('\n== ticked lives ==');

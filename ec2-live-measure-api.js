@@ -15,7 +15,7 @@ async function ec2Cookie() {
   const j = await r.json();
   return String((j.results || []).find((x) => String(x.Name) === 'EC2').Value || '');
 }
-const LIVE = 'https://ec2.full2house.com/Ent/index.php?live_id=556923&a=EntLive&m=liveingManager';
+const LIVE = 'https://ec2.full2house.com/Ent/index.php?live_id=' + (process.env.TONIGHT || '556923') + '&a=EntLive&m=liveingManager';
 
 (async () => {
   const cookieStr = await ec2Cookie();

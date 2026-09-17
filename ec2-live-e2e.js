@@ -56,7 +56,7 @@ async function ec2Cookie() {
   page.on('console', (m) => { if (m.type() === 'error') errs.push(m.text()); });
   page.on('pageerror', (e) => errs.push('PAGEERROR ' + e.message));
 
-  await page.goto('https://ec2.full2house.com/Ent/index.php?live_id=556923&a=EntLive&m=liveingManager',
+  await page.goto('https://ec2.full2house.com/Ent/index.php?live_id=' + (process.env.TONIGHT || '556923') + '&a=EntLive&m=liveingManager',
     { waitUntil: 'domcontentloaded', timeout: 60000 });
 
   await page.waitForSelector('.ddr-card', { timeout: 60000 });
@@ -231,9 +231,11 @@ async function ec2Cookie() {
   });
 
   // --- WHO'S IN THE LIVE ---------------------------------------------------
-  // A button in the dock opens a centred modal (big type, list scrolls inside);
-  // ×, the backdrop and Escape close it.
+  // A button in the card's ··· tray opens a centred modal (big type, list
+  // scrolls inside); ×, the backdrop and Escape close it.
   const hiddenAtRest = await page.evaluate(() => document.querySelector('.ddr-who-overlay').hidden);
+  const trayClosedAtRest = await page.evaluate(() => !document.querySelector('.ddr-who-btn').offsetParent);
+  await page.click('.ddr-more-btn');
   await page.hover('.ddr-who-btn');
   await page.waitForTimeout(300);
   const hoverOpens = await page.evaluate(() => !document.querySelector('.ddr-who-overlay').hidden);
@@ -258,6 +260,9 @@ async function ec2Cookie() {
   await page.keyboard.press('Escape');
   await page.waitForTimeout(200);
   overlap.closedOnEscape = await page.evaluate(() => document.querySelector('.ddr-who-overlay').hidden);
+  overlap.trayClosedAtRest = trayClosedAtRest;
+  overlap.trayClosedAfterPick = await page.evaluate(() => !document.documentElement.classList.contains('ddr-more-open'));
+  await page.click('.ddr-more-btn');
   await page.click('.ddr-who-btn');
   await page.mouse.click(8, 8);
   await page.waitForTimeout(200);
@@ -357,6 +362,32 @@ async function ec2Cookie() {
   await page.screenshot({ path: path.join(OUT, 'redesign-'+(process.env.VW||1440)+'.png') });
   const cell = await page.$('#liveMessageDiv tbody tr td');
   if (cell) await page.locator('#liveMessageDiv tbody tr').first().screenshot({ path: path.join(OUT, 'row.png') });
+
+  // Live controls card + refresh row, tray closed and open.
+  const SHOT = process.env.SHOT_DIR || OUT;
+  const clip = await page.evaluate(() => {
+    const a = document.querySelector('.ddr-col-left .l-group-btn').getBoundingClientRect();
+    const b = document.querySelector('.ddr-goods .widget-box > div:first-child').getBoundingClientRect();
+    return { x: a.left, y: a.top, width: Math.max(a.width, b.right - a.left), height: Math.min(b.bottom, innerHeight) - a.top };
+  });
+  await page.screenshot({ path: path.join(SHOT, 'card-closed.png'), clip });
+  await page.click('.ddr-more-btn');
+  await page.waitForTimeout(200);
+  const clip2 = await page.evaluate(() => {
+    const a = document.querySelector('.ddr-col-left .l-group-btn').getBoundingClientRect();
+    const b = document.querySelector('.ddr-goods .widget-box > div:first-child').getBoundingClientRect();
+    return { x: a.left, y: a.top, width: Math.max(a.width, b.right - a.left), height: Math.min(Math.max(b.bottom, a.bottom), innerHeight) - a.top };
+  });
+  await page.screenshot({ path: path.join(SHOT, 'card-open.png'), clip: clip2 });
+  const card = await page.evaluate(() => {
+    const r = (s) => { const e = document.querySelector(s); if (!e) return null; const b = e.getBoundingClientRect(); return { w: Math.round(b.width), h: Math.round(b.height), shown: !!e.offsetParent }; };
+    return { refresh: r('.ddr-goods #refresh'), fx: r('.ddr-fx'), live: r('.ddr-batch-btn'), rev: r('.ddr-sales-btn'), start: r('#oneClickStartBtn'), who: r('.ddr-who-btn'), autoToggle: r('.ddr-goods #refresh + .dropdown-toggle') };
+  });
+  // Synthetic mousedown on <body>: a real click there could land on a live control.
+  await page.evaluate(() => document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })));
+  card.closedByOutsideClick = await page.evaluate(() => !document.documentElement.classList.contains('ddr-more-open'));
+  console.log('\n=== CONTROLS CARD ===');
+  Object.entries(card).forEach(([k, v]) => p(k, JSON.stringify(v)));
 
   await ctx.close();
 })().catch((e) => { console.error('FAILED:', e.message); process.exit(1); });

@@ -64,7 +64,7 @@ async function ec2Cookie() {
     const b = new URLSearchParams(rq.postData() || '');
     feed.push({ t: Date.now(), full: !b.get('lastTime') });
   });
-  await page.goto('https://ec2.full2house.com/Ent/index.php?live_id=556923&a=EntLive&m=liveingManager',
+  await page.goto('https://ec2.full2house.com/Ent/index.php?live_id=' + (process.env.TONIGHT || '556923') + '&a=EntLive&m=liveingManager',
     { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.waitForSelector('.ddr-card', { timeout: 60000 });
   await page.waitForTimeout(15000);

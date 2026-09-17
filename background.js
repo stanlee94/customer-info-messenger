@@ -15,22 +15,45 @@ try {
 // must not load at all when off. Calls are chained so a quick on/off/on
 // never races into a double register.
 const EC2_LIVE_SCRIPT_ID = 'ec2-live';
+const EC2_LIVE_MAIN_SCRIPT_ID = 'ec2-live-main';
+const EC2_LIVE_FBFRAME_SCRIPT_ID = 'ec2-live-fbframe';
 let ec2LiveSync = Promise.resolve();
 function syncEc2LiveOverlay() {
   ec2LiveSync = ec2LiveSync.then(async () => {
     const { ec2LiveEnabled } = await chrome.storage.local.get('ec2LiveEnabled');
-    const registered = await chrome.scripting.getRegisteredContentScripts({ ids: [EC2_LIVE_SCRIPT_ID] });
-    if (ec2LiveEnabled === true && !registered.length) {
-      await chrome.scripting.registerContentScripts([{
-        id: EC2_LIVE_SCRIPT_ID,
-        matches: ['https://ec2.full2house.com/Ent/index.php*'],
-        js: ['ec2-live.js'],
-        css: ['ec2-live.css'],
-        runAt: 'document_idle',
-        persistAcrossSessions: true,
-      }]);
-    } else if (ec2LiveEnabled !== true && registered.length) {
-      await chrome.scripting.unregisterContentScripts({ ids: [EC2_LIVE_SCRIPT_ID] });
+    // ec2-live: the overlay (isolated world). ec2-live-main: the late-comment
+    // fix inside living.js's own comment poll (MAIN world, see that file).
+    // ec2-live-fbframe: inside EC2's Facebook video plugin iframe, hides
+    // Facebook's frozen LIVE/viewer badge under our 5 s one (see that file).
+    const scripts = [{
+      id: EC2_LIVE_SCRIPT_ID,
+      matches: ['https://ec2.full2house.com/Ent/index.php*'],
+      js: ['ec2-live.js'],
+      css: ['ec2-live.css'],
+      runAt: 'document_idle',
+      persistAcrossSessions: true,
+    }, {
+      id: EC2_LIVE_MAIN_SCRIPT_ID,
+      matches: ['https://ec2.full2house.com/Ent/index.php*'],
+      js: ['ec2-live-main.js'],
+      runAt: 'document_idle',
+      world: 'MAIN',
+      persistAcrossSessions: true,
+    }, {
+      id: EC2_LIVE_FBFRAME_SCRIPT_ID,
+      matches: ['https://www.facebook.com/plugins/video.php*'],
+      js: ['ec2-live-fbframe.js'],
+      allFrames: true,
+      runAt: 'document_start',
+      persistAcrossSessions: true,
+    }];
+    const ids = scripts.map((x) => x.id);
+    const registered = (await chrome.scripting.getRegisteredContentScripts({ ids })).map((x) => x.id);
+    if (ec2LiveEnabled === true) {
+      const missing = scripts.filter((x) => !registered.includes(x.id));
+      if (missing.length) await chrome.scripting.registerContentScripts(missing);
+    } else if (registered.length) {
+      await chrome.scripting.unregisterContentScripts({ ids: registered });
     }
   }).catch((e) => console.warn('[ec2-live] sync failed', e));
   return ec2LiveSync;
@@ -1116,6 +1139,88 @@ function ec2ReloadListsInPage() {
   });
 }
 
+/**
+ * Counters of the Facebook video EC2 embeds, read from the plugin page's server
+ * HTML (https://www.facebook.com/plugins/video.php?href=…) - no video reload.
+ * The footer ships as <div title="Like">…719</div>, "Comment" and "Share";
+ * is_live_stream says whether the broadcast is live. Numbers stay as Facebook
+ * prints them ("2.3K"). viewers: the LIVE badge's viewerCount (only while live).
+ */
+const FB_PLUGIN_RE = /^https:\/\/www\.facebook\.com\/plugins\/video\.php\?/;
+
+function parseFbCount(html, title) {
+  const m = html.match(new RegExp(`title="${title}"[^>]*>(?:<i[^>]*></i>)*\\s*([\\d.,]+[KMB]?)\\s*<`));
+  return m ? m[1] : null;
+}
+
+function parseFbViewers(html) {
+  // Verified on live 557246: the LIVE badge ships as
+  // <div class="_1jb_ _u_l" data-store="{&quot;viewerCount&quot;:273,…}">…273</div>
+  const patterns = [
+    /viewerCount(?:&quot;|")\s*:\s*(\d+)/,
+    /class="_1jb_[^"]*"[^>]*>(?:<i[^>]*><\/i>)*\s*([\d,]+)\s*</,
+  ];
+  for (const re of patterns) {
+    const m = html.match(re);
+    if (m) return m[1];
+  }
+  return null;
+}
+
+/**
+ * How long the broadcast has been public, in ms, from the live DASH manifest
+ * the plugin HTML links (hd_src/sd_src …/live-dash/….mpd on *.fbcdn.net):
+ * currentServerTimeMs (the manifest's own clock, so no local clock skew) minus
+ * publishTime = the moment the live was published.
+ *
+ * NOT firstAvTimeMs: that is the encoder's first frame, which includes the
+ * preview before going public. On 557246 PRISM streamed from 18:07:34 but the
+ * live was published at 18:33:15 (publishTime; firstAvTimeMs + publishFrameTime
+ * = 18:33:12, the fallback) and the first comment came at 18:38. The plugin's
+ * own hover time (video.currentTime) counts from 18:07 too, so it is not the
+ * reference. null when not live or not found. ~9 KB.
+ */
+async function getFbLiveElapsed(html) {
+  const m = html.match(/"(?:hd_src|sd_src)"\s*:\s*"(https:[^"]*?\.mpd[^"]*)"/);
+  if (!m) return null;
+  const mpdUrl = m[1].replace(/\\\//g, '/');
+  if (!/^https:\/\/[^/]+\.fbcdn\.net\//.test(mpdUrl)) return null;
+  const res = await fetch(mpdUrl, { credentials: 'omit' });
+  if (!res.ok) return null;
+  const xml = await res.text();
+  const attr = (k) => (xml.match(new RegExp(`\\s${k}="([^"]+)"`)) || [])[1];
+  const now = Number(attr('currentServerTimeMs'));
+  let published = Date.parse(attr('publishTime') || '');
+  if (!Number.isFinite(published)) published = Number(attr('firstAvTimeMs')) + Number(attr('publishFrameTime'));
+  if (!now || !Number.isFinite(published)) return null;
+  const ms = now - published;
+  return ms >= 0 ? ms : null;
+}
+
+async function getFbVideoStats(url, wantElapsed) {
+  if (!FB_PLUGIN_RE.test(url)) return { ok: false, error: 'not a Facebook video plugin URL' };
+  try {
+    const res = await fetch(url, { credentials: 'omit', headers: { 'Accept-Language': 'en-US,en;q=0.9' } });
+    if (!res.ok) return { ok: false, error: `Facebook returned HTTP ${res.status}` };
+    const html = await res.text();
+    const liveFlag = html.match(/"is_live_stream"\s*:\s*(true|false)/);
+    const live = liveFlag ? liveFlag[1] === 'true' : null;
+    let elapsedMs = null;
+    if (wantElapsed && live) elapsedMs = await getFbLiveElapsed(html).catch(() => null);
+    return {
+      ok: true,
+      live,
+      elapsedMs,
+      viewers: parseFbViewers(html),
+      likes: parseFbCount(html, 'Like'),
+      comments: parseFbCount(html, 'Comment'),
+      shares: parseFbCount(html, 'Share'),
+    };
+  } catch (err) {
+    return { ok: false, error: String(err && err.message || err) };
+  }
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === 'EC2_RELOAD_LISTS') {
     chrome.scripting
@@ -1317,6 +1422,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.type === 'GET_AI_HEALTH') {
     getAiHealth().then(sendResponse);
+    return true;
+  }
+
+  if (message?.type === 'GET_FB_VIDEO_STATS') {
+    getFbVideoStats(String(message.url || ''), message.wantElapsed === true).then(sendResponse);
     return true;
   }
 
