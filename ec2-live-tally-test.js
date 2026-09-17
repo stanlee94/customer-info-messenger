@@ -158,10 +158,18 @@ const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
   const custName = template.fb_user_name || 'A';
   console.log(`\n  customer ${A}: ${n0} products, ${before[0].tip.v}. X = ${X.code} @ ${X.price}; Y = ${Y.code} @ ${Y.price}`);
 
+  // Comment times just after now (Malaysia time), never a fixed date: the fake feed
+  // serves a comment only when it is newer than the page's cursor, and a fixed time
+  // falls behind real comments once the clock passes it (failed at 00:40 on 2026-09-18).
+  const mytAfter = (s) => {
+    const d = new Date(Date.now() + 8 * 3600 * 1000 + (60 + s) * 1000);
+    const p2 = (n) => String(n).padStart(2, '0');
+    return `${d.getUTCFullYear()}-${p2(d.getUTCMonth() + 1)}-${p2(d.getUTCDate())} ${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())}:${p2(d.getUTCSeconds())}`;
+  };
+  const baseT = Date.now();
   const comment = (seq, message, winId, reply) => ({
     ...template, fb_comment_id: `9999_test_${seq}`, message,
-    comment_created_time: `2026-09-18 00:00:1${seq}`, create_time: `2026-09-18 00:00:1${seq}`,
-    real_create_time: `2026-09-18 00:00:1${seq}`, last_update_time: `2026-09-18 00:00:1${seq}`,
+    ...(() => { const t = mytAfter(Math.round((Date.now() - baseT) / 1000) + seq); return { comment_created_time: t, create_time: t, real_create_time: t, last_update_time: t }; })(),
     reply_message: reply || '', win_id: winId || '0', hit_live_win_id: winId || '0', group_id: winId ? X.group : '0',
     hit_live_group_id: winId ? X.group : '0', winnum: winId ? '1' : '0',
   });
