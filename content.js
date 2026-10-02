@@ -7941,8 +7941,8 @@
 
   // The notice's whole row, from its title text: (1) climb until the block
   // holds the notice's own button (Preview terms) — that is the row; (2) then
-  // only through wrappers exactly the row's height, so a Meta bar sharing the
-  // wrapper is never taken along. Every step stays a short strip (≤ 120 px,
+  // only through wrappers that hold nothing else (or are exactly its height),
+  // so a Meta bar sharing a wrapper is never taken along. Every step stays a short strip (≤ 120 px,
   // ≤ 600 chars) with none of the app's parts inside.
   function findTermsNotice() {
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
@@ -7957,8 +7957,10 @@
       for (let i = 0; i < 8 && !box.querySelector('[role="button"], [role="link"], a, button') && fits(box.parentElement); i++) {
         box = box.parentElement;
       }
-      for (let i = 0; i < 6 && fits(box.parentElement) &&
-        box.parentElement.getBoundingClientRect().height <= box.getBoundingClientRect().height + 2; i++) {
+      // A wrapper holding nothing but the notice is part of it — Meta's grey
+      // background and padding sit on such a box around the row.
+      for (let i = 0; i < 6 && fits(box.parentElement) && (box.parentElement.children.length === 1 ||
+        box.parentElement.getBoundingClientRect().height <= box.getBoundingClientRect().height + 2); i++) {
         box = box.parentElement;
       }
       return box;
