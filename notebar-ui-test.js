@@ -39,6 +39,10 @@ const stub = `
     remove(keys, cb) { (Array.isArray(keys) ? keys : [keys]).forEach((k) => delete store[k]); cb && setTimeout(cb, 0); },
   };
   window.__store = store;
+  // Counts page scans for Meta's terms notice (the only TreeWalker in content.js).
+  const ctw = Document.prototype.createTreeWalker;
+  window.__walks = 0;
+  Document.prototype.createTreeWalker = function (...a) { window.__walks++; return ctw.apply(this, a); };
   window.chrome = { storage: { local, session: local, onChanged: { addListener: (l) => listeners.push(l) } }, runtime: {} };
   ${fakeSrc}
   ${notesSrc}
@@ -111,6 +115,20 @@ function check(name, cond, extra) {
   const openEd = async () => { if (!(await page.evaluate(() => !document.getElementById('cim-nb-editor').hidden))) await page.click('#cim-note-bar .cim-nb-compact'); await page.waitForSelector('#cim-nb-editor:not([hidden])'); };
 
   await page.waitForFunction(() => document.querySelector('#cim-note-bar .cim-nb-status')?.textContent === 'Never set', null, { timeout: 8000 });
+  // Meta's "We're updating our terms" notice: hidden whole, nothing else, looked for once
+  check('terms notice hidden', await page.evaluate(() => !document.getElementById('termsBanner').offsetParent));
+  check("terms notice: Meta's own strip next to it stays", await page.evaluate(() => !!document.getElementById('metaStrip').offsetParent));
+  check('terms notice: whole row hidden, the app is not', await page.evaluate(() => { const hidden = document.querySelector('[data-cim-hidden="terms"]'); return !!hidden && hidden.contains(document.getElementById('termsBanner')) && !hidden.contains(document.querySelector('.app')) && getComputedStyle(document.querySelector('.app')).display !== 'none'; }));
+  check('terms notice: inbox moves up into the space', await page.evaluate(() => Math.round(document.querySelector('.app').getBoundingClientRect().top) === Math.round(document.getElementById('metaStrip').getBoundingClientRect().bottom) && document.getElementById('metaStrip').getBoundingClientRect().top === 0));
+  check("terms notice: Meta's Preview terms never clicked", await page.evaluate(() => !window.__termsClicked));
+  const walks1 = await page.evaluate(() => window.__walks);
+  await page.evaluate(() => { for (let i = 0; i < 20; i++) document.querySelector('.msgs').append(document.createElement('span')); });
+  await page.waitForTimeout(800);
+  check('terms notice: no more scans once hidden', (await page.evaluate(() => window.__walks)) === walks1, `${walks1} → ${await page.evaluate(() => window.__walks)}`);
+  // Meta re-renders it as a new node → hidden again
+  await page.evaluate(() => { const old = document.querySelector('[data-cim-hidden="terms"]'); const fresh = old.cloneNode(true); fresh.removeAttribute('data-cim-hidden'); fresh.style.display = ''; old.replaceWith(fresh); });
+  await page.waitForTimeout(800);
+  check('terms notice: re-rendered by Meta → hidden again', await page.evaluate(() => !document.getElementById('termsBanner').offsetParent && !!document.getElementById('metaStrip').offsetParent));
   check('bar placed in header', await page.evaluate(() => document.querySelector('#cim-note-bar').nextElementSibling?.textContent.includes('Respond to messages')));
   check('header hidden', await page.evaluate(() => getComputedStyle(document.querySelector('#cim-note-bar').nextElementSibling).display === 'none'));
   check('closed: only the profile button shows', await page.locator('[data-k="avatar"]').isVisible() && !(await page.locator('[data-k="automations"]').isVisible()) && !(await page.locator('#avail').isVisible()));

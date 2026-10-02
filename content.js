@@ -7914,7 +7914,60 @@
     }
   }
 
+  // Meta's "We're updating our terms, effective as of …" notice across the top
+  // of the page — hidden at the host's request (it doesn't accept or decline
+  // anything; Meta's own Preview terms link is never touched). Looked for only
+  // while the page loads (TERMS_LOOK_MS); once hidden, no more scanning unless
+  // Meta replaces that node with a new one (one more look). Hidden with an
+  // inline display:none, which React's className rewrites don't undo.
+  const TERMS_LOOK_MS = 30000;
+  const TERMS_TITLE = /^We[’']re updating our terms\b/i;
+  let termsBanner = null;
+  let termsLookUntil = Date.now() + TERMS_LOOK_MS;
+
+  function hideTermsNotice() {
+    if (termsBanner) {
+      if (termsBanner.isConnected) return;
+      termsBanner = null;
+      termsLookUntil = Date.now() + TERMS_LOOK_MS;
+    }
+    if (Date.now() > termsLookUntil || !document.body) return;
+    const box = findTermsNotice();
+    if (!box) return;
+    box.style.setProperty('display', 'none', 'important');
+    box.setAttribute('data-cim-hidden', 'terms');
+    termsBanner = box;
+  }
+
+  // The notice's whole row, from its title text: (1) climb until the block
+  // holds the notice's own button (Preview terms) — that is the row; (2) then
+  // only through wrappers exactly the row's height, so a Meta bar sharing the
+  // wrapper is never taken along. Every step stays a short strip (≤ 120 px,
+  // ≤ 600 chars) with none of the app's parts inside.
+  function findTermsNotice() {
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    for (let t = walker.nextNode(); t; t = walker.nextNode()) {
+      if (!TERMS_TITLE.test(t.data.trim())) continue;
+      const leaf = t.parentElement;
+      if (!leaf || leaf.closest('#' + NOTE_BAR_ID + ', #' + PANEL_ID + ', [data-pagelet="GenericThreadListView"], [contenteditable]')) continue;
+      const app = '[data-pagelet], [role="toolbar"], [role="main"], [role="navigation"], [contenteditable], #' + NOTE_BAR_ID + ', #' + PANEL_ID;
+      const fits = (p) => p && p !== document.body && p !== document.documentElement &&
+        p.textContent.length <= 600 && p.getBoundingClientRect().height <= 120 && !p.querySelector(app);
+      let box = leaf;
+      for (let i = 0; i < 8 && !box.querySelector('[role="button"], [role="link"], a, button') && fits(box.parentElement); i++) {
+        box = box.parentElement;
+      }
+      for (let i = 0; i < 6 && fits(box.parentElement) &&
+        box.parentElement.getBoundingClientRect().height <= box.getBoundingClientRect().height + 2; i++) {
+        box = box.parentElement;
+      }
+      return box;
+    }
+    return null;
+  }
+
   function check() {
+    hideTermsNotice();
     checkPanel();
     tightenSidebar();
     markChatHeader();

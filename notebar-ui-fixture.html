@@ -6,7 +6,10 @@
 <script type="application/json">{"require":[["ServerJS",null,null,[{"define":[["CurrentUserInitialData",[],{"ACCOUNT_ID":"100001","USER_ID":"100001","NAME":"Angel Chok","SHORT_NAME":"Angel"},270]]}]]]}</script>
 <style>
   body { margin: 0; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; background: #f0f2f5; }
-  .app { display: flex; height: 100vh; }
+  .root { display: flex; flex-direction: column; height: 100vh; }
+  .app { display: flex; flex: 1; min-height: 0; }
+  .terms { display: flex; align-items: center; gap: 16px; padding: 10px 24px; background: #cfd5df; font-size: 14px; }
+  .terms .ti { font-size: 17px; } .terms .td { font-size: 13px; } .terms .tb { margin-left: auto; font-weight: 600; cursor: pointer; }
   .nav { width: 64px; background: #fff; border-right: 1px solid #ddd; }
   .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
   .topbar { display: flex; align-items: center; border-bottom: 1px solid #ddd; min-height: 60px; }
@@ -45,6 +48,8 @@
 </style>
 </head>
 <body>
+<div class="root">
+<div><div class="terms" id="termsBanner"><div><svg width="22" height="22"><circle cx="11" cy="11" r="9" fill="none" stroke="#333"/></svg></div><div><div class="ti"><span>We're updating our terms, effective as of 30 October 2026</span></div><div class="td"><span>We're updating our Meta Commercial Terms, Product Catalogue Terms, Self-serve Ad Terms and Ad Creative Generative AI Terms.</span></div></div><div class="tb" role="button" onclick="window.__termsClicked = true"><span>Preview terms</span></div></div><div id="metaStrip" style="height:36px;display:flex;align-items:center;padding:0 24px;background:#fff;border-bottom:1px solid #ddd"><span>Business Suite</span></div></div>
 <div class="app">
   <div class="nav"><div><span>Inbox</span></div></div>
   <div class="main" style="min-width: 800px">
@@ -79,6 +84,7 @@
     </div>
   </div>
 </div>
+</div><!-- .root -->
 <script>
   // Switch conversation like Meta: URL first, chat/sidebar name `delay` ms later.
   window.switchTo = function (uid, name, delay) {
