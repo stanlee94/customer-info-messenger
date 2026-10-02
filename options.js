@@ -3,18 +3,20 @@ const baserowBaseUrlInput = document.getElementById('baserowBaseUrl');
 const baserowTokenInput = document.getElementById('baserowToken');
 const baserowUsersTableIdInput = document.getElementById('baserowUsersTableId');
 const baserowOrdersTableIdInput = document.getElementById('baserowOrdersTableId');
+const baserowNoteLogTableIdInput = document.getElementById('baserowNoteLogTableId');
 const aiApiUrlInput = document.getElementById('aiApiUrl');
 const aiApiTokenInput = document.getElementById('aiApiToken');
 const status = document.getElementById('status');
 
 chrome.storage.local.get(
-  ['manychatToken', 'baserowBaseUrl', 'baserowToken', 'baserowUsersTableId', 'baserowOrdersTableId', 'aiApiUrl', 'aiApiToken'],
-  ({ manychatToken, baserowBaseUrl, baserowToken, baserowUsersTableId, baserowOrdersTableId, aiApiUrl, aiApiToken }) => {
+  ['manychatToken', 'baserowBaseUrl', 'baserowToken', 'baserowUsersTableId', 'baserowOrdersTableId', 'baserowNoteLogTableId', 'aiApiUrl', 'aiApiToken'],
+  ({ manychatToken, baserowBaseUrl, baserowToken, baserowUsersTableId, baserowOrdersTableId, baserowNoteLogTableId, aiApiUrl, aiApiToken }) => {
     if (manychatToken) tokenInput.value = manychatToken;
     if (baserowBaseUrl) baserowBaseUrlInput.value = baserowBaseUrl;
     if (baserowToken) baserowTokenInput.value = baserowToken;
     if (baserowUsersTableId) baserowUsersTableIdInput.value = baserowUsersTableId;
     if (baserowOrdersTableId) baserowOrdersTableIdInput.value = baserowOrdersTableId;
+    if (baserowNoteLogTableId) baserowNoteLogTableIdInput.value = baserowNoteLogTableId;
     if (aiApiUrl) aiApiUrlInput.value = aiApiUrl;
     if (aiApiToken) aiApiTokenInput.value = aiApiToken;
   }
@@ -56,16 +58,12 @@ staffNameInput.addEventListener('input', () => {
   }, 400);
 });
 
-// Balance / Note preview backend controls (background.js noteMock*).
-const notesMockFailInput = document.getElementById('notesMockFail');
+// Balance / Note bar + inbox layout controls.
 const notesStatus = document.getElementById('notesStatus');
 function flashNotesStatus(text) {
   notesStatus.textContent = text;
   setTimeout(() => { notesStatus.textContent = ''; }, 2000);
 }
-chrome.storage.local.get('notesMockFail', ({ notesMockFail }) => {
-  notesMockFailInput.value = notesMockFail || '';
-});
 const threadListSizeInput = document.getElementById('threadListSize');
 chrome.storage.local.get('threadListSize', ({ threadListSize }) => {
   threadListSizeInput.value = ['compact', 'extra', 'off'].includes(threadListSize) ? threadListSize : 'compact';
@@ -93,18 +91,6 @@ noteBarPlacementInput.addEventListener('change', () => {
     flashNotesStatus('Placement saved — open inbox tabs update by themselves.');
   });
 });
-notesMockFailInput.addEventListener('change', () => {
-  chrome.storage.local.set({ notesMockFail: notesMockFailInput.value }, () => {
-    flashNotesStatus(notesMockFailInput.value ? 'Failure simulation on.' : 'Failure simulation off.');
-  });
-});
-document.getElementById('clearNotesMock').addEventListener('click', () => {
-  if (!confirm('Delete every preview balance, note and history entry stored in this browser?')) return;
-  chrome.storage.local.get(null, (all) => {
-    const keys = Object.keys(all).filter((k) => k.startsWith('noteMock:') || k === 'noteMockLog');
-    chrome.storage.local.remove(keys, () => flashNotesStatus(`Cleared ${keys.length} item${keys.length === 1 ? '' : 's'}.`));
-  });
-});
 
 document.getElementById('save').addEventListener('click', () => {
   chrome.storage.local.set(
@@ -114,6 +100,7 @@ document.getElementById('save').addEventListener('click', () => {
       baserowToken: baserowTokenInput.value.trim(),
       baserowUsersTableId: baserowUsersTableIdInput.value.trim(),
       baserowOrdersTableId: baserowOrdersTableIdInput.value.trim(),
+      baserowNoteLogTableId: baserowNoteLogTableIdInput.value.trim(),
       aiApiUrl: aiApiUrlInput.value.trim().replace(/\/+$/, ''),
       aiApiToken: aiApiTokenInput.value.trim(),
     },

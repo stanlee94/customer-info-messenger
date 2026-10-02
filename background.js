@@ -2,6 +2,8 @@ const MANYCHAT_API_BASE = 'https://api.manychat.com';
 const CART_API_BASE = 'https://yxch9n4n6e.execute-api.ap-southeast-1.amazonaws.com/latest';
 const ORDER_STATUS_API_BASE = 'https://7n881aguj8.execute-api.ap-southeast-1.amazonaws.com';
 
+importScripts('notes-baserow.js');
+
 // Let content scripts read/write chrome.storage.session (default is
 // trusted-contexts only). Used for browser-session prefs like the cart's
 // Simple/Adv mode. Top-level so it runs on every service-worker start.
@@ -1264,124 +1266,55 @@ async function getFbVideoStats(url, wantElapsed) {
   }
 }
 
-// ── Customer notes (Balance / Note bar) — PREVIEW BACKEND ───────────────────
-// Stands in for Baserow (table 749 fields + the Customer Note Log table) so the
-// UI can be tested before the tables exist. Same request/response contract as
-// the planned Baserow version (docs/superpowers/specs/2026-09-29-balance-note-
-// bar-design.md): expected-value conflict check, one log row per changed field,
-// `logged:false` when only the history write fails. Data lives in this
-// browser's chrome.storage.local only — other agents never see it.
-// Keys: `noteMock:<psid>` → {balance, note, updatedBy, updatedAt};
-// `noteMockLog` → [{psid, name, field, oldValue, newValue, changedBy, changedAt, uid}].
-// `notesMockFail` ('' | 'load' | 'save' | 'log') simulates failures (options page).
-const NOTE_MOCK_DELAY_MS = 700;
-const NOTE_MOCK_LOG_CAP = 1000;
+// ── Customer notes (Balance / Note bar) — Baserow ───────────────────────────
+// Logic lives in notes-baserow.js (shared with tests/notes-baserow.test.js);
+// this only supplies fetch + config. Log table = Customer Note Log (794).
+const DEFAULT_NOTE_LOG_TABLE_ID = '794';
 
-function noteMockGet(keys) {
-  return new Promise((resolve) => chrome.storage.local.get(keys, resolve));
-}
+// The preview build kept test balances/notes in this browser only; they are
+// not real data and nothing reads them any more.
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.storage.local.get(null, (all) => {
+    const keys = Object.keys(all || {}).filter((k) => k.startsWith('noteMock:') || k === 'noteMockLog' || k === 'notesMockFail');
+    if (keys.length) chrome.storage.local.remove(keys);
+  });
+});
 
-function noteMockSet(obj) {
-  return new Promise((resolve) => chrome.storage.local.set(obj, resolve));
-}
-
-function noteMockDelay() {
-  return new Promise((resolve) => setTimeout(resolve, NOTE_MOCK_DELAY_MS));
-}
-
-function noteRecord(stored) {
-  return {
-    balance: stored?.balance || '',
-    note: stored?.note || '',
-    updatedBy: stored?.updatedBy || '',
-    updatedAt: stored?.updatedAt || '',
-  };
-}
-
-async function getCustomerNotes(psid) {
-  if (!psid) return { ok: false, error: 'Missing PSID.' };
-  await noteMockDelay();
-  const key = 'noteMock:' + psid;
-  const got = await noteMockGet([key, 'notesMockFail']);
-  if (got.notesMockFail === 'load') return { ok: false, error: 'Simulated load failure (preview).' };
-  return { ok: true, preview: true, rowId: 'preview', notes: noteRecord(got[key]) };
-}
-
-async function saveCustomerNotes(msg) {
-  const psid = String(msg?.psid || '');
-  const changedBy = String(msg?.changedBy || '').trim();
-  if (!changedBy) return { ok: false, code: 'no-identity', error: 'No staff name — set it in extension options.' };
-  if (!psid || !msg?.rowId) return { ok: false, code: 'bad-request', error: 'Missing customer id.' };
-
-  // Field-level: `next` carries only the fields the agent changed; each is
-  // checked against what the agent started from (`expected`). A field the
-  // agent didn't touch is never written, so another agent's change to it
-  // survives — and isn't a conflict.
-  const clean = (v) => String(v ?? '').trim();
-  const fields = ['balance', 'note'].filter((f) => msg.next && f in msg.next);
-  if (!fields.length) return { ok: false, code: 'bad-request', error: 'Nothing to save.' };
-  const expected = {};
-  const next = {};
-  for (const f of fields) {
-    expected[f] = clean(msg.expected?.[f]);
-    next[f] = clean(msg.next[f]);
-  }
-
-  await noteMockDelay();
-  const key = 'noteMock:' + psid;
-  const got = await noteMockGet([key, 'noteMockLog', 'notesMockFail']);
-  if (got.notesMockFail === 'save') return { ok: false, code: 'error', error: 'Simulated network failure (preview).' };
-
-  const current = noteRecord(got[key]);
-  const conflicted = fields.filter((f) => current[f] !== expected[f] && current[f] !== next[f]);
-  if (conflicted.length) return { ok: false, code: 'conflict', fields: conflicted, current };
-
-  const saved = { ...current, ...next, updatedBy: changedBy, updatedAt: new Date().toISOString() };
-  await noteMockSet({ [key]: saved });
-
-  if (got.notesMockFail === 'log') return { ok: true, logged: false, saved };
-
-  const log = Array.isArray(got.noteMockLog) ? got.noteMockLog : [];
-  for (const field of fields) {
-    if (current[field] === next[field]) continue;
-    log.push({
-      psid,
-      name: String(msg.name || ''),
-      field: field === 'balance' ? 'Balance' : 'Note',
-      oldValue: current[field],
-      newValue: next[field],
-      changedBy,
-      changedAt: saved.updatedAt,
-      uid: String(msg.uid || ''),
-    });
-  }
-  await noteMockSet({ noteMockLog: log.slice(-NOTE_MOCK_LOG_CAP) });
-  return { ok: true, logged: true, saved };
-}
-
-async function getCustomerNoteLog(psid) {
-  if (!psid) return { ok: false, error: 'Missing PSID.' };
-  await noteMockDelay();
-  const { noteMockLog } = await noteMockGet('noteMockLog');
-  const rows = (Array.isArray(noteMockLog) ? noteMockLog : [])
-    .filter((r) => r.psid === psid)
-    .sort((a, b) => String(b.changedAt).localeCompare(String(a.changedAt)));
-  return { ok: true, rows };
-}
+const notesBackend = NotesBaserow.createNotesBackend({
+  fetch: (...args) => fetch(...args),
+  getConfig: () => new Promise((resolve) => {
+    chrome.storage.local.get(['baserowBaseUrl', 'baserowToken', 'baserowUsersTableId', 'baserowNoteLogTableId'], (c) => resolve({
+      baseUrl: c.baserowBaseUrl || '',
+      token: c.baserowToken || '',
+      usersTableId: c.baserowUsersTableId || '',
+      logTableId: c.baserowNoteLogTableId || DEFAULT_NOTE_LOG_TABLE_ID,
+    }));
+  }),
+});
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === 'GET_CUSTOMER_NOTES') {
-    getCustomerNotes(String(message.psid || '')).then(sendResponse);
+    notesBackend.load(String(message.psid || '')).then(sendResponse);
     return true;
   }
 
   if (message?.type === 'SAVE_CUSTOMER_NOTES') {
-    saveCustomerNotes(message).then(sendResponse);
+    notesBackend.save(message).then(sendResponse);
     return true;
   }
 
   if (message?.type === 'GET_CUSTOMER_NOTE_LOG') {
-    getCustomerNoteLog(String(message.psid || '')).then(sendResponse);
+    notesBackend.history(String(message.psid || '')).then(sendResponse);
+    return true;
+  }
+
+  if (message?.type === 'NOTES_UNLINK_REVIEW') {
+    notesBackend.unlinkReview(message).then(sendResponse);
+    return true;
+  }
+
+  if (message?.type === 'NOTES_UNLINK_REVERT') {
+    notesBackend.unlinkRevert(message).then(sendResponse);
     return true;
   }
 

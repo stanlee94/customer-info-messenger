@@ -4,8 +4,9 @@
 // header, role=toolbar with icon-only buttons + hidden labels, Available
 // picker in a portal, GenericThreadListView, channel_selector, chat header,
 // "View profile" sidebar) with chrome.* stubbed: storage in memory, the notes
-// handlers are background.js's real preview code (sliced out of the file).
-// It never touches Meta, Baserow or ManyChat. Run: node notebar-ui-test.js
+// handlers are the real notes-baserow.js running against tests/fake-baserow.js
+// (an in-memory Baserow). It never touches Meta, Baserow or ManyChat.
+// Run: node notebar-ui-test.js
 // Screenshots → $OUT_DIR (default: <tmp>/notebar-ui-shots).
 const path = require('path');
 const fs = require('fs');
@@ -15,12 +16,12 @@ const EXT = __dirname;
 const OUT = process.env.OUT_DIR || path.join(require('os').tmpdir(), 'notebar-ui-shots');
 fs.mkdirSync(OUT, { recursive: true });
 
-const bg = fs.readFileSync(path.join(EXT, 'background.js'), 'utf8');
-const notesSrc = bg.slice(bg.indexOf('// ── Customer notes'), bg.indexOf('chrome.runtime.onMessage.addListener'));
+const notesSrc = fs.readFileSync(path.join(EXT, 'notes-baserow.js'), 'utf8');
+const fakeSrc = fs.readFileSync(path.join(EXT, 'tests', 'fake-baserow.js'), 'utf8');
 
 const stub = `
 (() => {
-  const store = Object.assign({ uidPsidMap: { '111': '25881234561194', '222': '25889999990077', '444': '25884444444444' } }, window.__seed || {});
+  const store = Object.assign({ uidPsidMap: { '111': '25881234561194', '222': '25889999990077', '444': '25884444444444', '555': '25885555555555', '666': '25886666666666', '777': '25887777777777' } }, window.__seed || {});
   const listeners = [];
   const clone = (v) => v === undefined ? v : JSON.parse(JSON.stringify(v));
   const local = {
@@ -39,18 +40,42 @@ const stub = `
   };
   window.__store = store;
   window.chrome = { storage: { local, session: local, onChanged: { addListener: (l) => listeners.push(l) } }, runtime: {} };
+  ${fakeSrc}
   ${notesSrc}
+  // Baserow table 749 rows (666 is linked in this browser but has NO row).
+  const NAMES = { '25881234561194': 'Tan Mei Ling', '25889999990077': 'Lim Ah Kow', '25884444444444': 'Someone Else', '25885555555555': '', '25887777777777': 'Wrong Guy', '25888888888888': 'Chong Wei' };
+  const fake = createFakeBaserow();
+  for (const [psid, name] of Object.entries(NAMES)) fake.addUser({ PSID: psid, Name: name });
+  window.__fake = fake;
+  window.__row = (psid) => fake.tables['749'].find((r) => r.PSID === psid);
+  window.__fail = '';  // '' | 'save' (PATCH fails) | 'log' (log write fails)
+  fake.before((r) => {
+    if (window.__fail === 'save' && r.method === 'PATCH') return { status: 500, body: { detail: 'simulated' } };
+    if (window.__fail === 'hang' && r.method === 'PATCH') return new Promise(() => {});
+    if (window.__fail === 'log' && r.table === '794' && r.method === 'POST') return { status: 500, body: { detail: 'simulated' } };
+    if (window.__afterPatch && r.method === 'GET' && r.rowId && fake.requests.at(-2)?.method === 'PATCH') { const f = window.__afterPatch; window.__afterPatch = null; f(); }
+    return null;
+  });
+  const backend = NotesBaserow.createNotesBackend({
+    fetch: async (...a) => { await new Promise((r) => setTimeout(r, window.__baserowDelay ?? 120)); return fake.fetch(...a); },
+    getConfig: async () => ({ baseUrl: 'https://baserow.test', token: 'tok', usersTableId: '749', logTableId: '794' }),
+    timeoutMs: 1500,
+  });
   const summary = { totalSpending: 1234.5, totalPurchase: 9, rawRecency: 12, lastOrderDate: '2026-09-20', yearsActive: 2, rank: 'Loyal', address: '12 Jalan Bukit, 50450 KL', recentOrders: [], allOrders: [] };
   const handlers = {
     CHECK_SESSION: async () => ({ ok: true, valid: false }),
     GET_AI_HEALTH: async () => ({ ok: false }),
     SEARCH_BASEROW_BY_UID: async () => ({ ok: true, psid: null }),
-    SEARCH_MANYCHAT_BY_NAME: async () => ({ ok: true, candidates: [] }),
-    GET_ORDERS_BY_PSID: async (m) => { await new Promise((r) => setTimeout(r, window.__ordersDelay || 300)); const names = { '25881234561194': 'Tan Mei Ling', '25889999990077': 'Lim Ah Kow', '25884444444444': 'Someone Else' }; return { ok: true, data: { ...summary, baserowName: names[m.psid] || '' } }; },
+    SEARCH_MANYCHAT_BY_NAME: async (m) => ({ ok: true, candidates: m.name === 'Chong Wei' ? [{ psid: '25888888888888', name: 'Chong Wei', profilePic: '', lastMessage: 'hi', lastInteraction: '' }] : [] }),
+    GET_ORDERS_BY_PSID: async (m) => { await new Promise((r) => setTimeout(r, window.__ordersDelay || 300)); return { ok: true, data: { ...summary, baserowName: NAMES[m.psid] || '' } }; },
     GET_MANYCHAT_INFO: async () => ({ ok: true, tags: [] }),
-    GET_CUSTOMER_NOTES: (m) => getCustomerNotes(String(m.psid || '')),
-    SAVE_CUSTOMER_NOTES: (m) => saveCustomerNotes(m),
-    GET_CUSTOMER_NOTE_LOG: (m) => getCustomerNoteLog(String(m.psid || '')),
+    GET_CUSTOMER_NOTES: (m) => backend.load(String(m.psid || '')),
+    SAVE_CUSTOMER_NOTES: (m) => backend.save(m),
+    GET_CUSTOMER_NOTE_LOG: (m) => backend.history(String(m.psid || '')),
+    NOTES_UNLINK_REVIEW: (m) => backend.unlinkReview(m),
+    NOTES_UNLINK_REVERT: (m) => backend.unlinkRevert(m),
+    UNLINK_BASEROW_UID: async () => ({ ok: true }),
+    LINK_BASEROW_UID: async () => ({ ok: true }),
     OPEN_OPTIONS_PAGE: async () => { window.__optionsOpened = true; return { ok: true }; },
   };
   chrome.runtime.sendMessage = (msg, cb) => {
@@ -79,6 +104,10 @@ function check(name, cond, extra) {
   const bar = page.locator('#cim-note-bar');
   const shot = (n) => page.screenshot({ path: path.join(OUT, n + '.png') });
   const status = () => page.evaluate(() => document.querySelector('#cim-note-bar .cim-nb-status').textContent);
+  const stext = () => page.evaluate(() => document.querySelector('#cim-note-bar .cim-nb-status-text')?.textContent || '');
+  const cstatus = () => page.evaluate(() => document.querySelector('#cim-note-bar .cim-nb-cstatus').textContent);
+  const links = () => page.locator('#cim-note-bar .cim-nb-status .cim-nb-link').allInnerTexts().then((x) => x.join('|'));
+  const waitText = (prefix, t = 6000) => page.waitForFunction((p) => (document.querySelector('#cim-note-bar .cim-nb-status-text')?.textContent || '').startsWith(p), prefix, { timeout: t });
   const openEd = async () => { if (!(await page.evaluate(() => !document.getElementById('cim-nb-editor').hidden))) await page.click('#cim-note-bar .cim-nb-compact'); await page.waitForSelector('#cim-nb-editor:not([hidden])'); };
 
   await page.waitForFunction(() => document.querySelector('#cim-note-bar .cim-nb-status')?.textContent === 'Never set', null, { timeout: 8000 });
@@ -133,7 +162,7 @@ function check(name, cond, extra) {
   check('identity from Facebook blob', (await page.evaluate(() => document.querySelector('.cim-nb-me').textContent)) === 'You: Angel Chok');
   check('name in bar', (await page.evaluate(() => document.querySelector('.cim-nb-name').textContent)) === 'Tan Mei Ling');
   check('psid suffix', (await page.evaluate(() => document.querySelector('.cim-nb-psid').textContent)) === 'PSID …1194');
-  check('preview chip', await page.evaluate(() => !document.querySelector('.cim-nb-preview').hidden));
+  check('no preview tag any more', await page.evaluate(() => !document.querySelector('.cim-nb-preview')));
   check('save disabled when clean', await page.locator('.cim-nb-save').isDisabled());
   // Conversation list: compact by default
   const tl = () => page.evaluate(() => { const col = document.querySelector('.list'); const av = document.querySelector('.av').getBoundingClientRect(); const pl = document.querySelector('[data-pagelet="GenericThreadListView"]'); return { col: Math.round(col.getBoundingClientRect().width - (parseFloat(getComputedStyle(col).borderLeftWidth) + parseFloat(getComputedStyle(col).borderRightWidth))), av: Math.round(av.width), overflow: pl.scrollWidth > pl.clientWidth + 1, chat: Math.round(document.querySelector('.chat').getBoundingClientRect().width) }; });
@@ -333,14 +362,14 @@ function check(name, cond, extra) {
   await shot('09-draft-restored');
 
   // Another agent changed only Balance meanwhile → my Note save merges, no conflict
-  await page.evaluate(() => { window.__store['noteMock:25889999990077'] = { balance: 'RM 5 voucher', note: '', updatedBy: 'Siti', updatedAt: new Date().toISOString() }; });
+  await page.evaluate(() => { Object.assign(window.__row('25889999990077'), { Balance: 'RM 5 voucher', Note: '', Note_Updated_By: 'Siti', Note_Updated_At: new Date().toISOString() }); });
   await openEd(); await page.click('.cim-nb-save');
   await page.waitForFunction(() => document.querySelector('#cim-note-bar .cim-nb-status').textContent.startsWith('Saved'));
   check('different fields merge, no conflict', (await page.inputValue('.cim-nb-balance')) === 'RM 5 voucher' && (await page.inputValue('.cim-nb-note')) === 'draft for B');
   await page.waitForTimeout(2200);
   // Same field changed by both → conflict
   await openEd(); await page.fill('.cim-nb-note', 'my new note');
-  await page.evaluate(() => { const r = window.__store['noteMock:25889999990077']; window.__store['noteMock:25889999990077'] = { ...r, note: 'Siti: refunded already', updatedBy: 'Siti', updatedAt: new Date().toISOString() }; });
+  await page.evaluate(() => { Object.assign(window.__row('25889999990077'), { Note: 'Siti: refunded already', Note_Updated_By: 'Siti', Note_Updated_At: new Date().toISOString() }); });
   await openEd(); await page.click('.cim-nb-save');
   await page.waitForFunction(() => document.querySelector('#cim-note-bar .cim-nb-status').textContent.includes('while you were editing'));
   await shot('10-conflict');
@@ -352,24 +381,34 @@ function check(name, cond, extra) {
   await page.waitForTimeout(2200);
   // Load theirs
   await openEd(); await page.fill('.cim-nb-note', 'another try');
-  await page.evaluate(() => { const r = window.__store['noteMock:25889999990077']; window.__store['noteMock:25889999990077'] = { ...r, note: 'Siti again', updatedBy: 'Siti', updatedAt: new Date().toISOString() }; });
+  await page.evaluate(() => { Object.assign(window.__row('25889999990077'), { Note: 'Siti again', Note_Updated_By: 'Siti', Note_Updated_At: new Date().toISOString() }); });
   await openEd(); await page.click('.cim-nb-save');
   await page.waitForFunction(() => document.querySelector('#cim-note-bar .cim-nb-status').textContent.includes('while you were editing'));
   await page.click('.cim-nb-status .cim-nb-link >> text=Load theirs');
   check('load theirs', (await page.inputValue('.cim-nb-note')) === 'Siti again' && (await status()).startsWith('Saved by Siti'), await status());
 
   // Save error + retry
-  await page.evaluate(() => { window.__store.notesMockFail = 'save'; });
+  await page.evaluate(() => { window.__fail = 'save'; });
   await openEd(); await page.fill('.cim-nb-balance', 'RM 6');
   await page.press('.cim-nb-balance', 'Enter');
   await page.waitForFunction(() => document.querySelector('#cim-note-bar .cim-nb-status').textContent.startsWith('Not saved'));
   check('typed text kept on error', (await page.inputValue('.cim-nb-balance')) === 'RM 6');
+  check('server error in plain words', (await stext()) === 'Not saved — Baserow is having a problem (error 500). Try again in a minute. Your text is kept.', await stext());
   await shot('11-save-error');
-  await page.evaluate(() => { window.__store.notesMockFail = 'log'; });
+  // Baserow hangs: the bar stops waiting and says so instead of spinning
+  await page.evaluate(() => { window.__fail = 'hang'; });
+  await page.click('.cim-nb-status .cim-nb-link');
+  await page.waitForTimeout(400);
+  check('hang: Saving… at first', (await status()) === 'Saving…', await status());
+  await waitText('Not saved', 5000);
+  check('hang: gives up and says so', (await stext()) === 'Not saved — Baserow isn’t answering. Press Retry. Your text is kept.', await stext());
+  check('hang: typed text kept, Retry offered', (await page.inputValue('.cim-nb-balance')) === 'RM 6' && (await links()) === 'Retry');
+  await shot('11a-timeout');
+  await page.evaluate(() => { window.__fail = 'log'; });
   await page.click('.cim-nb-status .cim-nb-link');
   await page.waitForFunction(() => document.querySelector('#cim-note-bar .cim-nb-status').textContent.includes('history not recorded'));
   await shot('12-saved-nolog');
-  await page.evaluate(() => { window.__store.notesMockFail = ''; });
+  await page.evaluate(() => { window.__fail = ''; });
 
   // Clearing removes the flag
   await openEd(); await page.fill('.cim-nb-balance', '');
@@ -378,6 +417,33 @@ function check(name, cond, extra) {
   await page.waitForFunction(() => document.querySelector('#cim-note-bar .cim-nb-status').textContent === 'Saved ✓');
   check('names match, nothing saved → normal background', await page.evaluate(() => !document.querySelector('[class*="cim-page-"]')));
   check('flag off after clearing', !(await bar.evaluate((b) => b.classList.contains('cim-note-bar--flag'))));
+  await page.waitForTimeout(2200);
+
+  // B's row deleted in Baserow after the chat opened → blocked, text kept
+  await page.evaluate(() => { const t = window.__fake.tables['749']; window.__bk = t.splice(t.indexOf(window.__row('25889999990077')), 1)[0]; });
+  await openEd(); await page.fill('.cim-nb-balance', 'RM 7');
+  await page.press('.cim-nb-balance', 'Enter');
+  await waitText('Not saved.');
+  check('row deleted → says so', (await stext()) === "Not saved. This customer's Baserow row (PSID …0077) was deleted after you opened the chat. Your text is kept. Unlink and link the customer again, then press Save.", await stext());
+  check('row deleted → closed row says so', (await cstatus()) === 'Not saved — row deleted', await cstatus());
+  check('row deleted → typed text kept', (await page.inputValue('.cim-nb-balance')) === 'RM 7');
+  await shot('11b-row-deleted');
+  // The row comes back but now carries another PSID → blocked, nothing written
+  await page.evaluate(() => { window.__bk.PSID = '25880000000001'; window.__fake.tables['749'].push(window.__bk); });
+  await page.click('.cim-nb-save');
+  await page.waitForFunction(() => (document.querySelector('#cim-note-bar .cim-nb-status-text')?.textContent || '').startsWith('Not saved. Baserow row #'), null, { timeout: 6000 });
+  check('wrong row → names the other PSID', (await stext()).includes('now belongs to a different customer (PSID …0001)'), await stext());
+  check('wrong row → nothing written', await page.evaluate(() => !window.__bk.Balance));
+  await shot('11c-wrong-row');
+  await page.evaluate(() => { window.__bk.PSID = '25889999990077'; });
+  // Another agent writes Balance in the instant after ours → told, shows theirs
+  await page.evaluate(() => { window.__afterPatch = () => Object.assign(window.__row('25889999990077'), { Balance: 'RM 8 (Siti)', Note_Updated_By: 'Siti', Note_Updated_At: new Date().toISOString() }); });
+  await page.click('.cim-nb-save');
+  await waitText('Saved, but');
+  check('race after our write → says who and what', (await stext()) === 'Saved, but Siti changed Balance a moment later — it now shows "RM 8 (Siti)". Check it.', await stext());
+  check('race → box shows what is really stored', (await page.inputValue('.cim-nb-balance')) === 'RM 8 (Siti)');
+  await shot('11d-raced');
+  await page.keyboard.press('Escape');
 
   const tone = () => page.evaluate(() => { const m = document.querySelector('.main'); return m.classList.contains('cim-page-green') ? 'green' : m.classList.contains('cim-page-red') ? 'red' : 'none'; });
 
@@ -389,10 +455,56 @@ function check(name, cond, extra) {
   check('panel names the Baserow mismatch', (await page.locator('#cim-purchase-panel .cim-name-check').textContent()) === '⚠ Baserow name: Someone Else');
   await shot('13a-wrong-link-red');
 
+  // Saving while red: asks first, naming both; Cancel writes nothing; confirming saves
+  await page.waitForFunction(() => document.querySelector('#cim-note-bar .cim-nb-status')?.textContent === 'Never set', null, { timeout: 8000 });
+  await openEd(); await page.fill('.cim-nb-balance', 'RM 1');
+  await page.press('.cim-nb-balance', 'Enter');
+  await waitText('Baserow says');
+  check('red save asks first, naming both', (await stext()) === 'Baserow says this PSID is Someone Else, but this chat is Wrong Link. Check the link before saving.', await stext());
+  check('red save: confirm or cancel', (await links()) === 'It’s the right customer — save|Cancel', await links());
+  check('red save: nothing written yet', await page.evaluate(() => !window.__row('25884444444444').Balance));
+  check('red save: closed row says check', (await cstatus()) === 'Check customer — open', await cstatus());
+  await shot('13c-name-check');
+  await page.click('.cim-nb-status .cim-nb-link >> text=Cancel');
+  check('cancel keeps the text, writes nothing', (await page.inputValue('.cim-nb-balance')) === 'RM 1' && await page.evaluate(() => !window.__row('25884444444444').Balance));
+  await page.press('.cim-nb-balance', 'Enter');
+  await waitText('Baserow says');
+  await page.click('.cim-nb-status .cim-nb-link >> text=It’s the right customer — save');
+  await page.waitForFunction(() => document.querySelector('#cim-note-bar .cim-nb-status').textContent === 'Saved ✓', null, { timeout: 6000 });
+  check('confirmed → saved to Baserow', await page.evaluate(() => window.__row('25884444444444').Balance === 'RM 1'));
+  check('still red after a confirmed save', (await tone()) === 'red');
+  await page.waitForTimeout(2200);
+
+  // Baserow has no name for the PSID: confirm the customer once
+  await page.evaluate(() => switchTo('555', 'Nameless Chat', 0));
+  await page.waitForFunction(() => document.querySelector('#cim-note-bar .cim-nb-status')?.textContent === 'Never set' && document.querySelector('.cim-nb-name').textContent === 'Nameless Chat', null, { timeout: 8000 });
+  await openEd(); await page.fill('.cim-nb-balance', 'RM 2');
+  await page.press('.cim-nb-balance', 'Enter');
+  await waitText('Save to');
+  check('blank Baserow name → confirm the customer', (await stext()) === 'Save to Nameless Chat (PSID …5555)? Baserow has no name for this customer.', await stext());
+  await shot('13d-blank-name');
+  await page.click('.cim-nb-status .cim-nb-link >> text=Save');
+  await page.waitForFunction(() => document.querySelector('#cim-note-bar .cim-nb-status').textContent === 'Saved ✓', null, { timeout: 6000 });
+  check('blank name confirmed → saved', await page.evaluate(() => window.__row('25885555555555').Balance === 'RM 2'));
+  await page.waitForTimeout(2200);
+
+  // Linked here, but Baserow has no row for the PSID → nothing can be saved, never created
+  await page.evaluate(() => switchTo('666', 'No Row Person', 0));
+  await page.waitForFunction(() => document.querySelector('#cim-note-bar .cim-nb-cstatus')?.textContent === 'Not in Baserow', null, { timeout: 8000 });
+  check('missing row → inputs disabled', await page.locator('.cim-nb-balance').isDisabled());
+  await page.click('.cim-nb-compact');
+  await page.waitForTimeout(200);
+  check('missing row → the bar opens to explain', await page.locator('#cim-nb-editor').isVisible() && await page.locator('.cim-nb-save').isDisabled());
+  check('missing row → editor explains', (await stext()) === "This chat is linked to PSID …6666, but Baserow's Users table has no row for it, and creating one failed. Nothing can be saved. Reload the page; if this stays, unlink and link the customer again.", await stext());
+  check('missing row → no row created', await page.evaluate(() => !window.__row('25886666666666') && !window.__fake.requests.some((r) => r.method === 'POST' && r.table === '749')));
+  await shot('13e-missing-row');
+  await page.keyboard.press('Escape');
+
   // Back to A (balance saved, names match) → green
   await page.evaluate(() => switchTo('111', 'Tan Mei Ling', 0));
   await page.waitForFunction(() => document.querySelector('#cim-note-bar .cim-nb-v-balance')?.textContent === 'RM 19.90 credit', null, { timeout: 8000 });
-  await page.waitForTimeout(400);
+  // Green needs the panel's Baserow name too (orders lookup), which can land after the notes.
+  await page.waitForFunction(() => document.querySelector('.main').classList.contains('cim-page-green'), null, { timeout: 3000 }).catch(() => {});
   check('back on A → GREEN', (await tone()) === 'green');
   check('no Baserow warning when names match', await page.evaluate(() => document.querySelector('#cim-purchase-panel .cim-name-check').hidden));
 
@@ -423,6 +535,44 @@ function check(name, cond, extra) {
   await page.waitForFunction(() => document.querySelector('#cim-note-bar .cim-nb-status')?.textContent === 'Link this customer first', null, { timeout: 8000 });
   check('unlinked disabled', await page.locator('.cim-nb-balance').isDisabled());
   await shot('13-unlinked');
+
+  // Wrong link → agent confirms by mistake and saves → unlink → Move → link the right customer
+  await page.evaluate(() => switchTo('777', 'Chong Wei', 0));
+  await page.waitForFunction(() => document.querySelector('#cim-note-bar .cim-nb-status')?.textContent === 'Never set' && document.querySelector('.cim-nb-name').textContent === 'Chong Wei', null, { timeout: 8000 });
+  await openEd(); await page.fill('.cim-nb-balance', 'RM 30 credit');
+  await page.press('.cim-nb-balance', 'Enter');
+  await waitText('Baserow says');
+  await page.click('.cim-nb-status .cim-nb-link >> text=It’s the right customer — save');
+  await page.waitForFunction(() => document.querySelector('#cim-note-bar .cim-nb-status').textContent === 'Saved ✓', null, { timeout: 6000 });
+  check('wrong-link save landed on the wrong customer', await page.evaluate(() => window.__row('25887777777777').Balance === 'RM 30 credit'));
+  await page.waitForTimeout(1200);
+  const ulm = () => page.evaluate(() => { const m = document.getElementById('cim-unlink-modal'); return m && { title: m.querySelector('.cim-nb-htitle').textContent, sub: m.querySelector('.cim-nb-hsub').textContent, items: Array.from(m.querySelectorAll('.cim-ul-item')).map((i) => i.innerText.replace(/\s+/g, ' ')), buttons: Array.from(m.querySelectorAll('.cim-ul-btn')).map((x) => x.textContent) }; });
+  await page.click('#cim-purchase-panel .cim-unlink');
+  await page.waitForSelector('#cim-unlink-modal');
+  const u1 = await ulm();
+  check('unlink shows what this chat saved', u1.title === 'Before you unlink' && u1.sub === 'Wrong Guy · PSID …7777' && u1.items.length === 1 && u1.items[0].includes('Before (empty)') && u1.items[0].includes('This chat RM 30 credit'), JSON.stringify(u1));
+  check('unlink offers Move / Keep / Cancel', u1.buttons.join('|') === 'Move to the correct customer|Keep on Wrong Guy|Cancel', u1.buttons.join('|'));
+  await page.waitForTimeout(200);
+  await shot('18-unlink-review');
+  await page.click('#cim-unlink-modal .cim-ul-btn >> text=Cancel');
+  check('Cancel unlinks nothing', await page.evaluate(() => !document.getElementById('cim-unlink-modal') && window.__store.uidPsidMap['777'] === '25887777777777' && window.__row('25887777777777').Balance === 'RM 30 credit'));
+  await page.click('#cim-purchase-panel .cim-unlink');
+  await page.waitForSelector('#cim-unlink-modal');
+  await page.click('#cim-unlink-modal .cim-ul-btn >> text=Move to the correct customer');
+  await page.waitForSelector('#cim-purchase-panel .cim-candidate-link-btn', { timeout: 8000 });
+  check('Move: wrong customer gets the old value back', await page.evaluate(() => window.__row('25887777777777').Balance === ''));
+  check('Move: undo is in the history', await page.evaluate(() => { const l = window.__fake.logRows().at(-1); return l.PSID === '25887777777777' && l.Old_Value === 'RM 30 credit' && l.New_Value === '' && l.Changed_By === 'Angel Chok (undo on unlink)'; }));
+  check('Move: unlinked', await page.evaluate(() => !window.__store.uidPsidMap['777']));
+  await page.click('#cim-purchase-panel .cim-candidate-link-btn');
+  await page.waitForFunction(() => document.querySelector('#cim-note-bar .cim-nb-cstatus')?.textContent === 'Unsaved', null, { timeout: 8000 });
+  await openEd();
+  check('right customer gets the text as an unsaved draft', (await page.inputValue('.cim-nb-balance')) === 'RM 30 credit' && (await stext()) === 'Moved from Wrong Guy — not saved yet. Check it and press Save.', await stext());
+  check('…and nothing was saved to them yet', await page.evaluate(() => !window.__row('25888888888888').Balance));
+  await shot('19-moved-draft');
+  await page.click('.cim-nb-save');
+  await page.waitForFunction(() => document.querySelector('#cim-note-bar .cim-nb-status').textContent === 'Saved ✓', null, { timeout: 6000 });
+  check('agent saves it on the right customer', await page.evaluate(() => window.__row('25888888888888').Balance === 'RM 30 credit' && window.__row('25887777777777').Balance === ''));
+  await page.waitForTimeout(1200);
 
   // In-panel placement
   await page.evaluate(() => { chrome.storage.local.set({ noteBarPlacement: 'panel' }); switchTo('111', 'Tan Mei Ling', 0); });

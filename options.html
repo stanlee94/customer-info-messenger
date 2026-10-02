@@ -146,10 +146,10 @@
     <input type="text" id="staffName" autocomplete="off" maxlength="60" placeholder="e.g. Angel Chok" />
     <div id="staffStatus" class="inline-status"></div>
 
-    <h3>Balance / Note — preview</h3>
+    <h3>Balance / Note bar and inbox layout</h3>
     <p class="hint">
-      Preview build: balances and notes are stored in <b>this browser only</b>
-      until the Baserow tables are connected. Other agents won't see them.
+      Balances and notes are saved on the customer's Baserow row, so every
+      agent sees the same ones. Every change is kept in the note log table.
     </p>
     <label for="noteBarPlacement">Where the bar sits</label>
     <select id="noteBarPlacement">
@@ -167,14 +167,6 @@
       <span class="switch"><input type="checkbox" id="compactMetaHeaders" role="switch" /><span></span></span>
     </div>
     <p class="hint">On by default. Tightens the spacing (not the text size) of the parts of the inbox that are rarely clicked, so the messages and the customer panel get the room.</p>
-    <label for="notesMockFail">Simulate a failure</label>
-    <select id="notesMockFail">
-      <option value="">None — everything works</option>
-      <option value="load">Loading fails</option>
-      <option value="save">Saving fails</option>
-      <option value="log">Saved, but history not recorded</option>
-    </select>
-    <button id="clearNotesMock" type="button" class="secondary">Clear all preview balances, notes and history</button>
     <div id="notesStatus" class="inline-status"></div>
 
     <h3>ManyChat API Token</h3>
@@ -187,8 +179,10 @@
 
     <h3>Baserow</h3>
     <p class="hint">
-      Used to write the linked UID into the "Users" table when a customer is
-      linked or unlinked from a ManyChat candidate.
+      Customer lookups, the linked UID in the "Users" table, and the
+      Balance / Note bar (Users table fields + the note log table). The token
+      needs create + update on the Users table and create + read on the note
+      log table.
     </p>
     <label for="baserowBaseUrl">Base URL</label>
     <input type="text" id="baserowBaseUrl" autocomplete="off" value="https://baserow.dd-herbs.com" />
@@ -198,6 +192,8 @@
     <input type="text" id="baserowUsersTableId" autocomplete="off" value="749" />
     <label for="baserowOrdersTableId">Orders Table ID</label>
     <input type="text" id="baserowOrdersTableId" autocomplete="off" value="750" />
+    <label for="baserowNoteLogTableId">Note Log Table ID</label>
+    <input type="text" id="baserowNoteLogTableId" autocomplete="off" value="794" />
 
     <h3>AI Reply API</h3>
     <p class="hint">

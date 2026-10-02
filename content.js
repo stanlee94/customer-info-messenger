@@ -83,6 +83,14 @@
     return null;
   }
 
+  // Our own business page. Meta briefly shows it where the customer's name
+  // goes during a switch; it is never a customer, so it is never read as one.
+  const OWN_PAGE_NAMES = ['多多养身站 DD Health Channel'];
+  function isOwnPageName(text) {
+    const norm = (s) => String(s || '').normalize('NFKC').replace(/\s+/g, ' ').trim().toLowerCase();
+    return OWN_PAGE_NAMES.some((p) => norm(p) === norm(text));
+  }
+
   function getCustomerNameFromDom() {
     // Strategy 1: sidebar "View profile" element
     const candidates = document.querySelectorAll('a, span, div');
@@ -93,7 +101,7 @@
           const leaves = container.querySelectorAll('span, div, h1, h2, h3, h4');
           for (const leaf of leaves) {
             const text = leaf.textContent.trim();
-            if (leaf.children.length === 0 && text && text !== 'View profile') {
+            if (leaf.children.length === 0 && text && text !== 'View profile' && !isOwnPageName(text)) {
               return text;
             }
           }
@@ -108,7 +116,7 @@
     for (const el of clamped) {
       if (el.children.length > 0) continue;
       const text = el.textContent.trim();
-      if (!text) continue;
+      if (!text || isOwnPageName(text)) continue;
       let container = el.parentElement;
       for (let depth = 0; depth < 4 && container; depth++) {
         if (container.textContent.includes('Assigned to ') || container.textContent.includes('Assign this conversation')) {
@@ -779,8 +787,8 @@
   // ── Balance / Note bar ─────────────────────────────────────────────────────
   // Spec: docs/superpowers/specs/2026-09-29-balance-note-bar-design.md.
   // Two per-customer fields shown in Meta's page header (fallback: top of our
-  // panel). Backend today is background.js's preview store (this browser only);
-  // the message contract is the one the Baserow version will keep.
+  // panel). Stored on the customer's Baserow Users row (table 749) with every
+  // change in the Customer Note Log — logic in notes-baserow.js.
   // Every DOM write here is change-guarded: the document MutationObserver
   // re-runs check() on any childList change, so an unconditional textContent
   // write would loop.
@@ -1156,7 +1164,6 @@
         <div class="cim-nb-ehead">
           <span class="cim-nb-ename"></span>
           <button type="button" class="cim-nb-psid"></button>
-          <span class="cim-nb-preview" hidden>Preview · this browser only</span>
           <button type="button" class="cim-nb-close" aria-label="Close">×</button>
         </div>
         <div class="cim-nb-fields">
@@ -1194,6 +1201,8 @@
       if (!isNoteDirty(n)) n.draft = null;
       n.flash = null;
       n.saveError = null;
+      n.raced = null;
+      n.nameCheck = null;
       autoGrowNote(noteEl);
       renderNoteBar();
     };
@@ -1266,7 +1275,7 @@
   function openNoteEditor(focusField) {
     const bar = document.getElementById(NOTE_BAR_ID);
     const n = sessionState.notes;
-    if (!bar || customerSwitching || !n || n.status !== 'ready') return;
+    if (!bar || customerSwitching || !n || (n.status !== 'ready' && n.status !== 'blocked')) return;
     const ed = bar.querySelector('.cim-nb-editor');
     ed.hidden = false;
     bar.classList.add('cim-note-bar--open');
@@ -1385,29 +1394,39 @@
     placeNoteEditor();
   }
 
-  function startNotes(uid, psid) {
+  // force: reload even when this PSID is loaded or loading (the panel just
+  // re-created a missing Users row). A ready customer with a draft is kept.
+  function startNotes(uid, psid, force) {
     const cur = sessionState.notes;
-    if (cur && cur.psid === psid && cur.status !== 'error') {
+    if (cur && cur.psid === psid && (cur.status === 'ready' || (cur.status === 'loading' && !force))) {
       renderNoteBar();
       return;
     }
     sessionState.notes = {
-      psid, uid, status: 'loading', rowId: null, preview: false,
+      psid, uid, status: 'loading', rowId: null, baserowName: '',
       balance: '', note: '', updatedBy: '', updatedAt: '',
       draft: null, saving: false, flash: null, saveError: null, conflict: null, loadError: null,
+      block: null, nameCheck: null, confirmedName: null, raced: null, carriedFrom: null,
     };
     renderNoteBar();
     const n = sessionState.notes;
     chrome.runtime.sendMessage({ type: 'GET_CUSTOMER_NOTES', psid }, (res) => {
       const lastErr = chrome.runtime.lastError;
       if (sessionState.notes !== n || getUserIdFromUrl() !== uid) return;
-      if (lastErr || !res || !res.ok) {
-        n.status = 'error';
-        n.loadError = res?.error || lastErr?.message || 'No response.';
+      if (res && (res.code === 'missing' || res.code === 'duplicate')) {
+        // The row isn't usable — nothing can be saved; the bar says why.
+        n.status = 'blocked';
+        n.block = { code: res.code, rowIds: res.rowIds || [] };
         renderNoteBar();
         return;
       }
-      Object.assign(n, res.notes, { status: 'ready', rowId: res.rowId, preview: !!res.preview });
+      if (lastErr || !res || !res.ok) {
+        n.status = 'error';
+        n.loadError = res?.error || 'The extension didn’t answer — reload the page.';
+        renderNoteBar();
+        return;
+      }
+      Object.assign(n, res.notes, { status: 'ready', rowId: res.rowId, baserowName: res.baserowName || '' });
       const draft = noteDrafts.get(psid);
       noteDrafts.delete(psid);
       if (draft) {
@@ -1415,8 +1434,24 @@
         if (!isNoteDirty(n)) n.draft = null;
         else n.draftRestored = true;
       }
+      applyUnlinkCarry(n, uid);
       renderNoteBar();
     });
+  }
+
+  // Text carried from the customer this chat was wrongly linked to (see
+  // handleUnlink): shown as an UNSAVED draft on the next customer linked in
+  // the same chat — the agent checks it and presses Save. Never auto-saved.
+  let unlinkCarry = null; // { uid, fromPsid, fromName, values: { balance?, note? } }
+  function applyUnlinkCarry(n, uid) {
+    const c = unlinkCarry;
+    if (!c || c.uid !== uid || c.fromPsid === n.psid) return;
+    unlinkCarry = null;
+    const base = noteValues(n);
+    n.draft = { balance: c.values.balance ?? base.balance, note: c.values.note ?? base.note };
+    if (!isNoteDirty(n)) { n.draft = null; return; }
+    n.carriedFrom = c.fromName || 'the previous link';
+    n.draftRestored = false;
   }
 
   function saveNotes(opts = {}) {
@@ -1438,18 +1473,26 @@
       next[f] = vals[f].trim();
       expected[f] = opts.expected && f in opts.expected ? opts.expected[f] : n[f];
     }
+    if (opts.confirmedName !== undefined) n.confirmedName = opts.confirmedName;
     n.saving = true;
     n.saveError = null;
+    n.saveBlock = null;
+    n.nameCheck = null;
     n.conflict = null;
+    n.raced = null;
     n.flash = null;
     renderNoteBar();
 
-    chrome.runtime.sendMessage({
+    const msg = {
       type: 'SAVE_CUSTOMER_NOTES',
       psid, rowId: n.rowId, uid, name: sessionState.name || '',
       expected, next, changedBy: identity.name,
-    }, (res) => {
-      const lastErr = chrome.runtime.lastError;
+    };
+    // The agent confirmed this exact Baserow name for this customer (the
+    // backend re-checks it against Baserow's current name).
+    if (typeof n.confirmedName === 'string') msg.confirmedBaserowName = n.confirmedName;
+    chrome.runtime.sendMessage(msg, (res) => {
+      void chrome.runtime.lastError; // read so Chrome doesn't log it; !res covers it
       n.saving = false;
       const here = sessionState.notes === n && getUserIdFromUrl() === uid;
       if (!here) {
@@ -1460,10 +1503,19 @@
         }
         return;
       }
-      if (res?.ok) {
+      if (res?.ok && res.raced) {
+        // Our write landed, but someone else's landed right after it: show
+        // what is really stored and say so; the editor stays open.
         Object.assign(n, res.saved);
         n.draft = null;
         n.draftRestored = false;
+        n.carriedFrom = null;
+        n.raced = res.raced;
+      } else if (res?.ok) {
+        Object.assign(n, res.saved);
+        n.draft = null;
+        n.draftRestored = false;
+        n.carriedFrom = null;
         n.flash = res.logged === false ? 'saved-nolog' : 'saved';
         // Show "Saved ✓" a beat, then fold the editor back to the row. The
         // token keeps an earlier save's timers off a newer save's flash.
@@ -1480,8 +1532,13 @@
         }, res.logged === false ? 5000 : 2000);
       } else if (res?.code === 'conflict') {
         n.conflict = { ...res.current, fields: res.fields || ['balance', 'note'] };
+      } else if (res?.code === 'name-check') {
+        n.confirmedName = null;
+        n.nameCheck = { reason: res.reason, baserowName: res.baserowName || '' };
+      } else if (res?.code === 'row-deleted' || res?.code === 'row-mismatch') {
+        n.saveBlock = { code: res.code, otherPsid: res.otherPsid || '' };
       } else {
-        n.saveError = res?.error || lastErr?.message || 'No response from the extension.';
+        n.saveError = res?.error || 'The extension didn’t answer — reload the page, then press Retry.';
       }
       renderNoteBar();
       if (res?.ok && isNoteHistoryOpen()) openNoteHistory();
@@ -1615,6 +1672,49 @@
     }
   }
 
+  // The customer's Baserow row can't take a save (missing / duplicated at
+  // load, deleted / re-assigned at save). Nothing is ever created or written
+  // to fix it here (the host's rule): the agent is told what is really wrong.
+  // { kind, short (closed row), text (editor), spin? } or null.
+  function noteBlockSpec(n) {
+    const tail = '…' + n.psid.slice(-4);
+    if (n.status === 'blocked' && n.block.code === 'missing') {
+      // The panel re-creates a missing row while it loads; wait for it.
+      if (['loading', 'linking'].includes(sessionState.view?.type)) {
+        return { kind: 'muted', short: 'Loading…', text: 'Checking Baserow…', spin: true };
+      }
+      return {
+        kind: 'error', short: 'Not in Baserow',
+        text: `This chat is linked to PSID ${tail}, but Baserow's Users table has no row for it, and creating one failed. ` +
+          'Nothing can be saved. Reload the page; if this stays, unlink and link the customer again.',
+      };
+    }
+    if (n.status === 'blocked' && n.block.code === 'duplicate') {
+      const ids = n.block.rowIds.map((id) => '#' + id).join(' and ');
+      return {
+        kind: 'error', short: 'Duplicate in Baserow',
+        text: `Baserow has ${n.block.rowIds.length} Users rows for PSID ${tail} (rows ${ids}). ` +
+          'Nothing can be saved until the extra row is removed in Baserow.',
+      };
+    }
+    if (n.saveBlock && n.saveBlock.code === 'row-deleted') {
+      return {
+        kind: 'error', short: 'Not saved — row deleted',
+        text: `Not saved. This customer's Baserow row (PSID ${tail}) was deleted after you opened the chat. ` +
+          'Your text is kept. Unlink and link the customer again, then press Save.',
+      };
+    }
+    if (n.saveBlock && n.saveBlock.code === 'row-mismatch') {
+      const other = n.saveBlock.otherPsid ? `PSID …${n.saveBlock.otherPsid.slice(-4)}` : 'another PSID';
+      return {
+        kind: 'error', short: 'Not saved — wrong row',
+        text: `Not saved. Baserow row #${n.rowId} now belongs to a different customer (${other}), so nothing was written. ` +
+          'Your text is kept. Unlink and link this customer again, then press Save.',
+      };
+    }
+    return null;
+  }
+
   // Status line spec: { kind, text, spin?, actions?: [{label, run}] }.
   function noteStatusSpec(n, identity) {
     const view = sessionState.view?.type;
@@ -1625,6 +1725,8 @@
       return { kind: 'muted', text: 'Loading customer…', spin: true };
     }
     if (!n || n.status === 'loading') return { kind: 'muted', text: 'Loading balance and note…', spin: true };
+    const blocked = noteBlockSpec(n);
+    if (blocked) return { kind: blocked.kind, text: blocked.text, spin: blocked.spin };
     if (n.status === 'error') {
       return { kind: 'error', text: 'Could not load — ' + n.loadError, actions: [{ label: 'Retry', run: () => startNotes(sessionState.uid, n.psid) }] };
     }
@@ -1635,6 +1737,21 @@
       };
     }
     if (n.saving) return { kind: 'muted', text: 'Saving…', spin: true };
+    if (n.nameCheck) {
+      const shown = sessionState.name || 'this chat';
+      const tail = '…' + n.psid.slice(-4);
+      const text = n.nameCheck.reason === 'blank'
+        ? `Save to ${shown} (PSID ${tail})? Baserow has no name for this customer.`
+        : `Baserow says this PSID is ${n.nameCheck.baserowName}, but this chat is ${shown}. Check the link before saving.`;
+      const confirmed = n.nameCheck.baserowName;
+      return {
+        kind: 'error', text,
+        actions: [
+          { label: n.nameCheck.reason === 'blank' ? 'Save' : 'It’s the right customer — save', run: () => saveNotes({ confirmedName: confirmed }) },
+          { label: 'Cancel', run: () => { n.nameCheck = null; renderNoteBar(); } },
+        ],
+      };
+    }
     if (n.conflict) {
       const c = n.conflict;
       const when = formatNoteTime(c.updatedAt);
@@ -1650,11 +1767,19 @@
       };
     }
     if (n.saveError) {
-      return { kind: 'error', text: 'Not saved — ' + n.saveError, actions: [{ label: 'Retry', run: () => saveNotes() }] };
+      return { kind: 'error', text: `Not saved — ${n.saveError} Your text is kept.`, actions: [{ label: 'Retry', run: () => saveNotes() }] };
+    }
+    if (n.raced) {
+      const what = n.raced.fields.map((f) => (f === 'balance' ? 'Balance' : 'Note')).join(' and ');
+      const now = n.raced.fields.map((f) => `"${n[f] || '(empty)'}"`).join(' / ');
+      return { kind: 'warn', text: `Saved, but ${n.raced.by || 'someone else'} changed ${what} a moment later — it now shows ${now}. Check it.` };
     }
     if (n.flash === 'saved') return { kind: 'ok', text: 'Saved ✓' };
     if (n.flash === 'saved-nolog') return { kind: 'warn', text: 'Saved ✓ (history not recorded)' };
     if (isNoteDirty(n)) {
+      if (n.carriedFrom) {
+        return { kind: 'warn', dot: true, text: `Moved from ${n.carriedFrom} — not saved yet. Check it and press Save.` };
+      }
       return {
         kind: 'warn', dot: true,
         text: n.draftRestored ? 'Unsaved draft from earlier' : 'Unsaved changes',
@@ -1677,8 +1802,12 @@
       return { kind: 'muted', text: 'Loading…', spin: true };
     }
     if (!n || n.status === 'loading') return { kind: 'muted', text: 'Loading…', spin: true };
+    const blocked = noteBlockSpec(n);
+    if (blocked) return { kind: blocked.kind, text: blocked.short, spin: blocked.spin };
     if (n.status === 'error') return { kind: 'error', text: 'Couldn’t load · click to retry' };
     if (n.saving) return { kind: 'muted', text: 'Saving…', spin: true };
+    if (n.nameCheck) return { kind: 'error', text: 'Check customer — open' };
+    if (n.raced) return { kind: 'warn', text: 'Changed by someone else — open' };
     if (n.conflict) return { kind: 'error', text: 'Conflict — open to resolve' };
     if (n.saveError) return { kind: 'error', text: 'Not saved — open to retry' };
     if (n.flash === 'saved') return { kind: 'ok', text: 'Saved ✓' };
@@ -1847,8 +1976,9 @@
     b.querySelector('.cim-nb-seg--note').hidden = !stored.note;
     b.querySelector('.cim-nb-empty').hidden = !ready || !!(stored.balance || stored.note);
     compact.classList.toggle('cim-nb-compact--idle', !ready);
-    compact.tabIndex = ready || n?.status === 'error' ? 0 : -1;
-    compact.setAttribute('aria-disabled', ready || n?.status === 'error' ? 'false' : 'true');
+    const openable = ready || n?.status === 'error' || n?.status === 'blocked';
+    compact.tabIndex = openable ? 0 : -1;
+    compact.setAttribute('aria-disabled', openable ? 'false' : 'true');
     renderCompactStatus(b, noteCompactStatus(n, identity));
 
     // Editor.
@@ -1866,14 +1996,13 @@
     b.querySelector('.cim-nb-save').disabled = !(editable && dirty);
     b.querySelector('.cim-nb-history-btn').disabled = !ready;
     if (!ready && isNoteHistoryOpen()) closeNoteHistory();
-    if (!ready && open) closeNoteEditor(false);
+    if (!ready && n?.status !== 'blocked' && open) closeNoteEditor(false);
 
     renderNoteStatus(b, noteStatusSpec(n, identity));
 
     const me = b.querySelector('.cim-nb-me');
     setText(me, identity ? `You: ${identity.name}${identity.source === 'options' ? ' (typed)' : ''}` : '');
     me.classList.toggle('cim-nb-me--typed', identity?.source === 'options');
-    b.querySelector('.cim-nb-preview').hidden = !(ready && n.preview);
   }
 
   // Goal 4 of the spec: never show one customer's data against another
@@ -7291,6 +7420,8 @@
               return;
             }
 
+            // The notes load saw the row missing; it exists now.
+            if (sessionState.psid === psid && sessionState.notes?.status !== 'ready') startNotes(uid, psid, true);
             loadOrders(uid, psid, linkPanel, true);
           }
         );
@@ -7448,39 +7579,221 @@
     );
   }
 
+  // Unlink, with the wrong-link clean-up: balances and notes live on the
+  // linked PSID's Baserow row, so anything this chat saved there would stay
+  // with that (possibly wrong) customer. Before unlinking we ask Baserow what
+  // this chat (UID) saved to it and offer Move (put that customer's previous
+  // values back and carry the text to the next customer linked here, as an
+  // unsaved draft) or Keep. Unsaved typing is always carried.
+  let unlinkBusy = false;
   function handleUnlink(uid, panel) {
+    if (unlinkBusy) return;
     getUidPsidMap().then((map) => {
       const psid = map[uid];
       if (!psid) return;
+      reviewBeforeUnlink(uid, psid, panel, '');
+    });
+  }
 
-      renderState(panel, { type: 'linking' });
+  // Fields the agent typed but never saved, for this PSID only.
+  function unsavedTyping(psid) {
+    const n = sessionState.notes;
+    const out = {};
+    if (!n || n.psid !== psid || !isNoteDirty(n)) return out;
+    for (const f of ['balance', 'note']) if (n.draft[f].trim() !== n[f]) out[f] = n.draft[f];
+    return out;
+  }
 
-      chrome.runtime.sendMessage({ type: 'UNLINK_BASEROW_UID', psid }, (response) => {
-        if (getUserIdFromUrl() !== uid) return;
-        const livePanel = document.getElementById(PANEL_ID);
-        if (!livePanel) return;
-
-        if (chrome.runtime.lastError || !response || !response.ok) {
-          renderState(livePanel, {
-            type: 'error',
-            message: response?.error || 'Failed to update Baserow record.',
-          });
-          return;
-        }
-
-        removeUidPsidLink(uid).then(() => {
-          if (getUserIdFromUrl() !== uid) return;
-          sessionState.resolved = false;
-          sessionState.cartHasItems = null;
-          renderPsidRow(livePanel, uid, null);
-          if (sessionState.name) {
-            proceedWithLookup(uid, sessionState.name, livePanel);
-          } else {
-            renderState(livePanel, { type: 'loading' });
-          }
+  function reviewBeforeUnlink(uid, psid, panel, errorText) {
+    unlinkBusy = true;
+    chrome.runtime.sendMessage({ type: 'NOTES_UNLINK_REVIEW', psid, uid }, (res) => {
+      void chrome.runtime.lastError;
+      unlinkBusy = false;
+      if (getUserIdFromUrl() !== uid) { closeUnlinkModal(); return; }
+      const typing = unsavedTyping(psid);
+      if (!res || !res.ok) {
+        openUnlinkModal({
+          title: 'Unlink this customer?',
+          sub: `PSID …${psid.slice(-4)}`,
+          error: `Couldn’t check what this chat saved to this customer — ${res?.error || 'no response'}.`,
+          buttons: [
+            { label: 'Try again', primary: true, run: () => reviewBeforeUnlink(uid, psid, panel, '') },
+            { label: 'Unlink anyway', run: () => { closeUnlinkModal(); doUnlink(uid, psid, panel, typing, ''); } },
+            { label: 'Cancel', run: closeUnlinkModal },
+          ],
         });
+        return;
+      }
+      if (!res.items.length) {
+        closeUnlinkModal();
+        doUnlink(uid, psid, panel, typing, '');
+        return;
+      }
+      const who = res.baserowName || `PSID …${psid.slice(-4)}`;
+      const identity = getStaffIdentity();
+      const restorable = res.items.filter((it) => it.restorable);
+      const moved = { ...Object.fromEntries(res.items.map((it) => [it.field, it.chatValue])), ...typing };
+      const move = () => {
+        if (!restorable.length) { closeUnlinkModal(); doUnlink(uid, psid, panel, moved, who); return; }
+        setUnlinkModalBusy('Putting back ' + who + '’s previous values…');
+        chrome.runtime.sendMessage({
+          type: 'NOTES_UNLINK_REVERT', psid, rowId: res.rowId, uid, name: sessionState.name || '',
+          changedBy: identity.name,
+          fields: Object.fromEntries(restorable.map((it) => [it.field, { from: it.chatValue, to: it.before }])),
+        }, (rev) => {
+          void chrome.runtime.lastError;
+          if (getUserIdFromUrl() !== uid) { closeUnlinkModal(); return; }
+          if (!rev || !rev.ok) {
+            // Re-read so the list shows what is stored now; nothing unlinked.
+            const why = rev?.code === 'conflict'
+              ? 'Someone changed it again just now.'
+              : (rev?.error || 'No response.');
+            reviewBeforeUnlink(uid, psid, panel, `Couldn’t move it — ${why} Nothing was unlinked; check the list again.`);
+            return;
+          }
+          closeUnlinkModal();
+          doUnlink(uid, psid, panel, moved, who);
+        });
+      };
+      openUnlinkModal({
+        title: 'Before you unlink',
+        sub: `${who} · PSID …${psid.slice(-4)}`,
+        error: errorText,
+        intro: `This chat saved these to ${who}:`,
+        items: res.items,
+        outro: `If this chat was linked to the wrong customer, choose Move: ${who} gets back the values from before, ` +
+          'and the text goes to the customer you link next as an unsaved draft — you check it and press Save.',
+        note: identity ? '' : 'Set your name in the extension options to use Move.',
+        buttons: [
+          { label: 'Move to the correct customer', primary: true, disabled: !identity, run: move },
+          { label: `Keep on ${who}`, run: () => { closeUnlinkModal(); doUnlink(uid, psid, panel, typing, ''); } },
+          { label: 'Cancel', run: closeUnlinkModal },
+        ],
       });
     });
+  }
+
+  // carry: { balance?, note? } for the next customer linked in this chat;
+  // fromName: whose row it came from ('' = only unsaved typing).
+  function doUnlink(uid, psid, panel, carry, fromName) {
+    renderState(panel, { type: 'linking' });
+
+    chrome.runtime.sendMessage({ type: 'UNLINK_BASEROW_UID', psid }, (response) => {
+      if (getUserIdFromUrl() !== uid) return;
+      const livePanel = document.getElementById(PANEL_ID);
+      if (!livePanel) return;
+
+      if (chrome.runtime.lastError || !response || !response.ok) {
+        renderState(livePanel, {
+          type: 'error',
+          message: response?.error || 'Failed to update Baserow record.',
+        });
+        return;
+      }
+
+      removeUidPsidLink(uid).then(() => {
+        if (getUserIdFromUrl() !== uid) return;
+        sessionState.resolved = false;
+        sessionState.cartHasItems = null;
+        renderPsidRow(livePanel, uid, null);
+        if (Object.keys(carry).length) {
+          // The typing belongs to this chat, not to the unlinked customer.
+          noteDrafts.delete(psid);
+          unlinkCarry = { uid, fromPsid: psid, fromName: fromName || sessionState.name || '', values: carry };
+        }
+        if (sessionState.name) {
+          proceedWithLookup(uid, sessionState.name, livePanel);
+        } else {
+          renderState(livePanel, { type: 'loading' });
+        }
+      });
+    });
+  }
+
+  const UNLINK_MODAL_ID = 'cim-unlink-modal';
+
+  function closeUnlinkModal() {
+    const m = document.getElementById(UNLINK_MODAL_ID);
+    if (m) m.remove();
+  }
+
+  function setUnlinkModalBusy(text) {
+    const m = document.getElementById(UNLINK_MODAL_ID);
+    if (!m) return;
+    m.querySelectorAll('.cim-ul-actions button').forEach((b) => { b.disabled = true; });
+    const busy = m.querySelector('.cim-ul-busy');
+    busy.textContent = text;
+    busy.hidden = false;
+  }
+
+  // Text nodes only — every value shown comes from Baserow.
+  function openUnlinkModal(spec) {
+    closeUnlinkModal();
+    const el = (tag, cls, text) => {
+      const e = document.createElement(tag);
+      if (cls) e.className = cls;
+      if (text != null) e.textContent = text;
+      return e;
+    };
+    const m = el('div');
+    m.id = UNLINK_MODAL_ID;
+    const card = el('div', 'cim-nb-hcard');
+    card.setAttribute('role', 'dialog');
+    card.setAttribute('aria-modal', 'true');
+    card.setAttribute('aria-labelledby', 'cim-ul-title');
+    const head = el('div', 'cim-nb-hhead');
+    const titles = el('div');
+    const title = el('div', 'cim-nb-htitle', spec.title);
+    title.id = 'cim-ul-title';
+    titles.append(title, el('div', 'cim-nb-hsub', spec.sub));
+    const close = el('button', 'cim-nb-hclose', '×');
+    close.type = 'button';
+    close.setAttribute('aria-label', 'Cancel');
+    close.addEventListener('click', closeUnlinkModal);
+    head.append(titles, close);
+
+    const body = el('div', 'cim-ul-body');
+    if (spec.error) body.append(el('div', 'cim-ul-error', spec.error));
+    if (spec.intro) body.append(el('p', 'cim-ul-text', spec.intro));
+    for (const it of spec.items || []) {
+      const row = el('div', 'cim-ul-item');
+      const label = it.field === 'balance' ? 'Balance' : 'Note';
+      row.append(el('span', 'cim-nb-hfield cim-nb-hfield--' + it.field, label));
+      const grid = el('div', 'cim-nb-hchange');
+      grid.append(el('span', 'cim-nb-hk', 'Before'), el('span', 'cim-nb-hold', it.before || '(empty)'));
+      const when = formatNoteTime(it.changedAt);
+      grid.append(el('span', 'cim-nb-hk', 'This chat'), el('span', 'cim-nb-hnew', it.chatValue || '(cleared)'));
+      row.append(grid, el('div', 'cim-ul-meta', `Saved by ${it.changedBy || 'someone'}${when ? ' · ' + when : ''}`));
+      if (!it.restorable) {
+        row.append(el('div', 'cim-ul-warn',
+          `Changed since by someone else (now: ${it.current || '(empty)'}) — it will be left as it is.`));
+      }
+      body.append(row);
+    }
+    if (spec.outro) body.append(el('p', 'cim-ul-text', spec.outro));
+    if (spec.note) body.append(el('p', 'cim-ul-note', spec.note));
+    const busy = el('div', 'cim-ul-busy');
+    busy.hidden = true;
+    busy.setAttribute('role', 'status');
+    body.append(busy);
+
+    const actions = el('div', 'cim-ul-actions');
+    for (const b of spec.buttons) {
+      const btn = el('button', 'cim-ul-btn' + (b.primary ? ' cim-ul-btn--primary' : ''), b.label);
+      btn.type = 'button';
+      btn.disabled = !!b.disabled;
+      btn.addEventListener('click', () => b.run());
+      actions.append(btn);
+    }
+    card.append(head, body, actions);
+    m.append(card);
+    m.addEventListener('mousedown', (e) => { if (e.target === m) closeUnlinkModal(); });
+    m.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Escape') { e.preventDefault(); closeUnlinkModal(); }
+    });
+    document.body.appendChild(m);
+    (actions.querySelector('button:not(:disabled)') || close).focus();
   }
 
   function handleCandidateSearch(uid, query, panel) {
