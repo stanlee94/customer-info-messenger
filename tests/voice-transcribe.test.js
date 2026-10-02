@@ -31,7 +31,14 @@ test('buildRequest: transcribe model sends audio only, verbatim mode', () => {
   const body = buildRequest('gemini-3.5-transcribe', 'QUJD');
   assert.equal(body.model, 'gemini-3.5-transcribe');
   assert.deepEqual(body.input, [{ type: 'audio', data: 'QUJD', mime_type: MIME }]);
-  assert.deepEqual(body.generation_config, { transcription_config: { mode: { type: 'verbatim' } } });
+  assert.equal(body.generation_config.transcription_config.mode.type, 'verbatim');
+});
+
+test('buildRequest: transcribe model is steered toward live codes A1–Z30 (custom vocabulary)', () => {
+  const vocab = buildRequest('gemini-3.5-transcribe', 'QUJD').generation_config.transcription_config.custom_vocabulary;
+  assert.equal(vocab.length, 780);
+  for (const code of ['A1', 'J3', 'C5', 'Z30']) assert.ok(vocab.includes(code), code);
+  assert.ok(vocab.length <= 1000);   // Gemini's limit
 });
 
 test('buildRequest: a general model gets the prompt first and no transcription config', () => {

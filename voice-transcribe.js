@@ -27,10 +27,15 @@
     return btoa(s);
   }
 
+  // Live product codes (J3, C5, A12…). Without them the transcribe model wrote
+  // Mandarin "J3" as 健三 and "C5" as 西五 (test clips, 2026-10-02).
+  const LIVE_CODES = [];
+  for (const letter of 'ABCDEFGHIJKLMNOPQRSTUVWXYZ') for (let n = 1; n <= 30; n++) LIVE_CODES.push(letter + n);
+
   function buildRequest(model, base64) {
     const input = [{ type: 'audio', data: base64, mime_type: MIME }];
     const body = { model, input };
-    if (/transcribe/.test(model)) body.generation_config = { transcription_config: { mode: { type: 'verbatim' } } };
+    if (/transcribe/.test(model)) body.generation_config = { transcription_config: { mode: { type: 'verbatim' }, custom_vocabulary: LIVE_CODES } };
     else input.unshift({ type: 'text', text: PROMPT });
     return body;
   }
