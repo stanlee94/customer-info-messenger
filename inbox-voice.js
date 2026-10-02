@@ -94,8 +94,23 @@
     renderChips(row.querySelector('.cim-voice-speed'));
   }
 
-  // Task 5 fills this in; empty until then.
-  function renderChips(box) {}
+  function renderChips(box) {
+    if (!box) return;
+    if (!box.firstChild) {
+      for (const r of SPEEDS) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.dataset.rate = String(r);
+        b.textContent = r + '×';
+        b.setAttribute('aria-label', `Play at ${r}× speed`);
+        box.append(b);
+      }
+    }
+    for (const b of box.children) {
+      const on = String(Number(b.dataset.rate) === speed);
+      if (b.getAttribute('aria-pressed') !== on) b.setAttribute('aria-pressed', on);
+    }
+  }
 
   function renderAll(id) {
     for (const row of document.querySelectorAll(`.cim-voice[data-cim-voice-for="${CSS.escape(id)}"]`)) renderRow(row);
@@ -197,9 +212,20 @@
     if (chip) { e.preventDefault(); setSpeed(Number(chip.dataset.rate)); }
   }
 
-  // ── speed (Task 5 completes setSpeed/applySpeed) ──
-  function setSpeed(r) {}
-  function applySpeed() {}
+  // ── speed ──
+  function setSpeed(r) {
+    if (!SPEEDS.includes(r) || r === speed) return;
+    speed = r;
+    chrome.storage.local.set({ voiceSpeed: r });
+    applySpeed();
+    for (const row of document.querySelectorAll('.cim-voice')) renderRow(row);
+  }
+
+  function applySpeed() {
+    const html = document.documentElement;
+    if (!enabled) { if ('cimVoiceRate' in html.dataset) delete html.dataset.cimVoiceRate; return; }
+    if (html.dataset.cimVoiceRate !== String(speed)) html.dataset.cimVoiceRate = String(speed);
+  }
 
   // ── sync ──
   function sync() {

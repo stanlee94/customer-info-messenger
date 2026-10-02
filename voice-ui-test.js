@@ -207,6 +207,42 @@ for (let i = 1; i <= 6; i++) { THREAD.push({ text: 'hello ' + i }); THREAD.push(
     await page.close();
   }
 
+  // ── C. Speed ──
+  {
+    const page = await openPage(browser, { seed: { geminiApiKey: 'k' } }, THREAD);
+    await page.waitForSelector('.cim-voice .cim-voice-speed button');
+    check('C1 chips 1× 1.5× 2× under each voice message, 1× pressed by default', (await page.evaluate(() => [...document.querySelector('.cim-voice .cim-voice-speed').children].map((b) => b.textContent + (b.getAttribute('aria-pressed') === 'true' ? '*' : '')).join(' '))) === '1×* 1.5× 2×');
+    check('C2 default rate attribute = 1', (await page.evaluate(() => document.documentElement.dataset.cimVoiceRate)) === '1');
+    await page.click('.cim-voice[data-cim-voice-for="m6"] .cim-voice-speed button[data-rate="2"]');
+    await settle(page);
+    check('C3 2× saved and mirrored to the page', (await page.evaluate(() => [document.documentElement.dataset.cimVoiceRate, window.__store.voiceSpeed].join())) === '2,2');
+    check('C4 every row shows 2× pressed', await page.evaluate(() => [...document.querySelectorAll('.cim-voice')].every((r) => r.querySelector('button[aria-pressed="true"]').dataset.rate === '2')));
+    const clipUrl = 'file://' + CLIP_FILE;
+    await page.evaluate((u) => window.playClip(u), clipUrl);
+    await settle(page, 200);
+    check('C5 a voice clip started after choosing 2× plays at 2×, pitch kept', await page.evaluate(() => window.__clip.playbackRate === 2 && window.__clip.preservesPitch === true));
+    await page.click('.cim-voice[data-cim-voice-for="m6"] .cim-voice-speed button[data-rate="1.5"]');
+    await settle(page);
+    check('C6 changing speed while it plays changes the playing clip', (await page.evaluate(() => window.__clip.playbackRate)) === 1.5);
+    await page.evaluate(() => window.__clip.load());
+    await page.evaluate(() => window.__clip.play().catch(() => {}));
+    await settle(page, 200);
+    check('C7 rate survives Meta reloading the element (defaultPlaybackRate)', (await page.evaluate(() => window.__clip.playbackRate)) === 1.5);
+    await page.evaluate((u) => { window.__other = new Audio(u); window.__other.play().catch(() => {}); }, 'file://' + OTHER_FILE);
+    await settle(page, 200);
+    check('C8 other sounds on the page are not sped up', (await page.evaluate(() => window.__other.playbackRate)) === 1);
+    await page.evaluate(() => chrome.storage.local.set({ geminiApiKey: '' }));
+    await settle(page);
+    check('C9 feature off → rate attribute removed', (await page.evaluate(() => document.documentElement.dataset.cimVoiceRate)) === undefined);
+    await page.close();
+  }
+  {
+    const page = await openPage(browser, { seed: { geminiApiKey: 'k', voiceSpeed: 2 } }, THREAD);
+    await page.waitForSelector('.cim-voice .cim-voice-speed button');
+    check('C10 saved speed applied on load', (await page.evaluate(() => [document.documentElement.dataset.cimVoiceRate, document.querySelector('.cim-voice button[aria-pressed="true"]').dataset.rate].join())) === '2,2');
+    await page.close();
+  }
+
   // ── more sections above this line ──
 
   await browser.close();

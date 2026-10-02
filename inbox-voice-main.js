@@ -61,6 +61,43 @@
     });
   }
 
+  // ── Speed: html[data-cim-voice-rate] (set by inbox-voice.js) applied to
+  // Meta's voice clips. Meta plays them through an <audio> it never attaches
+  // to the DOM, so we catch it at play(). Only clips whose URL holds
+  // "audioclip" are touched. defaultPlaybackRate too, so a load() keeps it.
+  const clips = new Set();          // WeakRef<HTMLMediaElement>
+  const seen = new WeakSet();
+  debug.clips = clips;
+  const rate = () => {
+    const r = parseFloat(document.documentElement.dataset.cimVoiceRate);
+    return r > 0 && r <= 4 ? r : 1;
+  };
+  const isClip = (el) => /audioclip/.test(el.currentSrc || el.src || '');
+  function applyRate(el) {
+    try {
+      const r = rate();
+      el.preservesPitch = true;
+      if (el.defaultPlaybackRate !== r) el.defaultPlaybackRate = r;
+      if (el.playbackRate !== r) el.playbackRate = r;
+    } catch (e) { /* ignore */ }
+  }
+  const origPlay = HTMLMediaElement.prototype.play;
+  HTMLMediaElement.prototype.play = function (...args) {
+    try {
+      if (isClip(this)) {
+        applyRate(this);
+        if (!seen.has(this)) { seen.add(this); clips.add(new WeakRef(this)); }
+      }
+    } catch (e) { /* never break Meta's player */ }
+    return origPlay.apply(this, args);
+  };
+  new MutationObserver(() => {
+    for (const ref of clips) {
+      const el = ref.deref();
+      if (!el) clips.delete(ref); else applyRate(el);
+    }
+  }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-cim-voice-rate'] });
+
   // childList + characterData only: our own attribute writes never re-trigger it.
   new MutationObserver(schedule).observe(document.documentElement, { childList: true, subtree: true, characterData: true });
   schedule();
