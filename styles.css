@@ -4472,3 +4472,1055 @@
   padding: 1px 0;
   word-break: break-word;
 }
+
+/* ── Balance / Note bar (#cim-note-bar) ────────────────────────────────────
+   A one-line row (36 px — the height of Meta's header buttons, so the chat
+   keeps its space) + an editor that opens on click. In Meta's header the
+   editor floats (position: fixed, placed by placeNoteEditor) and never pushes
+   the inbox down; as .cim-note-bar--in-panel it opens inline in our panel.
+   The row looks like Meta's Tools button (white, #ccd0d5 border, #1C2B33
+   text) whether or not anything is stored; the inbox background
+   (setPageTone) is the green/red signal. */
+#cim-note-bar {
+  --nb-h: 36px;
+  position: relative;
+  box-sizing: border-box;
+  flex: 1 1 auto;
+  align-self: center;
+  width: calc(100% - 24px);
+  min-width: 0;
+  margin: 0 12px;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.3;
+  color: #050505;
+}
+
+#cim-note-bar * {
+  box-sizing: border-box;
+}
+
+#cim-note-bar [hidden] {
+  display: none !important;
+}
+
+/* Row */
+#cim-note-bar .cim-nb-compact {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  height: var(--nb-h);
+  padding: 0 10px 0 12px;
+  border: 1px solid #ccd0d5;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #1c2b33;
+  cursor: pointer;
+  user-select: none;
+  outline: none;
+  overflow: hidden;
+  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+#cim-note-bar .cim-nb-compact:hover {
+  background: #f5f6f7;
+}
+
+#cim-note-bar .cim-nb-compact:focus-visible {
+  box-shadow: 0 0 0 2px #ffffff, 0 0 0 4px #0a7cff;
+}
+
+#cim-note-bar .cim-nb-compact--idle {
+  cursor: default;
+}
+
+#cim-note-bar .cim-nb-compact--idle:hover {
+  background: #ffffff;
+}
+
+#cim-note-bar .cim-nb-name {
+  flex: 0 1 auto;
+  max-width: 180px;
+  font-size: 14px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#cim-note-bar .cim-nb-seg {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+#cim-note-bar .cim-nb-seg--balance {
+  flex: 0 1 auto;
+  max-width: 34%;
+}
+
+#cim-note-bar .cim-nb-seg--note {
+  flex: 1 1 0;
+}
+
+#cim-note-bar .cim-nb-seg + .cim-nb-seg,
+#cim-note-bar .cim-nb-name + .cim-nb-seg {
+  padding-left: 14px;
+  border-left: 1px solid #e4e6eb;
+}
+
+#cim-note-bar .cim-nb-k {
+  flex: none;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #65676b;
+}
+
+#cim-note-bar .cim-nb-v {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#cim-note-bar .cim-nb-v-balance {
+  font-weight: 700;
+}
+
+#cim-note-bar .cim-nb-empty {
+  flex: 1 1 auto;
+  color: #65676b;
+  white-space: nowrap;
+}
+
+#cim-note-bar .cim-nb-cstatus {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-left: auto;
+  font-size: 12px;
+  color: #65676b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#cim-note-bar .cim-nb-chev {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin: 0 2px 3px 0;
+  border-right: 2px solid #65676b;
+  border-bottom: 2px solid #65676b;
+  transform: rotate(45deg);
+  transition: transform 0.15s ease, margin 0.15s ease;
+}
+
+#cim-note-bar.cim-note-bar--open .cim-nb-chev {
+  transform: rotate(-135deg);
+  margin: 3px 2px 0 0;
+}
+
+#cim-note-bar .cim-nb-compact--idle .cim-nb-chev {
+  opacity: 0.35;
+}
+
+#cim-note-bar.cim-note-bar--open .cim-nb-compact {
+  border-color: #0a7cff;
+  box-shadow: 0 0 0 3px rgba(10, 124, 255, 0.15);
+}
+
+/* Unsaved draft: amber edge on the row. */
+#cim-note-bar.cim-note-bar--dirty .cim-nb-compact {
+  border-color: #f59e0b;
+}
+
+/* No colour change when something is stored: the row looks like the Tools
+   button (white, #ccd0d5, #1C2B33) in every state; the inbox background
+   (setPageTone) carries the green/red signal. */
+
+/* Editor */
+#cim-note-bar .cim-nb-editor {
+  position: fixed;
+  z-index: 2147483000;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  overflow-y: auto;
+  border: 1px solid #ccd0d5;
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18), 0 2px 6px rgba(0, 0, 0, 0.08);
+  animation: cim-nb-pop 0.12s ease-out;
+  cursor: auto;
+}
+
+@keyframes cim-nb-pop {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: none; }
+}
+
+#cim-note-bar .cim-nb-ehead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+#cim-note-bar .cim-nb-ename {
+  font-size: 15px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#cim-note-bar .cim-nb-psid {
+  padding: 1px 6px;
+  border: 1px solid #e4e6eb;
+  border-radius: 4px;
+  background: #f5f6f7;
+  font: inherit;
+  font-size: 11.5px;
+  color: #4b4f56;
+  cursor: copy;
+  white-space: nowrap;
+}
+
+#cim-note-bar .cim-nb-psid:hover:not(:disabled) {
+  background: #e4e6eb;
+}
+
+#cim-note-bar .cim-nb-psid--copied {
+  border-color: #86efac;
+  background: #f0fdf4;
+  color: #15803d;
+}
+
+#cim-note-bar .cim-nb-psid--copied::after {
+  content: ' ✓ copied';
+}
+
+#cim-note-bar .cim-nb-preview {
+  padding: 1px 7px;
+  border-radius: 8px;
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 10.5px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+#cim-note-bar .cim-nb-close {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  margin-left: auto;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: #65676b;
+  font-size: 20px;
+  line-height: 28px;
+  cursor: pointer;
+}
+
+#cim-note-bar .cim-nb-close:hover {
+  background: #f0f2f5;
+  color: #050505;
+}
+
+#cim-note-bar .cim-nb-fields {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) 2fr;
+  gap: 12px;
+  align-items: start;
+}
+
+#cim-note-bar .cim-nb-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  margin: 0;
+}
+
+#cim-note-bar .cim-nb-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #4b4f56;
+}
+
+#cim-note-bar .cim-nb-hint {
+  font-size: 11px;
+  color: #8a8d91;
+}
+
+#cim-note-bar .cim-nb-balance,
+#cim-note-bar .cim-nb-note {
+  width: 100%;
+  margin: 0;
+  padding: 7px 10px;
+  border: 1px solid #ccd0d5;
+  border-radius: 6px;
+  background: #ffffff;
+  font: inherit;
+  font-size: 14px;
+  line-height: 20px;
+  color: #050505;
+  outline: none;
+}
+
+#cim-note-bar .cim-nb-balance {
+  font-weight: 700;
+}
+
+#cim-note-bar .cim-nb-note {
+  display: block;
+  resize: vertical;
+  min-height: 66px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+#cim-note-bar .cim-nb-balance:focus,
+#cim-note-bar .cim-nb-note:focus {
+  border-color: #0a7cff;
+  box-shadow: 0 0 0 3px rgba(10, 124, 255, 0.15);
+}
+
+#cim-note-bar .cim-nb-balance:disabled,
+#cim-note-bar .cim-nb-note:disabled {
+  background: #f5f6f7;
+  color: #4b4f56;
+  cursor: not-allowed;
+}
+
+#cim-note-bar .cim-nb-balance::placeholder,
+#cim-note-bar .cim-nb-note::placeholder {
+  color: #8a8d91;
+  font-weight: 400;
+}
+
+#cim-note-bar.cim-note-bar--dirty .cim-nb-balance,
+#cim-note-bar.cim-note-bar--dirty .cim-nb-note {
+  border-color: #f59e0b;
+}
+
+#cim-note-bar.cim-note-bar--dirty .cim-nb-balance:focus,
+#cim-note-bar.cim-note-bar--dirty .cim-nb-note:focus {
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.2);
+}
+
+#cim-note-bar .cim-nb-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid #f0f2f5;
+}
+
+#cim-note-bar .cim-nb-status {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 20px;
+  font-size: 12px;
+  color: #4b4f56;
+}
+
+#cim-note-bar .cim-nb-status--ok { color: #15803d; font-weight: 600; }
+#cim-note-bar .cim-nb-status--warn { color: #b45309; font-weight: 600; }
+#cim-note-bar .cim-nb-status--error { color: #b91c1c; font-weight: 600; }
+
+#cim-note-bar .cim-nb-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #f59e0b;
+  flex: none;
+}
+
+#cim-note-bar .cim-nb-link {
+  padding: 2px 9px;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  background: #ffffff;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+#cim-note-bar .cim-nb-link:hover {
+  background: #f0f2f5;
+}
+
+#cim-note-bar .cim-nb-me {
+  flex: none;
+  font-size: 11.5px;
+  color: #65676b;
+  white-space: nowrap;
+}
+
+#cim-note-bar .cim-nb-me--typed {
+  color: #b45309;
+}
+
+#cim-note-bar .cim-nb-save,
+#cim-note-bar .cim-nb-history-btn {
+  flex: none;
+  height: 32px;
+  padding: 0 16px;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+#cim-note-bar .cim-nb-save {
+  border: 1px solid #0a7cff;
+  background: #0a7cff;
+  color: #ffffff;
+}
+
+#cim-note-bar .cim-nb-save:hover:not(:disabled) {
+  background: #0866d6;
+}
+
+#cim-note-bar .cim-nb-save:disabled {
+  border-color: #e4e6eb;
+  background: #e4e6eb;
+  color: #8a8d91;
+  cursor: default;
+}
+
+#cim-note-bar .cim-nb-history-btn {
+  padding: 0 12px;
+  border: 1px solid #ccd0d5;
+  background: #ffffff;
+  color: #4b4f56;
+}
+
+#cim-note-bar .cim-nb-history-btn:hover:not(:disabled),
+#cim-note-bar .cim-nb-history-btn--open {
+  background: #f0f2f5;
+}
+
+#cim-note-bar .cim-nb-history-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* History modal (on <body>, above the editor). */
+#cim-nb-hmodal {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.45);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  color: #1c2b33;
+  animation: cim-nb-fade 0.12s ease-out;
+}
+
+#cim-nb-hmodal[hidden] {
+  display: none;
+}
+
+@keyframes cim-nb-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+#cim-nb-hmodal .cim-nb-hcard {
+  display: flex;
+  flex-direction: column;
+  width: min(600px, 100%);
+  max-height: min(70vh, 640px);
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+}
+
+#cim-nb-hmodal .cim-nb-hhead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px 12px;
+  border-bottom: 1px solid #e4e6eb;
+}
+
+#cim-nb-hmodal .cim-nb-htitle {
+  font-size: 17px;
+  font-weight: 700;
+}
+
+#cim-nb-hmodal .cim-nb-hsub {
+  margin-top: 2px;
+  font-size: 12.5px;
+  color: #65676b;
+}
+
+#cim-nb-hmodal .cim-nb-hclose {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: #f0f2f5;
+  color: #4b4f56;
+  font-size: 20px;
+  line-height: 32px;
+  cursor: pointer;
+}
+
+#cim-nb-hmodal .cim-nb-hclose:hover {
+  background: #e4e6eb;
+}
+
+#cim-nb-hmodal .cim-nb-hclose:focus-visible {
+  outline: 2px solid #0a7cff;
+  outline-offset: 2px;
+}
+
+#cim-nb-hmodal .cim-nb-history {
+  overflow-y: auto;
+  padding: 6px 18px 14px;
+  font-size: 13px;
+  color: #4b4f56;
+}
+
+#cim-nb-hmodal .cim-nb-hrow {
+  padding: 10px 0;
+  border-bottom: 1px solid #f0f2f5;
+}
+
+#cim-nb-hmodal .cim-nb-hrow:last-child {
+  border-bottom: none;
+}
+
+#cim-nb-hmodal .cim-nb-hmeta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #65676b;
+}
+
+#cim-nb-hmodal .cim-nb-hfield {
+  padding: 1px 7px;
+  border-radius: 4px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+#cim-nb-hmodal .cim-nb-hfield--balance {
+  background: #e7f0fd;
+  color: #0b5cad;
+}
+
+#cim-nb-hmodal .cim-nb-hfield--note {
+  background: #f0f2f5;
+  color: #4b4f56;
+}
+
+#cim-nb-hmodal .cim-nb-hchange {
+  display: grid;
+  grid-template-columns: 48px 1fr;
+  column-gap: 8px;
+  row-gap: 3px;
+  margin-top: 6px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #1c2b33;
+}
+
+#cim-nb-hmodal .cim-nb-hk {
+  padding-top: 1px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #8a8d91;
+}
+
+#cim-nb-hmodal .cim-nb-hold {
+  color: #65676b;
+  text-decoration: line-through;
+}
+
+#cim-nb-hmodal .cim-nb-hnew {
+  font-weight: 600;
+}
+
+/* In-panel home: narrow column — row wraps to two lines, editor inline. */
+#cim-note-bar.cim-note-bar--in-panel {
+  width: auto;
+  margin: 0 0 8px;
+}
+
+#cim-note-bar.cim-note-bar--in-panel .cim-nb-compact {
+  flex-wrap: wrap;
+  height: auto;
+  min-height: var(--nb-h);
+  padding: 6px 8px 6px 10px;
+  row-gap: 4px;
+}
+
+#cim-note-bar.cim-note-bar--in-panel .cim-nb-name {
+  display: none;
+}
+
+#cim-note-bar.cim-note-bar--in-panel .cim-nb-seg {
+  flex: 1 1 100%;
+  max-width: none;
+  padding-left: 0;
+  border-left: none;
+}
+
+#cim-note-bar.cim-note-bar--in-panel .cim-nb-cstatus {
+  margin-left: 0;
+}
+
+#cim-note-bar.cim-note-bar--in-panel .cim-nb-editor {
+  position: static;
+  margin-top: 6px;
+  padding: 10px;
+  box-shadow: none;
+  animation: none;
+}
+
+#cim-note-bar.cim-note-bar--in-panel .cim-nb-fields {
+  grid-template-columns: 1fr;
+}
+
+#cim-note-bar.cim-note-bar--in-panel .cim-nb-foot {
+  flex-wrap: wrap;
+}
+
+#cim-note-bar.cim-note-bar--in-panel .cim-nb-status {
+  flex-basis: 100%;
+}
+
+#cim-note-bar.cim-note-bar--in-panel .cim-nb-me {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#cim-note-bar.cim-note-bar--in-panel .cim-nb-save,
+#cim-note-bar.cim-note-bar--in-panel .cim-nb-history-btn {
+  height: 30px;
+  padding: 0 12px;
+}
+
+#cim-note-bar.cim-note-bar--in-panel .cim-nb-ename {
+  display: none;
+}
+
+/* Spinner shared by the bar status and the switching cover. */
+.cim-nb-spin {
+  display: inline-block;
+  flex: none;
+  width: 11px;
+  height: 11px;
+  border: 2px solid #ccd0d5;
+  border-top-color: #0a7cff;
+  border-radius: 50%;
+  animation: cim-nb-spin 0.7s linear infinite;
+}
+
+@keyframes cim-nb-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* "Switching customer…" — an opaque cover over the panel and the bar while
+   the URL, the detected name and the chat's name disagree. */
+#cim-purchase-panel .cim-switch-cover,
+#cim-note-bar .cim-switch-cover {
+  display: none;
+}
+
+#cim-purchase-panel.cim-switching .cim-switch-cover,
+#cim-note-bar.cim-switching .cim-switch-cover {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: inherit;
+  background: rgba(255, 255, 255, 0.96);
+  font-size: 13px;
+  font-weight: 600;
+  color: #4b4f56;
+  text-align: center;
+  padding: 0 12px;
+}
+
+#cim-purchase-panel.cim-switching {
+  min-height: 90px;
+}
+
+/* Loading skeleton (renderState 'loading'). */
+#cim-purchase-panel .cim-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 6px 0 4px;
+}
+
+#cim-purchase-panel .cim-skeleton-line {
+  height: 10px;
+  border-radius: 5px;
+  background: linear-gradient(90deg, #eef0f3 25%, #f6f7f9 50%, #eef0f3 75%);
+  background-size: 200% 100%;
+  animation: cim-skeleton-shimmer 1.2s ease-in-out infinite;
+}
+
+@keyframes cim-skeleton-shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+
+#cim-note-bar.cim-switching .cim-switch-cover {
+  border-radius: 8px;
+  font-size: 12.5px;
+}
+
+/* Meta's inbox area tone (setPageTone). Our panel is deliberately left alone. */
+/* Name check (pageTone): green = all four names match and a balance/note is
+   saved; red = any name differs (wrong-customer warning). Meta's grey
+   #65676B text: 4.6:1 on #FEE2E2, 4.9:1 on #DCFCE7. */
+.cim-page-red {
+  background-color: #fee2e2 !important;
+}
+
+.cim-page-green {
+  background-color: #dcfce7 !important;
+}
+
+/* ── Meta's header toolbar as one "Tools" dropdown (ensureToolbarMenu) ─────
+   Meta's nodes are never moved. Closed: the toolbar (.cim-tb-menu) shows only
+   Meta's profile button (.cim-tb-account-item). Open: the toolbar becomes a
+   one-column grid pinned at its closed size (--cim-tb-w × 36px): row 1 is
+   the profile button, where it always is; every other item is auto-placed in
+   rows 2…, 250px wide and right-aligned so it hangs below like a dropdown,
+   over a white panel drawn by ::before. Nothing in the header row moves.
+   The icon-only buttons' hidden labels ([data-sscoverage-ignore]) are shown
+   in the panel so every row reads icon + name. !important beats Meta's
+   atomic classes. */
+.cim-tb-wrap {
+  position: relative !important;
+  flex: none !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+}
+
+#cim-tb-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid #ccd0d5;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #1c2b33;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+#cim-tb-toggle:hover {
+  background: #f5f6f7;
+}
+
+#cim-tb-toggle:focus-visible {
+  outline: 2px solid #0a7cff;
+  outline-offset: 2px;
+}
+
+#cim-tb-toggle[aria-expanded="true"] {
+  border-color: #0a7cff;
+  box-shadow: 0 0 0 3px rgba(10, 124, 255, 0.15);
+}
+
+#cim-tb-toggle .cim-tb-caret {
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid currentColor;
+  transition: transform 0.15s ease;
+}
+
+#cim-tb-toggle[aria-expanded="true"] .cim-tb-caret {
+  transform: rotate(180deg);
+}
+
+/* Closed: only the profile button. */
+.cim-tb-wrap:not(.cim-tb-open) .cim-tb-menu > :not(.cim-tb-account-item) {
+  display: none !important;
+}
+
+/* Open: grid at the closed size; rows 2… overflow downward as the panel. */
+.cim-tb-wrap.cim-tb-open .cim-tb-menu {
+  display: grid !important;
+  grid-template-columns: var(--cim-tb-w, 40px) !important;
+  grid-template-rows: 36px repeat(16, auto) !important;
+  grid-auto-rows: auto !important;
+  gap: 0 !important;
+  align-content: start !important;
+  align-items: center !important;
+  width: var(--cim-tb-w, 40px) !important;
+  height: 36px !important;
+  overflow: visible !important;
+}
+
+.cim-tb-open .cim-tb-menu > .cim-tb-account-item {
+  grid-row: 1 !important;
+  grid-column: 1 !important;
+  justify-self: end !important;
+}
+
+.cim-tb-open .cim-tb-menu::before {
+  content: '';
+  grid-column: 1;
+  grid-row: 2 / -1;
+  justify-self: unsafe end;
+  align-self: stretch;
+  width: 266px;
+  margin-top: 6px;
+  border: 1px solid #ccd0d5;
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18), 0 2px 6px rgba(0, 0, 0, 0.08);
+  z-index: 2147483000;
+}
+
+.cim-tb-open .cim-tb-menu > :not(.cim-tb-account-item):not(.cim-tb-sep) {
+  grid-column: 1 !important;
+  justify-self: unsafe end !important;
+  box-sizing: border-box !important;
+  width: 250px !important;
+  max-width: none !important;
+  margin: 3px 8px !important;
+  z-index: 2147483001;
+}
+
+/* Explicit rows (set by markToolbarItems) so items share rows 2… with the
+   panel background instead of being auto-placed after it. */
+.cim-tb-open .cim-tb-menu > [data-cim-row="2"] { grid-row: 2 !important; }
+.cim-tb-open .cim-tb-menu > [data-cim-row="3"] { grid-row: 3 !important; }
+.cim-tb-open .cim-tb-menu > [data-cim-row="4"] { grid-row: 4 !important; }
+.cim-tb-open .cim-tb-menu > [data-cim-row="5"] { grid-row: 5 !important; }
+.cim-tb-open .cim-tb-menu > [data-cim-row="6"] { grid-row: 6 !important; }
+.cim-tb-open .cim-tb-menu > [data-cim-row="7"] { grid-row: 7 !important; }
+.cim-tb-open .cim-tb-menu > [data-cim-row="8"] { grid-row: 8 !important; }
+.cim-tb-open .cim-tb-menu > [data-cim-row="9"] { grid-row: 9 !important; }
+.cim-tb-open .cim-tb-menu > [data-cim-row="10"] { grid-row: 10 !important; }
+.cim-tb-open .cim-tb-menu > [data-cim-row="11"] { grid-row: 11 !important; }
+.cim-tb-open .cim-tb-menu > [data-cim-row="12"] { grid-row: 12 !important; }
+.cim-tb-open .cim-tb-menu > [data-cim-row="13"] { grid-row: 13 !important; }
+.cim-tb-open .cim-tb-menu > [data-cim-row="14"] { grid-row: 14 !important; }
+.cim-tb-open .cim-tb-menu > [data-cim-row="15"] { grid-row: 15 !important; }
+.cim-tb-open .cim-tb-menu > [data-cim-row="16"] { grid-row: 16 !important; }
+.cim-tb-open .cim-tb-menu > [data-cim-row="17"] { grid-row: 17 !important; }
+
+/* First item clears the panel's top edge, last one its bottom. */
+.cim-tb-open .cim-tb-menu > .cim-tb-first:not(.cim-tb-account-item):not(.cim-tb-sep) {
+  margin-top: 14px !important;
+}
+
+.cim-tb-open .cim-tb-menu > .cim-tb-last:not(.cim-tb-account-item):not(.cim-tb-sep) {
+  margin-bottom: 8px !important;
+}
+
+/* Separators (marked .cim-tb-sep by markToolbarSeparators) out. */
+.cim-tb-open .cim-tb-menu .cim-tb-sep {
+  display: none !important;
+}
+
+/* Inside each item: full width, left-aligned. */
+.cim-tb-open .cim-tb-menu > :not(.cim-tb-account-item) div:has([role="button"], [role="combobox"]),
+.cim-tb-open .cim-tb-menu > :not(.cim-tb-account-item) [role="button"],
+.cim-tb-open .cim-tb-menu > :not(.cim-tb-account-item) [role="combobox"] {
+  box-sizing: border-box !important;
+  width: 100% !important;
+  max-width: none !important;
+  margin: 0 !important;
+  justify-content: flex-start !important;
+}
+
+.cim-tb-open .cim-tb-menu > :not(.cim-tb-account-item) span:has([role="button"], [role="combobox"]) {
+  display: block !important;
+}
+
+.cim-tb-open .cim-tb-menu > :not(.cim-tb-account-item) [role="button"] div,
+.cim-tb-open .cim-tb-menu > :not(.cim-tb-account-item) [role="combobox"] div {
+  justify-content: flex-start !important;
+}
+
+.cim-tb-open .cim-tb-menu [role="button"] [data-sscoverage-ignore="true"] {
+  position: static !important;
+  order: 2;
+  width: auto !important;
+  height: auto !important;
+  margin: 0 0 0 8px !important;
+  overflow: visible !important;
+  clip: auto !important;
+  clip-path: none !important;
+  white-space: nowrap !important;
+  font-size: inherit !important;
+  line-height: inherit !important;
+  font-weight: 600 !important;
+  color: inherit !important;
+  align-self: center;
+}
+
+/* Meta's icon box in those buttons is full-width + flex-grow (it centres a
+   lone icon); next to a label it must shrink to the icon or the label is
+   pushed to the far right. */
+.cim-tb-open .cim-tb-menu [role="button"] div:has(> [data-sscoverage-ignore="true"]) {
+  justify-content: flex-start !important;
+}
+
+.cim-tb-open .cim-tb-menu [role="button"] [data-sscoverage-ignore="true"] ~ div {
+  flex: 0 0 auto !important;
+  width: auto !important;
+}
+
+/* ── Meta's conversation list, compact (applyThreadListSize) ──────────────
+   Anchored only on data-pagelet="GenericThreadListView" (stable), never on
+   Meta's generated classes. The column holding it is pinned to --cim-tl-w
+   (the chat column takes the rest); the list itself is scaled by
+   --cim-tl-zoom, so avatars, text, chips and padding shrink together and
+   each row keeps Meta's layout — about as much text fits as before. */
+html.cim-tl-compact div:has(> [data-pagelet="GenericThreadListView"]) {
+  flex: 0 0 var(--cim-tl-w) !important;
+  width: var(--cim-tl-w) !important;
+  min-width: var(--cim-tl-w) !important;
+  max-width: var(--cim-tl-w) !important;
+}
+
+html.cim-tl-compact [data-pagelet="GenericThreadListView"] {
+  zoom: var(--cim-tl-zoom);
+}
+
+/* ── Compact right sidebar (tightenSidebar) ───────────────────────────────
+   Meta's profile header and the section holding our panel: 16/12px padding
+   → 6/8px, divider between them removed; our docked panel loses its margin. */
+.cim-sb-tight {
+  padding: 6px 8px !important;
+}
+
+.cim-sb-no-bottom {
+  border-bottom: none !important;
+}
+
+.cim-sb-no-top {
+  border-top: none !important;
+}
+
+.cim-sb-hide {
+  display: none !important;
+}
+
+#cim-purchase-panel:not(.cim-floating) {
+  margin: 0 0 6px;
+}
+
+/* ── Compact Meta headers (html.cim-compact-meta, options switch) ─────────
+   Rarely clicked areas — sidebar profile header (.cim-sb-profile), channel
+   tabs (Meta's data-surface …/channel_selector) and chat header
+   (.cim-chat-head): every padding above 4px halved (compactMetaHeaders puts
+   each element's own halved values in --cim-p). Font sizes unchanged. */
+html.cim-compact-meta [style*="--cim-p"] {
+  padding: var(--cim-p) !important;
+}
+
+/* Quick-filter row (Unread / Priority / Ad replies / Follow up + Filters) in
+   the narrowed list: the chip strip shrinks and clips so Meta's Filters
+   button stays at the row's end instead of spilling into the chat header.
+   Anchored on Meta's data-surface …/lib:inbox:filters (stable). */
+html.cim-tl-compact span[data-surface$="/lib:inbox:filters"] > div {
+  max-width: 100% !important;
+  min-width: 0 !important;
+}
+
+html.cim-tl-compact span[data-surface$="/lib:inbox:filters"] > div > :first-child {
+  flex: 1 1 auto !important;
+  min-width: 0 !important;
+  overflow: hidden !important;
+}
+
+html.cim-tl-compact span[data-surface$="/lib:inbox:filters"] > div > :not(:first-child) {
+  flex: none !important;
+}
+
+/* Sidebar profile header (avatar + name + View profile): each container from
+   "View profile" up to the block's edge hugs its content vertically
+   (tightenSidebar sets --cim-hug; the block's outer edge gets --cim-hug-edge
+   and keeps 4px top/bottom, inner levels 0 so nesting doesn't add up).
+   Beats .cim-sb-tight's 6px. Horizontal spacing and fonts untouched. */
+html.cim-compact-meta [style*="--cim-hug"] {
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+  min-height: 0 !important;
+  height: auto !important;
+}
+
+html.cim-compact-meta [style*="--cim-hug-edge"] {
+  padding-top: 4px !important;
+  padding-bottom: 4px !important;
+}
+
+/* Parked panel: Meta's sidebar is closed — the panel keeps working hidden
+   (ensurePanel) and moves back into the sidebar when it opens. */
+#cim-purchase-panel.cim-parked {
+  display: none !important;
+}
+
+/* Baserow-name check under the panel's Name row (renderNameCheck). */
+#cim-purchase-panel .cim-name-check {
+  font-size: 11.5px;
+  color: #65676b;
+}
+
+#cim-purchase-panel .cim-name-check--warn {
+  color: #b91c1c;
+  font-weight: 600;
+}
+
+#cim-purchase-panel .cim-name-check[hidden] {
+  display: none;
+}

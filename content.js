@@ -48,6 +48,8 @@
     myrSum: null,
     sgdSum: null,
     manychatInfo: null,
+    psid: null,
+    notes: null,
   };
 
   function getUserIdFromUrl() {
@@ -526,16 +528,31 @@
       <button class="cim-close-btn" title="Return to sidebar">&#x2715;</button>
       <div class="cim-row cim-uid"></div>
       <div class="cim-row cim-name"></div>
+      <div class="cim-row cim-name-check" hidden></div>
       <div class="cim-row cim-psid"></div>
       <div class="cim-lang-tags"></div>
       <div class="cim-body"></div>
+      <div class="cim-switch-cover" aria-live="polite"><span class="cim-nb-spin"></span><span class="cim-switch-cover-text">Switching customer…</span></div>
     `;
     return panel;
   }
 
+  // With Meta's right sidebar closed there is no "Contact details" anchor.
+  // The panel is then PARKED: kept in <body>, hidden (.cim-parked), so the
+  // lookup, the note bar and the name checks keep running; it moves into the
+  // sidebar as soon as the anchor appears. Never null while a chat is open.
   function ensurePanel() {
     let panel = document.getElementById(PANEL_ID);
-    if (panel) return panel;
+    if (panel) {
+      if (panel.classList.contains('cim-parked')) {
+        const anchor = findContactDetailsAnchor();
+        if (anchor && anchor.parentElement) {
+          anchor.parentElement.insertBefore(panel, anchor);
+          panel.classList.remove('cim-parked');
+        }
+      }
+      return panel;
+    }
 
     panel = buildPanel();
     initDrag(panel);
@@ -547,8 +564,12 @@
       panel.style.top  = panelPosition.y + 'px';
     } else {
       const anchor = findContactDetailsAnchor();
-      if (!anchor || !anchor.parentElement) return null;
-      anchor.parentElement.insertBefore(panel, anchor);
+      if (anchor && anchor.parentElement) {
+        anchor.parentElement.insertBefore(panel, anchor);
+      } else {
+        panel.classList.add('cim-parked');
+        document.body.appendChild(panel);
+      }
     }
 
     return panel;
@@ -687,6 +708,11 @@
   }
 
   function renderPsidRow(panel, uid, psid) {
+    if (getUserIdFromUrl() === uid) {
+      sessionState.psid = psid || null;
+      if (psid) startNotes(uid, psid);
+      else { stashNoteDraft(); sessionState.notes = null; renderNoteBar(); }
+    }
     const row = panel.querySelector('.cim-psid');
     row.innerHTML = '';
     panel.querySelector('.cim-lang-tags').innerHTML = '';
@@ -747,6 +773,1177 @@
       row.append(unlink);
     } else {
       row.textContent = 'PSID: Not linked';
+    }
+  }
+
+  // ── Balance / Note bar ─────────────────────────────────────────────────────
+  // Spec: docs/superpowers/specs/2026-09-29-balance-note-bar-design.md.
+  // Two per-customer fields shown in Meta's page header (fallback: top of our
+  // panel). Backend today is background.js's preview store (this browser only);
+  // the message contract is the one the Baserow version will keep.
+  // Every DOM write here is change-guarded: the document MutationObserver
+  // re-runs check() on any childList change, so an unconditional textContent
+  // write would loop.
+  const NOTE_BAR_ID = 'cim-note-bar';
+  const NOTE_BALANCE_MAX = 120;
+  const NOTE_TEXT_MAX = 1000;
+  const NOTE_HEADER_WAIT_MS = 5000;
+  const NOTE_NAME_FIX_MS = 2000;
+  const NOTE_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const noteDrafts = new Map(); // psid → { balance, note } — unsaved text left behind on a customer switch
+  let noteHiddenHeader = null;   // Meta's "Inbox / Respond to messages" block we hid
+  let noteHeaderMissingSince = 0;
+  let noteHeaderLastScan = 0;
+  let noteBarPlacement = 'header'; // 'header' | 'panel' (options page)
+  let staffOptionName = '';
+  let fbIdentity;                  // undefined = not read yet, null = not found
+  let fbIdentityReadAt = 0;
+  let customerSwitching = true;
+  let nameMismatchSince = 0;
+  let previousCustomer = null;     // { name, at } — the customer before the last UID change
+  let lastDomName = '';            // Meta's own name for the open chat, last read
+  let nameConflict = false;        // names disagree for > NAME_CONFLICT_MS (not a switch)
+  const NAME_CONFLICT_MS = 5000;
+  const STALE_NAME_WAIT_MS = 3000;
+
+  chrome.storage.local.get(['staffName', 'noteBarPlacement', 'threadListSize', 'compactMetaHeaders'], (r) => {
+    document.documentElement.classList.toggle('cim-compact-meta', r.compactMetaHeaders !== false);
+    staffOptionName = String(r.staffName || '').trim();
+    noteBarPlacement = r.noteBarPlacement === 'panel' ? 'panel' : 'header';
+    applyThreadListSize(r.threadListSize);
+    renderNoteBar();
+    scheduleCheck();
+  });
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local') return;
+    if (changes.staffName) {
+      staffOptionName = String(changes.staffName.newValue || '').trim();
+      renderNoteBar();
+    }
+    if (changes.threadListSize) applyThreadListSize(changes.threadListSize.newValue);
+    if (changes.compactMetaHeaders) {
+      document.documentElement.classList.toggle('cim-compact-meta', changes.compactMetaHeaders.newValue !== false);
+    }
+    if (changes.noteBarPlacement) {
+      noteBarPlacement = changes.noteBarPlacement.newValue === 'panel' ? 'panel' : 'header';
+      scheduleCheck();
+    }
+  });
+
+  // Meta's conversation list (left column): narrower and scaled down so the
+  // chat gets the room. CSS only (styles.css, anchored on the list's stable
+  // data-pagelet), switched by a class on <html>; options page picks the size.
+  const THREAD_LIST_SIZES = {
+    compact: { w: '300px', zoom: '0.86' },
+    extra: { w: '260px', zoom: '0.78' },
+  };
+  function applyThreadListSize(value) {
+    const size = value === 'off' ? null : THREAD_LIST_SIZES[value] || THREAD_LIST_SIZES.compact;
+    const root = document.documentElement;
+    root.classList.toggle('cim-tl-compact', !!size);
+    if (size) {
+      root.style.setProperty('--cim-tl-w', size.w);
+      root.style.setProperty('--cim-tl-zoom', size.zoom);
+    } else {
+      root.style.removeProperty('--cim-tl-w');
+      root.style.removeProperty('--cim-tl-zoom');
+    }
+  }
+  applyThreadListSize('compact');
+  document.documentElement.classList.add('cim-compact-meta');
+
+  function setText(el, text) {
+    if (el && el.textContent !== text) el.textContent = text;
+  }
+
+  // Business Suite embeds the logged-in person as CurrentUserInitialData
+  // ({ "USER_ID": "...", "NAME": "..." }) in an inline <script>. Read once per
+  // page; a miss is retried at most every 10 s.
+  function readFacebookIdentity() {
+    const shape = /"CurrentUserInitialData"\s*,\s*\[\]\s*,\s*\{([^{}]*)\}/;
+    for (const s of document.querySelectorAll('script:not([src])')) {
+      const t = s.textContent;
+      if (t.indexOf('CurrentUserInitialData') === -1) continue;
+      const obj = t.match(shape);
+      if (!obj) continue;
+      const chunk = obj[1];
+      const m = chunk.match(/"NAME":"((?:[^"\\]|\\.)*)"/);
+      if (!m) continue;
+      let name = '';
+      try { name = JSON.parse('"' + m[1] + '"').trim(); } catch (err) { name = ''; }
+      if (!name) continue;
+      const u = chunk.match(/"USER_ID":"(\d+)"/);
+      return { name, userId: u ? u[1] : '', source: 'facebook' };
+    }
+    return null;
+  }
+
+  function getStaffIdentity() {
+    if (!fbIdentity && Date.now() - fbIdentityReadAt > 10000) {
+      fbIdentityReadAt = Date.now();
+      fbIdentity = readFacebookIdentity();
+    }
+    if (fbIdentity) return fbIdentity;
+    if (staffOptionName) return { name: staffOptionName, userId: '', source: 'options' };
+    return null;
+  }
+
+  function formatNoteTime(iso) {
+    const d = new Date(iso);
+    if (!iso || isNaN(d)) return '';
+    const hm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+    const year = d.getFullYear() !== new Date().getFullYear() ? ' ' + d.getFullYear() : '';
+    return `${hm}, ${d.getDate()} ${NOTE_MONTHS[d.getMonth()]}${year}`;
+  }
+
+  function noteValues(n) {
+    return n.draft || { balance: n.balance, note: n.note };
+  }
+
+  function isNoteDirty(n) {
+    if (!n || n.status !== 'ready' || !n.draft) return false;
+    return n.draft.balance.trim() !== n.balance || n.draft.note.trim() !== n.note;
+  }
+
+  function stashNoteDraft() {
+    const n = sessionState.notes;
+    if (!n) return;
+    if (isNoteDirty(n)) noteDrafts.set(n.psid, { ...n.draft });
+    else if (n.status === 'ready') noteDrafts.delete(n.psid);
+  }
+
+  // Meta's page header: a leaf "Inbox" with a "Respond to messages…" leaf
+  // within 3 ancestor levels; the nearest common ancestor is the block we
+  // replace. It must hold nothing but those two texts — the left nav also has
+  // an "Inbox" leaf, and 3 levels up from it can be the whole app.
+  function findInboxHeaderBlock() {
+    if (noteHiddenHeader && noteHiddenHeader.isConnected) return noteHiddenHeader;
+    if (Date.now() - noteHeaderLastScan < 1000) return null;
+    noteHeaderLastScan = Date.now();
+    for (const el of document.querySelectorAll('span, div, h1, h2, h3')) {
+      if (el.children.length !== 0 || el.textContent.trim() !== 'Inbox') continue;
+      if (el.closest('#' + NOTE_BAR_ID + ', #' + PANEL_ID)) continue;
+      let node = el;
+      for (let depth = 0; depth < 3 && node.parentElement; depth++) {
+        node = node.parentElement;
+        const sub = Array.from(node.querySelectorAll('span, div')).find(
+          (leaf) => leaf.children.length === 0 && leaf.textContent.trim().startsWith('Respond to messages')
+        );
+        if (!sub) continue;
+        const own = 'Inbox'.length + sub.textContent.replace(/\s+/g, '').length;
+        if (node.textContent.replace(/\s+/g, '').length <= own + 4) return widenHeaderBlock(node);
+        break; // common ancestor holds more than the header text — not this "Inbox"
+      }
+    }
+    return null;
+  }
+
+  // The text block is usually wrapped in shrink-to-fit containers; replacing
+  // only it would squeeze the bar to the text's width. Climb (≤4 levels) while
+  // the parent holds nothing else — same text, no button/link/input outside
+  // the block — so the bar takes the whole header row and no control of
+  // Meta's is ever hidden.
+  function widenHeaderBlock(block) {
+    const text = block.textContent.replace(/\s+/g, '');
+    let node = block;
+    for (let i = 0; i < 4 && node.parentElement && node.parentElement !== document.body; i++) {
+      const parent = node.parentElement;
+      if (parent.textContent.replace(/\s+/g, '') !== text) break;
+      const controls = parent.querySelectorAll('button, a, input, select, textarea, [role="button"], [role="link"], [tabindex]');
+      if (Array.from(controls).some((c) => !node.contains(c))) break;
+      node = parent;
+    }
+    return node;
+  }
+
+  function restoreInboxHeader() {
+    if (noteHiddenHeader) {
+      noteHiddenHeader.style.display = '';
+      noteHiddenHeader = null;
+    }
+    restoreToolbarMenu();
+  }
+
+  // ── Meta's header toolbar → one "Inbox tools" dropdown ────────────────────
+  // Gives the note bar the row. Meta's buttons are never moved, cloned or
+  // re-wired: the toolbar's wrapper gets our toggle button first, and CSS
+  // hides the toolbar (closed) or shows it as a panel under the toggle (open),
+  // so React's handlers and Meta's own popovers (Available picker, To-dos)
+  // keep working. Classes are re-applied every check() tick because React can
+  // rewrite className on re-render.
+  let toolbarWrap = null;
+  let toolbarOpen = false;
+
+  function ensureToolbarMenu(row) {
+    const toolbar = row && row.querySelector('[role="toolbar"]');
+    if (!toolbar) return;
+    let wrap = toolbar;
+    while (wrap.parentElement && wrap.parentElement !== row) wrap = wrap.parentElement;
+    if (wrap.parentElement !== row) return;
+    if (toolbarWrap && toolbarWrap !== wrap) restoreToolbarMenu();
+    toolbarWrap = wrap;
+    if (!wrap.classList.contains('cim-tb-wrap')) wrap.classList.add('cim-tb-wrap');
+    if (!toolbar.classList.contains('cim-tb-menu')) toolbar.classList.add('cim-tb-menu');
+    wrap.classList.toggle('cim-tb-open', toolbarOpen);
+    markToolbarSeparators(toolbar);
+    markToolbarItems(toolbar);
+    let btn = document.getElementById('cim-tb-toggle');
+    if (!btn || btn.parentElement !== wrap || wrap.firstElementChild !== btn) {
+      if (!btn) btn = buildToolbarToggle();
+      wrap.insertBefore(btn, wrap.firstChild);
+    }
+    btn.setAttribute('aria-expanded', toolbarOpen ? 'true' : 'false');
+  }
+
+  // Meta's divider lines (and the wrappers around them) hold no control, no
+  // text and no icon; mark the outermost such node so the dropdown hides it
+  // and its flex gap. Decided by content, not by Meta's generated classes.
+  function markToolbarSeparators(toolbar) {
+    const ctrl = '[role="button"], [role="combobox"]';
+    for (const el of toolbar.querySelectorAll('div, span')) {
+      if (el.closest(ctrl)) continue;
+      const empty = !el.querySelector(ctrl + ', svg, img') && el.textContent.trim() === '';
+      const outermost = empty && !(el.parentElement && el.parentElement !== toolbar && el.parentElement.classList.contains('cim-tb-sep'));
+      if (outermost !== el.classList.contains('cim-tb-sep')) el.classList.toggle('cim-tb-sep', outermost);
+    }
+  }
+
+  // Meta's profile button stays in the header (CSS keeps its toolbar item in
+  // view while the rest collapse). Found by content — a button holding an
+  // image and no text — not by Meta's classes. Also marks the first/last
+  // dropdown items so the panel's padding lands on the right ones.
+  function markToolbarItems(toolbar) {
+    const items = Array.from(toolbar.children);
+    for (const item of items) {
+      const isAccount = Array.from(item.querySelectorAll('[role="button"]')).some(
+        (b) => !!b.querySelector('image, img') && b.textContent.trim() === ''
+      );
+      if (isAccount !== item.classList.contains('cim-tb-account-item')) item.classList.toggle('cim-tb-account-item', isAccount);
+    }
+    const listed = items.filter((el) => !el.classList.contains('cim-tb-account-item') && !el.classList.contains('cim-tb-sep'));
+    items.forEach((el) => {
+      const first = el === listed[0];
+      const last = el === listed[listed.length - 1];
+      if (first !== el.classList.contains('cim-tb-first')) el.classList.toggle('cim-tb-first', first);
+      if (last !== el.classList.contains('cim-tb-last')) el.classList.toggle('cim-tb-last', last);
+      // Explicit grid row (2…): auto-placed items would be pushed below the
+      // panel background (::before), which claims rows 2… first.
+      const idx = listed.indexOf(el);
+      const row = idx === -1 ? null : String(Math.min(idx + 2, 17));
+      if (el.getAttribute('data-cim-row') !== row) {
+        if (row) el.setAttribute('data-cim-row', row);
+        else el.removeAttribute('data-cim-row');
+      }
+    });
+  }
+
+  function buildToolbarToggle() {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.id = 'cim-tb-toggle';
+    btn.setAttribute('aria-haspopup', 'true');
+    btn.setAttribute('aria-label', 'Inbox tools');
+    btn.innerHTML = `
+      <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="currentColor">
+        <rect x="1.5" y="1.5" width="5.5" height="5.5" rx="1.4"/><rect x="9" y="1.5" width="5.5" height="5.5" rx="1.4"/>
+        <rect x="1.5" y="9" width="5.5" height="5.5" rx="1.4"/><rect x="9" y="9" width="5.5" height="5.5" rx="1.4"/>
+      </svg>
+      <span>Tools</span>
+      <span class="cim-tb-caret" aria-hidden="true"></span>`;
+    btn.addEventListener('click', () => setToolbarOpen(!toolbarOpen));
+    return btn;
+  }
+
+  function setToolbarOpen(open) {
+    if (!toolbarWrap) { toolbarOpen = false; return; }
+    if (open && !toolbarOpen) {
+      // Pin the open grid to the closed toolbar's width so the header row
+      // (and the note bar) never shifts.
+      const menu = toolbarWrap.querySelector('.cim-tb-menu');
+      if (menu) toolbarWrap.style.setProperty('--cim-tb-w', Math.ceil(menu.getBoundingClientRect().width) + 'px');
+    }
+    toolbarOpen = open;
+    toolbarWrap.classList.toggle('cim-tb-open', open);
+    if (open) raiseMetaTooltips();
+    else lowerMetaTooltips();
+    document.getElementById('cim-tb-toggle')?.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+
+  function restoreToolbarMenu() {
+    toolbarOpen = false;
+    document.getElementById('cim-tb-toggle')?.remove();
+    lowerMetaTooltips();
+    if (toolbarWrap) {
+      toolbarWrap.classList.remove('cim-tb-wrap', 'cim-tb-open');
+      toolbarWrap.style.removeProperty('--cim-tb-w');
+      toolbarWrap.querySelectorAll('.cim-tb-sep, .cim-tb-account-item, .cim-tb-first, .cim-tb-last, [data-cim-row]').forEach((el) => {
+        el.classList.remove('cim-tb-sep', 'cim-tb-account-item', 'cim-tb-first', 'cim-tb-last');
+        el.removeAttribute('data-cim-row');
+      });
+      toolbarWrap.querySelector('.cim-tb-menu')?.classList.remove('cim-tb-menu');
+      toolbarWrap = null;
+    }
+  }
+
+  // Meta's hover labels ("Automations", …) live in a separate layer that the
+  // open dropdown would cover. While it is open, every positioned ancestor of
+  // a visible [role="tooltip"] that is not also an ancestor of the toolbar is
+  // raised above it; put back on close. Runs on hover over the dropdown (the
+  // label appears after a short delay) and on every check() tick.
+  const raisedLayers = new Set();
+  function raiseMetaTooltips() {
+    if (!toolbarOpen || !toolbarWrap) return;
+    for (const tip of document.querySelectorAll('[role="tooltip"]')) {
+      for (let el = tip; el && el !== document.body; el = el.parentElement) {
+        if (el.contains(toolbarWrap)) break;
+        if (raisedLayers.has(el) || getComputedStyle(el).position === 'static') continue;
+        el.dataset.cimZ = el.style.zIndex;
+        el.style.setProperty('z-index', '2147483647', 'important');
+        raisedLayers.add(el);
+      }
+    }
+  }
+
+  function lowerMetaTooltips() {
+    for (const el of raisedLayers) {
+      el.style.zIndex = el.dataset.cimZ || '';
+      delete el.dataset.cimZ;
+    }
+    raisedLayers.clear();
+  }
+
+  document.addEventListener('mouseover', (e) => {
+    if (!toolbarOpen || !toolbarWrap || !toolbarWrap.contains(e.target)) return;
+    [60, 250, 600, 1200].forEach((ms) => setTimeout(raiseMetaTooltips, ms));
+  }, true);
+
+  // Close on a click anywhere else — but not inside Meta's own popovers that
+  // a toolbar button opened (Available listbox, To-dos, dialogs), which live
+  // in portals outside the toolbar.
+  document.addEventListener('mousedown', (e) => {
+    if (!toolbarOpen || !toolbarWrap) return;
+    if (toolbarWrap.contains(e.target)) return;
+    if (e.target.closest('[role="listbox"], [role="option"], [role="menu"], [role="menuitem"], [role="dialog"]')) return;
+    setToolbarOpen(false);
+  }, true);
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || !toolbarOpen) return;
+    // An open Meta picker (e.g. Available) takes this Esc itself.
+    if (Array.from(document.querySelectorAll('[role="listbox"]')).some((l) => l.offsetParent)) return;
+    setToolbarOpen(false);
+    document.getElementById('cim-tb-toggle')?.focus();
+  });
+
+  // Two parts: a one-line summary row the height of Meta's header buttons
+  // (36 px — the chat keeps its space), and an editor that opens on click.
+  // In the header the editor floats (position: fixed, placed under the row by
+  // placeNoteEditor) so opening it never pushes the inbox down; in the panel
+  // fallback it opens inline. Closing keeps any unsaved text as a draft.
+  function buildNoteBar() {
+    const bar = document.createElement('div');
+    bar.id = NOTE_BAR_ID;
+    bar.innerHTML = `
+      <div class="cim-nb-compact" role="button" tabindex="0" aria-expanded="false" aria-controls="cim-nb-editor"
+        aria-label="Balance and note — open to edit">
+        <span class="cim-nb-name"></span>
+        <span class="cim-nb-seg cim-nb-seg--balance" data-field="balance"><span class="cim-nb-k">Balance</span><span class="cim-nb-v cim-nb-v-balance"></span></span>
+        <span class="cim-nb-seg cim-nb-seg--note" data-field="note"><span class="cim-nb-k">Note</span><span class="cim-nb-v cim-nb-v-note"></span></span>
+        <span class="cim-nb-empty">+ Add balance or note</span>
+        <span class="cim-nb-cstatus"></span>
+        <span class="cim-nb-chev" aria-hidden="true"></span>
+      </div>
+      <div class="cim-nb-editor" id="cim-nb-editor" role="dialog" aria-label="Edit balance and note" hidden>
+        <div class="cim-nb-ehead">
+          <span class="cim-nb-ename"></span>
+          <button type="button" class="cim-nb-psid"></button>
+          <span class="cim-nb-preview" hidden>Preview · this browser only</span>
+          <button type="button" class="cim-nb-close" aria-label="Close">×</button>
+        </div>
+        <div class="cim-nb-fields">
+          <label class="cim-nb-field cim-nb-field--balance">
+            <span class="cim-nb-label">Balance / Voucher</span>
+            <input class="cim-nb-balance" type="text" autocomplete="off" spellcheck="false"
+              maxlength="${NOTE_BALANCE_MAX}" placeholder="e.g. RM 19.90 credit" />
+            <span class="cim-nb-hint">Enter to save</span>
+          </label>
+          <label class="cim-nb-field cim-nb-field--note">
+            <span class="cim-nb-label">Note</span>
+            <textarea class="cim-nb-note" rows="3" maxlength="${NOTE_TEXT_MAX}"
+              placeholder="Anything the next agent must know"></textarea>
+            <span class="cim-nb-hint">⌘/Ctrl + Enter to save · Esc to close</span>
+          </label>
+        </div>
+        <div class="cim-nb-foot">
+          <div class="cim-nb-status" role="status" aria-live="polite"></div>
+          <span class="cim-nb-me"></span>
+          <button type="button" class="cim-nb-history-btn" aria-expanded="false">History</button>
+          <button type="button" class="cim-nb-save">Save</button>
+        </div>
+      </div>
+      <div class="cim-switch-cover"><span class="cim-nb-spin"></span><span class="cim-switch-cover-text">Switching customer…</span></div>
+    `;
+
+    const compact = bar.querySelector('.cim-nb-compact');
+    const balanceEl = bar.querySelector('.cim-nb-balance');
+    const noteEl = bar.querySelector('.cim-nb-note');
+
+    const onInput = () => {
+      const n = sessionState.notes;
+      if (!n || n.status !== 'ready') return;
+      n.draft = { balance: balanceEl.value, note: noteEl.value };
+      if (!isNoteDirty(n)) n.draft = null;
+      n.flash = null;
+      n.saveError = null;
+      autoGrowNote(noteEl);
+      renderNoteBar();
+    };
+    balanceEl.addEventListener('input', onInput);
+    noteEl.addEventListener('input', onInput);
+
+    const revertField = (field) => {
+      const n = sessionState.notes;
+      if (!n || n.status !== 'ready' || !n.draft) return false;
+      if (n.draft[field].trim() === n[field]) return false;
+      n.draft = { ...n.draft, [field]: n[field] };
+      if (!isNoteDirty(n)) n.draft = null;
+      renderNoteBar();
+      return true;
+    };
+
+    // Open from the row; the clicked segment decides which box gets focus.
+    compact.addEventListener('click', (e) => {
+      const n = sessionState.notes;
+      if (n && n.status === 'error') { startNotes(sessionState.uid, n.psid); return; }
+      if (isNoteEditorOpen()) { closeNoteEditor(); return; }
+      const seg = e.target.closest('[data-field]');
+      openNoteEditor(seg ? seg.dataset.field : null);
+    });
+
+    // Keys stay inside the bar so Meta's inbox shortcuts never see them.
+    bar.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.target === compact && (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown')) {
+        e.preventDefault();
+        compact.click();
+      } else if (e.target === balanceEl && e.key === 'Enter') {
+        e.preventDefault();
+        saveNotes();
+      } else if (e.target === noteEl && e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        saveNotes();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        // Esc: close History first, then undo typing in this box, then close.
+        if (isNoteHistoryOpen()) closeNoteHistory();
+        else if (e.target === balanceEl && revertField('balance')) return;
+        else if (e.target === noteEl && revertField('note')) return;
+        else closeNoteEditor(true);
+      }
+    });
+
+    bar.querySelector('.cim-nb-close').addEventListener('click', () => closeNoteEditor(true));
+    bar.querySelector('.cim-nb-save').addEventListener('click', () => saveNotes());
+    bar.querySelector('.cim-nb-history-btn').addEventListener('click', () => {
+      if (isNoteHistoryOpen()) closeNoteHistory();
+      else openNoteHistory();
+    });
+    const psidBtn = bar.querySelector('.cim-nb-psid');
+    psidBtn.addEventListener('click', () => {
+      if (!sessionState.psid) return;
+      copyToClipboard(sessionState.psid).then(() => {
+        psidBtn.classList.add('cim-nb-psid--copied');
+        setTimeout(() => psidBtn.classList.remove('cim-nb-psid--copied'), 1200);
+      });
+    });
+    return bar;
+  }
+
+  function isNoteEditorOpen() {
+    const ed = document.getElementById('cim-nb-editor');
+    return !!ed && !ed.hidden;
+  }
+
+  function openNoteEditor(focusField) {
+    const bar = document.getElementById(NOTE_BAR_ID);
+    const n = sessionState.notes;
+    if (!bar || customerSwitching || !n || n.status !== 'ready') return;
+    const ed = bar.querySelector('.cim-nb-editor');
+    ed.hidden = false;
+    bar.classList.add('cim-note-bar--open');
+    bar.querySelector('.cim-nb-compact').setAttribute('aria-expanded', 'true');
+    placeNoteEditor();
+    renderNoteBar();
+    const noteEl = bar.querySelector('.cim-nb-note');
+    autoGrowNote(noteEl);
+    const target = bar.querySelector(focusField === 'balance' ? '.cim-nb-balance' : '.cim-nb-note');
+    if (!target.disabled) {
+      target.focus();
+      const len = target.value.length;
+      target.setSelectionRange(len, len);
+    }
+  }
+
+  // Closing never discards: unsaved text stays as the draft and the row shows
+  // "Unsaved". refocus = return focus to the row (keyboard close).
+  function closeNoteEditor(refocus) {
+    const bar = document.getElementById(NOTE_BAR_ID);
+    if (!bar) return;
+    const ed = bar.querySelector('.cim-nb-editor');
+    if (ed.hidden) return;
+    closeNoteHistory();
+    ed.hidden = true;
+    bar.classList.remove('cim-note-bar--open');
+    const compact = bar.querySelector('.cim-nb-compact');
+    compact.setAttribute('aria-expanded', 'false');
+    if (refocus) compact.focus();
+    renderNoteBar();
+  }
+
+  // Header home: fixed under the row, at least 560 px wide, kept inside the
+  // window. Panel home: inline (CSS), no inline geometry.
+  function placeNoteEditor() {
+    const bar = document.getElementById(NOTE_BAR_ID);
+    if (!bar) return;
+    const ed = bar.querySelector('.cim-nb-editor');
+    if (ed.hidden) return;
+    if (bar.classList.contains('cim-note-bar--in-panel')) {
+      ed.style.left = ed.style.top = ed.style.width = ed.style.maxHeight = '';
+      return;
+    }
+    const r = bar.querySelector('.cim-nb-compact').getBoundingClientRect();
+    const width = Math.min(Math.max(r.width, 560), window.innerWidth - 16);
+    const left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8));
+    const top = r.bottom + 6;
+    ed.style.left = left + 'px';
+    ed.style.top = top + 'px';
+    ed.style.width = width + 'px';
+    ed.style.maxHeight = Math.max(200, window.innerHeight - top - 12) + 'px';
+  }
+
+  window.addEventListener('resize', placeNoteEditor);
+  document.addEventListener('scroll', placeNoteEditor, true);
+  // Click outside the bar closes the editor (text kept as a draft).
+  document.addEventListener('mousedown', (e) => {
+    if (!isNoteEditorOpen()) return;
+    const bar = document.getElementById(NOTE_BAR_ID);
+    if (e.target.closest && e.target.closest('#' + NOTE_HISTORY_ID)) return;
+    if (bar && !bar.contains(e.target)) closeNoteEditor(false);
+  }, true);
+
+  function autoGrowNote(el) {
+    if (!el.offsetParent) return; // hidden — measured again when the editor opens
+    el.style.height = 'auto';
+    el.style.height = Math.min(Math.max(el.scrollHeight + 2, 66), 200) + 'px';
+  }
+
+  // Places the bar for the current conversation. Header first; the panel
+  // after NOTE_HEADER_WAIT_MS without a header (or when the options page says
+  // so). One element, moved — never duplicated.
+  function ensureNoteBar(hasConversation) {
+    let bar = document.getElementById(NOTE_BAR_ID);
+    if (!hasConversation) {
+      setPageTone(null);
+      if (bar) bar.remove();
+      restoreInboxHeader();
+      noteHeaderMissingSince = 0;
+      return;
+    }
+    if (!bar) bar = buildNoteBar();
+
+    const header = noteBarPlacement === 'header' ? findInboxHeaderBlock() : null;
+    if (header && header.parentElement) {
+      noteHeaderMissingSince = 0;
+      if (noteHiddenHeader !== header) { restoreInboxHeader(); noteHiddenHeader = header; }
+      if (header.style.display !== 'none') header.style.display = 'none';
+      if (bar.parentElement !== header.parentElement || bar.nextElementSibling !== header) {
+        header.parentElement.insertBefore(bar, header);
+      }
+      bar.classList.remove('cim-note-bar--in-panel');
+      ensureToolbarMenu(header.parentElement);
+      raiseMetaTooltips();
+    } else {
+      if (noteBarPlacement === 'header' && !bar.isConnected) {
+        if (!noteHeaderMissingSince) noteHeaderMissingSince = Date.now();
+        if (Date.now() - noteHeaderMissingSince < NOTE_HEADER_WAIT_MS) {
+          setTimeout(scheduleCheck, NOTE_HEADER_WAIT_MS + 100);
+          return;
+        }
+      }
+      if (noteBarPlacement === 'header' && bar.isConnected && !bar.classList.contains('cim-note-bar--in-panel')) {
+        // Header was there a moment ago (React re-rendering it) — keep the bar
+        // where it is until the next tick finds the header again.
+        return;
+      }
+      restoreInboxHeader();
+      const panel = document.getElementById(PANEL_ID);
+      if (!panel) return;
+      const before = panel.querySelector('.cim-uid');
+      if (bar.parentElement !== panel || bar.nextElementSibling !== before) panel.insertBefore(bar, before);
+      bar.classList.add('cim-note-bar--in-panel');
+    }
+    renderNoteBar();
+    placeNoteEditor();
+  }
+
+  function startNotes(uid, psid) {
+    const cur = sessionState.notes;
+    if (cur && cur.psid === psid && cur.status !== 'error') {
+      renderNoteBar();
+      return;
+    }
+    sessionState.notes = {
+      psid, uid, status: 'loading', rowId: null, preview: false,
+      balance: '', note: '', updatedBy: '', updatedAt: '',
+      draft: null, saving: false, flash: null, saveError: null, conflict: null, loadError: null,
+    };
+    renderNoteBar();
+    const n = sessionState.notes;
+    chrome.runtime.sendMessage({ type: 'GET_CUSTOMER_NOTES', psid }, (res) => {
+      const lastErr = chrome.runtime.lastError;
+      if (sessionState.notes !== n || getUserIdFromUrl() !== uid) return;
+      if (lastErr || !res || !res.ok) {
+        n.status = 'error';
+        n.loadError = res?.error || lastErr?.message || 'No response.';
+        renderNoteBar();
+        return;
+      }
+      Object.assign(n, res.notes, { status: 'ready', rowId: res.rowId, preview: !!res.preview });
+      const draft = noteDrafts.get(psid);
+      noteDrafts.delete(psid);
+      if (draft) {
+        n.draft = draft;
+        if (!isNoteDirty(n)) n.draft = null;
+        else n.draftRestored = true;
+      }
+      renderNoteBar();
+    });
+  }
+
+  function saveNotes(opts = {}) {
+    const n = sessionState.notes;
+    if (!n || n.status !== 'ready' || n.saving || customerSwitching) return;
+    const identity = getStaffIdentity();
+    if (!identity) return;
+    if (!isNoteDirty(n)) return;
+
+    const uid = sessionState.uid;
+    const psid = n.psid;
+    const vals = noteValues(n);
+    // Only the fields this agent changed — an untouched field is never
+    // written, so another agent's change to it survives.
+    const next = {};
+    const expected = {};
+    for (const f of ['balance', 'note']) {
+      if (vals[f].trim() === n[f]) continue;
+      next[f] = vals[f].trim();
+      expected[f] = opts.expected && f in opts.expected ? opts.expected[f] : n[f];
+    }
+    n.saving = true;
+    n.saveError = null;
+    n.conflict = null;
+    n.flash = null;
+    renderNoteBar();
+
+    chrome.runtime.sendMessage({
+      type: 'SAVE_CUSTOMER_NOTES',
+      psid, rowId: n.rowId, uid, name: sessionState.name || '',
+      expected, next, changedBy: identity.name,
+    }, (res) => {
+      const lastErr = chrome.runtime.lastError;
+      n.saving = false;
+      const here = sessionState.notes === n && getUserIdFromUrl() === uid;
+      if (!here) {
+        // Agent moved on mid-save: never render; just keep the stash honest.
+        const stash = noteDrafts.get(psid);
+        if (res?.ok && stash && stash.balance.trim() === res.saved.balance && stash.note.trim() === res.saved.note) {
+          noteDrafts.delete(psid);
+        }
+        return;
+      }
+      if (res?.ok) {
+        Object.assign(n, res.saved);
+        n.draft = null;
+        n.draftRestored = false;
+        n.flash = res.logged === false ? 'saved-nolog' : 'saved';
+        // Show "Saved ✓" a beat, then fold the editor back to the row. The
+        // token keeps an earlier save's timers off a newer save's flash.
+        const flashed = n;
+        const token = (n.flashToken || 0) + 1;
+        n.flashToken = token;
+        setTimeout(() => {
+          if (sessionState.notes === flashed && flashed.flashToken === token && flashed.flash && !isNoteDirty(flashed)) {
+            closeNoteEditor(false);
+          }
+        }, 900);
+        setTimeout(() => {
+          if (flashed.flashToken === token && flashed.flash) { flashed.flash = null; renderNoteBar(); }
+        }, res.logged === false ? 5000 : 2000);
+      } else if (res?.code === 'conflict') {
+        n.conflict = { ...res.current, fields: res.fields || ['balance', 'note'] };
+      } else {
+        n.saveError = res?.error || lastErr?.message || 'No response from the extension.';
+      }
+      renderNoteBar();
+      if (res?.ok && isNoteHistoryOpen()) openNoteHistory();
+    });
+  }
+
+  function resolveConflict(useTheirs) {
+    const n = sessionState.notes;
+    if (!n || !n.conflict) return;
+    const { fields, ...theirs } = n.conflict;
+    n.conflict = null;
+    Object.assign(n, theirs);
+    if (useTheirs) {
+      // Their value for the clashing field(s); my edit to any other field stays.
+      if (n.draft) for (const f of fields) n.draft[f] = theirs[f];
+      if (!isNoteDirty(n)) n.draft = null;
+      renderNoteBar();
+      return;
+    }
+    // Overwrite: their values are now the expected ones; resend mine.
+    if (!isNoteDirty(n)) { n.draft = null; renderNoteBar(); return; }
+    saveNotes({ expected: { balance: theirs.balance, note: theirs.note } });
+  }
+
+  // History: a centred modal on <body> (never clipped by Meta's header),
+  // over a dimmed page. Closes on ×, backdrop click or Esc; the editor behind
+  // it stays open. Rows are text nodes only.
+  const NOTE_HISTORY_ID = 'cim-nb-hmodal';
+
+  function isNoteHistoryOpen() {
+    const m = document.getElementById(NOTE_HISTORY_ID);
+    return !!m && !m.hidden;
+  }
+
+  function ensureHistoryModal() {
+    let m = document.getElementById(NOTE_HISTORY_ID);
+    if (m) return m;
+    m = document.createElement('div');
+    m.id = NOTE_HISTORY_ID;
+    m.hidden = true;
+    m.innerHTML = `
+      <div class="cim-nb-hcard" role="dialog" aria-modal="true" aria-labelledby="cim-nb-htitle">
+        <div class="cim-nb-hhead">
+          <div>
+            <div class="cim-nb-htitle" id="cim-nb-htitle">Change history</div>
+            <div class="cim-nb-hsub"></div>
+          </div>
+          <button type="button" class="cim-nb-hclose" aria-label="Close">×</button>
+        </div>
+        <div class="cim-nb-history"></div>
+      </div>`;
+    m.addEventListener('mousedown', (e) => { if (e.target === m) closeNoteHistory(); });
+    m.querySelector('.cim-nb-hclose').addEventListener('click', () => closeNoteHistory());
+    m.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Escape') { e.preventDefault(); closeNoteHistory(); }
+    });
+    document.body.appendChild(m);
+    return m;
+  }
+
+  function openNoteHistory() {
+    const b = document.getElementById(NOTE_BAR_ID);
+    const n = sessionState.notes;
+    if (!b || !n || n.status !== 'ready') return;
+    const m = ensureHistoryModal();
+    const box = m.querySelector('.cim-nb-history');
+    const btn = b.querySelector('.cim-nb-history-btn');
+    const wasOpen = !m.hidden;
+    m.hidden = false;
+    btn.setAttribute('aria-expanded', 'true');
+    btn.classList.add('cim-nb-history-btn--open');
+    setText(m.querySelector('.cim-nb-hsub'), `${sessionState.name || ''} · PSID …${n.psid.slice(-4)}`);
+    if (!wasOpen) {
+      box.textContent = 'Loading history…';
+      m.querySelector('.cim-nb-hclose').focus();
+    }
+    const psid = n.psid;
+    chrome.runtime.sendMessage({ type: 'GET_CUSTOMER_NOTE_LOG', psid }, (res) => {
+      void chrome.runtime.lastError;
+      if (sessionState.notes?.psid !== psid || m.hidden) return;
+      box.innerHTML = '';
+      if (!res?.ok) {
+        box.textContent = 'Could not load history — ' + (res?.error || 'no response');
+        return;
+      }
+      if (!res.rows.length) {
+        box.textContent = 'No changes recorded yet.';
+        return;
+      }
+      for (const r of res.rows) {
+        const row = document.createElement('div');
+        row.className = 'cim-nb-hrow';
+        const meta = document.createElement('div');
+        meta.className = 'cim-nb-hmeta';
+        const field = document.createElement('span');
+        field.className = 'cim-nb-hfield cim-nb-hfield--' + String(r.field).toLowerCase();
+        field.textContent = r.field;
+        meta.append(field, `${formatNoteTime(r.changedAt)} · ${r.changedBy}`);
+        // Before / After on their own labelled lines, so multi-line notes
+        // read cleanly.
+        const change = document.createElement('div');
+        change.className = 'cim-nb-hchange';
+        const line = (label, cls, text) => {
+          const k = document.createElement('span');
+          k.className = 'cim-nb-hk';
+          k.textContent = label;
+          const v = document.createElement('span');
+          v.className = cls;
+          v.textContent = text;
+          change.append(k, v);
+        };
+        line('Before', 'cim-nb-hold', r.oldValue || '(empty)');
+        line('After', 'cim-nb-hnew', r.newValue || '(cleared)');
+        row.append(meta, change);
+        box.appendChild(row);
+      }
+    });
+  }
+
+  function closeNoteHistory() {
+    const m = document.getElementById(NOTE_HISTORY_ID);
+    if (!m || m.hidden) return;
+    m.hidden = true;
+    m.querySelector('.cim-nb-history').textContent = '';
+    const btn = document.querySelector('#' + NOTE_BAR_ID + ' .cim-nb-history-btn');
+    if (btn) {
+      btn.setAttribute('aria-expanded', 'false');
+      btn.classList.remove('cim-nb-history-btn--open');
+      if (btn.offsetParent) btn.focus();
+    }
+  }
+
+  // Status line spec: { kind, text, spin?, actions?: [{label, run}] }.
+  function noteStatusSpec(n, identity) {
+    const view = sessionState.view?.type;
+    if (!sessionState.psid) {
+      if (['candidates', 'no-match', 'searching', 'linking'].includes(view)) {
+        return { kind: 'muted', text: 'Link this customer first' };
+      }
+      return { kind: 'muted', text: 'Loading customer…', spin: true };
+    }
+    if (!n || n.status === 'loading') return { kind: 'muted', text: 'Loading balance and note…', spin: true };
+    if (n.status === 'error') {
+      return { kind: 'error', text: 'Could not load — ' + n.loadError, actions: [{ label: 'Retry', run: () => startNotes(sessionState.uid, n.psid) }] };
+    }
+    if (!identity) {
+      return {
+        kind: 'muted', text: 'Set your name in extension options to edit',
+        actions: [{ label: 'Open options', run: () => chrome.runtime.sendMessage({ type: 'OPEN_OPTIONS_PAGE' }) }],
+      };
+    }
+    if (n.saving) return { kind: 'muted', text: 'Saving…', spin: true };
+    if (n.conflict) {
+      const c = n.conflict;
+      const when = formatNoteTime(c.updatedAt);
+      const what = c.fields.map((f) => (f === 'balance' ? 'Balance' : 'Note')).join(' and ');
+      const theirVals = c.fields.map((f) => `"${c[f] || '(empty)'}"`).join(' / ');
+      return {
+        kind: 'error',
+        text: `${what} changed by ${c.updatedBy || 'someone'}${when ? ' at ' + when : ''} while you were editing — theirs: ${theirVals}`,
+        actions: [
+          { label: 'Load theirs', run: () => resolveConflict(true) },
+          { label: 'Overwrite', run: () => resolveConflict(false) },
+        ],
+      };
+    }
+    if (n.saveError) {
+      return { kind: 'error', text: 'Not saved — ' + n.saveError, actions: [{ label: 'Retry', run: () => saveNotes() }] };
+    }
+    if (n.flash === 'saved') return { kind: 'ok', text: 'Saved ✓' };
+    if (n.flash === 'saved-nolog') return { kind: 'warn', text: 'Saved ✓ (history not recorded)' };
+    if (isNoteDirty(n)) {
+      return {
+        kind: 'warn', dot: true,
+        text: n.draftRestored ? 'Unsaved draft from earlier' : 'Unsaved changes',
+      };
+    }
+    if (n.updatedBy) {
+      const verb = n.balance || n.note ? 'Saved' : 'Cleared';
+      const when = formatNoteTime(n.updatedAt);
+      return { kind: 'muted', text: `${verb} by ${n.updatedBy}${when ? ' · ' + when : ''}` };
+    }
+    return { kind: 'muted', text: 'Never set' };
+  }
+
+  // The row's one-word version of the status (the editor has the full line).
+  function noteCompactStatus(n, identity) {
+    if (!sessionState.psid) {
+      if (['candidates', 'no-match', 'searching', 'linking'].includes(sessionState.view?.type)) {
+        return { kind: 'muted', text: 'Link this customer first' };
+      }
+      return { kind: 'muted', text: 'Loading…', spin: true };
+    }
+    if (!n || n.status === 'loading') return { kind: 'muted', text: 'Loading…', spin: true };
+    if (n.status === 'error') return { kind: 'error', text: 'Couldn’t load · click to retry' };
+    if (n.saving) return { kind: 'muted', text: 'Saving…', spin: true };
+    if (n.conflict) return { kind: 'error', text: 'Conflict — open to resolve' };
+    if (n.saveError) return { kind: 'error', text: 'Not saved — open to retry' };
+    if (n.flash === 'saved') return { kind: 'ok', text: 'Saved ✓' };
+    if (n.flash === 'saved-nolog') return { kind: 'warn', text: 'Saved · history not recorded' };
+    if (isNoteDirty(n)) return { kind: 'warn', text: 'Unsaved', dot: true };
+    if (!identity) return { kind: 'muted', text: 'Read-only' };
+    if (n.updatedBy && (n.balance || n.note)) {
+      const when = formatNoteTime(n.updatedAt);
+      return { kind: 'muted', text: `${n.updatedBy.split(/\s+/)[0]}${when ? ' · ' + when : ''}` };
+    }
+    return { kind: 'muted', text: '' };
+  }
+
+  function renderCompactStatus(b, spec) {
+    const el = b.querySelector('.cim-nb-cstatus');
+    const key = JSON.stringify([spec.kind, spec.text, !!spec.spin, !!spec.dot]);
+    if (el._key === key) return;
+    el._key = key;
+    el.className = 'cim-nb-cstatus cim-nb-status--' + spec.kind;
+    el.innerHTML = '';
+    if (spec.spin) el.appendChild(Object.assign(document.createElement('span'), { className: 'cim-nb-spin' }));
+    if (spec.dot) el.appendChild(Object.assign(document.createElement('span'), { className: 'cim-nb-dot' }));
+    if (spec.text) el.appendChild(Object.assign(document.createElement('span'), { textContent: spec.text }));
+  }
+
+  function renderNoteStatus(b, spec) {
+    const key = JSON.stringify([spec.kind, spec.text, !!spec.spin, !!spec.dot, (spec.actions || []).map((a) => a.label)]);
+    const el = b.querySelector('.cim-nb-status');
+    el._actions = spec.actions || [];
+    if (el._key === key) return;
+    el._key = key;
+    el.className = 'cim-nb-status cim-nb-status--' + spec.kind;
+    el.innerHTML = '';
+    if (spec.spin) el.appendChild(Object.assign(document.createElement('span'), { className: 'cim-nb-spin' }));
+    if (spec.dot) el.appendChild(Object.assign(document.createElement('span'), { className: 'cim-nb-dot' }));
+    el.appendChild(Object.assign(document.createElement('span'), { className: 'cim-nb-status-text', textContent: spec.text }));
+    (spec.actions || []).forEach((a, i) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'cim-nb-link';
+      btn.textContent = a.label;
+      btn.addEventListener('click', () => el._actions[i]?.run());
+      el.appendChild(btn);
+    });
+  }
+
+  // Meta's inbox area (header row + thread list + chat): the outermost
+  // ancestor of the thread list that carries an inline min-width (Meta sets
+  // min-width: 800px on it). Found from the thread list's data-pagelet, which
+  // is stable, not from Meta's generated class names.
+  let pageFlagEl = null;
+  const PAGE_TONES = ['cim-page-green', 'cim-page-red'];
+  function findPageFlagTarget() {
+    const start = document.querySelector('[data-pagelet="GenericThreadListView"]');
+    if (!start) return null;
+    let best = null;
+    for (let node = start.parentElement, i = 0; node && node !== document.body && i < 30; node = node.parentElement, i++) {
+      if (node.style && node.style.minWidth) best = node;
+    }
+    return best;
+  }
+
+  function setPageTone(tone) {
+    const cls = tone ? 'cim-page-' + tone : null;
+    if (cls && !(pageFlagEl && pageFlagEl.isConnected && pageFlagEl.classList.contains(cls))) {
+      const target = findPageFlagTarget();
+      if (pageFlagEl && pageFlagEl !== target) pageFlagEl.classList.remove(...PAGE_TONES);
+      pageFlagEl = target;
+    }
+    if (pageFlagEl) PAGE_TONES.forEach((c) => pageFlagEl.classList.toggle(c, c === cls));
+    if (!cls) pageFlagEl = null;
+  }
+
+  // The four names for the open chat: Meta's own (read from the page), the
+  // two we DISPLAY (read back from our bar and panel, not from our state, so
+  // a stale label is caught too) and Baserow's stored Name for the linked PSID
+  // (only known once the orders view has loaded; '' = unknown or empty).
+  function customerNames() {
+    const panel = document.getElementById(PANEL_ID);
+    const panelText = panel
+      ? (panel.querySelector('.cim-name-link')?.textContent || (panel.querySelector('.cim-name')?.textContent || '').replace(/^Name:\s*/, ''))
+      : '';
+    const view = sessionState.view;
+    return {
+      meta: lastDomName,
+      bar: document.querySelector('#' + NOTE_BAR_ID + ' .cim-nb-name')?.textContent || '',
+      panel: panelText,
+      baserow: view && view.type === 'orders' && view.psid === sessionState.psid ? (view.data?.baserowName || '') : '',
+      baserowKnown: !!(view && view.type === 'orders' && view.psid === sessionState.psid),
+    };
+  }
+
+  // Inbox background (the user's rules):
+  //   switching / not loaded  → normal
+  //   any known name differs  → red (even with no balance/note — it's a
+  //                             wrong-customer warning)
+  //   all 4 match + balance/note saved → green
+  //   otherwise               → normal
+  function pageTone(names, hasNotes) {
+    if (customerSwitching || !names.meta || !sessionState.name) return null;
+    const shown = [names.bar, names.panel].filter((x) => x && !/detecting/i.test(x));
+    if (shown.some((x) => !sameName(x, names.meta))) return 'red';
+    if (names.baserowKnown && names.baserow && !sameName(names.baserow, names.meta)) return 'red';
+    const allFour = shown.length === 2 && names.baserowKnown && !!names.baserow;
+    if (allFour && hasNotes) return 'green';
+    return null;
+  }
+
+  // Panel line under the name: only when Baserow's name differs (or is
+  // blank), so a wrong link is visible, not just coloured.
+  function renderNameCheck(panel, names) {
+    const el = panel && panel.querySelector('.cim-name-check');
+    if (!el) return;
+    let text = '';
+    let kind = '';
+    if (!customerSwitching && names.baserowKnown && names.meta) {
+      if (!names.baserow) { text = 'Baserow has no name for this PSID'; kind = 'muted'; }
+      else if (!sameName(names.baserow, names.meta)) { text = '⚠ Baserow name: ' + names.baserow; kind = 'warn'; }
+    }
+    el.hidden = !text;
+    setText(el, text);
+    el.classList.toggle('cim-name-check--warn', kind === 'warn');
+  }
+
+  function renderNoteBar() {
+    const panel = document.getElementById(PANEL_ID);
+    const b = document.getElementById(NOTE_BAR_ID);
+    const n = sessionState.notes && sessionState.notes.psid === sessionState.psid ? sessionState.notes : null;
+    const ready = !!n && n.status === 'ready';
+    const flagged = ready && !customerSwitching && !!(n.balance || n.note);
+
+    // Our panel keeps its look; Meta's inbox area gets the name-check tone.
+    if (panel) panel.classList.toggle('cim-switching', customerSwitching);
+    const names = customerNames();
+    renderNameCheck(panel, names);
+    setPageTone(pageTone(names, ready && !!(n.balance || n.note)));
+    if (!b) return;
+    b.classList.toggle('cim-note-bar--flag', flagged);
+    b.classList.toggle('cim-switching', customerSwitching);
+    const coverText = nameConflict
+      ? 'Meta shows a different customer name — reload the page if this stays'
+      : 'Switching customer…';
+    setText(b.querySelector('.cim-switch-cover-text'), coverText);
+    if (panel) setText(panel.querySelector('.cim-switch-cover-text'), coverText);
+
+    if (customerSwitching && isNoteEditorOpen()) closeNoteEditor(false);
+    const open = isNoteEditorOpen();
+
+    const name = sessionState.name || 'Detecting customer…';
+    setText(b.querySelector('.cim-nb-name'), name);
+    setText(b.querySelector('.cim-nb-ename'), name);
+    const psidEl = b.querySelector('.cim-nb-psid');
+    setText(psidEl, sessionState.psid ? 'PSID …' + sessionState.psid.slice(-4) : 'PSID not linked');
+    psidEl.disabled = !sessionState.psid;
+    psidEl.setAttribute('aria-label', sessionState.psid ? 'Copy PSID ' + sessionState.psid : 'PSID not linked');
+
+    const identity = getStaffIdentity();
+
+    // Row: what is STORED (the flag follows it too); a draft shows as "Unsaved".
+    const compact = b.querySelector('.cim-nb-compact');
+    const stored = ready ? { balance: n.balance, note: n.note } : { balance: '', note: '' };
+    const oneLine = (t) => t.replace(/\s*\n+\s*/g, '  ·  ');
+    setText(b.querySelector('.cim-nb-v-balance'), stored.balance);
+    setText(b.querySelector('.cim-nb-v-note'), oneLine(stored.note));
+    b.querySelector('.cim-nb-seg--balance').hidden = !stored.balance;
+    b.querySelector('.cim-nb-seg--note').hidden = !stored.note;
+    b.querySelector('.cim-nb-empty').hidden = !ready || !!(stored.balance || stored.note);
+    compact.classList.toggle('cim-nb-compact--idle', !ready);
+    compact.tabIndex = ready || n?.status === 'error' ? 0 : -1;
+    compact.setAttribute('aria-disabled', ready || n?.status === 'error' ? 'false' : 'true');
+    renderCompactStatus(b, noteCompactStatus(n, identity));
+
+    // Editor.
+    const editable = ready && !customerSwitching && !n.saving && !!identity;
+    const balanceEl = b.querySelector('.cim-nb-balance');
+    const noteEl = b.querySelector('.cim-nb-note');
+    balanceEl.disabled = !editable;
+    noteEl.disabled = !editable;
+    const vals = ready ? noteValues(n) : { balance: '', note: '' };
+    if (balanceEl.value !== vals.balance) balanceEl.value = vals.balance;
+    if (noteEl.value !== vals.note) { noteEl.value = vals.note; if (open) autoGrowNote(noteEl); }
+
+    const dirty = isNoteDirty(n);
+    b.classList.toggle('cim-note-bar--dirty', dirty);
+    b.querySelector('.cim-nb-save').disabled = !(editable && dirty);
+    b.querySelector('.cim-nb-history-btn').disabled = !ready;
+    if (!ready && isNoteHistoryOpen()) closeNoteHistory();
+    if (!ready && open) closeNoteEditor(false);
+
+    renderNoteStatus(b, noteStatusSpec(n, identity));
+
+    const me = b.querySelector('.cim-nb-me');
+    setText(me, identity ? `You: ${identity.name}${identity.source === 'options' ? ' (typed)' : ''}` : '');
+    me.classList.toggle('cim-nb-me--typed', identity?.source === 'options');
+    b.querySelector('.cim-nb-preview').hidden = !(ready && n.preview);
+  }
+
+  // Goal 4 of the spec: never show one customer's data against another
+  // customer's chat. In sync ⇔ URL uid, detected name and the chat's name agree.
+  // A missing DOM name (sidebar redrawing) keeps the previous verdict.
+  function updateCustomerSync(panelPresent) {
+    const uid = getUserIdFromUrl();
+    let switching;
+    if (!panelPresent || !uid || uid !== sessionState.uid || !sessionState.name) {
+      switching = true;
+      nameMismatchSince = 0;
+    } else {
+      const domName = getCustomerNameFromDom();
+      if (domName) lastDomName = domName;
+      if (!domName) {
+        switching = customerSwitching;
+      } else if (sameName(domName, sessionState.name)) {
+        switching = false;
+        nameMismatchSince = 0;
+        nameConflict = false;
+      } else if (!nameMismatchSince) {
+        nameMismatchSince = Date.now();
+        setTimeout(scheduleCheck, NOTE_NAME_FIX_MS + 100);
+        switching = true;
+      } else if (Date.now() - nameMismatchSince >= NOTE_NAME_FIX_MS &&
+                 previousCustomer && sameName(sessionState.name, previousCustomer.name)) {
+        // The only safe correction: what we stored is the PREVIOUS customer's
+        // name (a stale read during a slow switch) and Meta now shows the new
+        // one. Data is keyed by UID, so only the label was wrong.
+        nameMismatchSince = 0;
+        correctCustomerName(uid, domName);
+        switching = false;
+      } else {
+        // Any other disagreement (Meta changed the chat before the URL, a live
+        // rename, …) is never "fixed" by relabelling: the cover stays up, and
+        // after NAME_CONFLICT_MS it says why.
+        switching = true;
+        const waited = Date.now() - nameMismatchSince;
+        if (waited >= NAME_CONFLICT_MS) nameConflict = true;
+        else setTimeout(scheduleCheck, NAME_CONFLICT_MS - waited + 100);
+      }
+    }
+    if (!switching) nameConflict = false;
+    customerSwitching = switching;
+    renderNoteBar();
+  }
+
+  // Name comparison: Unicode-normalised, whitespace-collapsed, case-blind —
+  // "Tan  Mei Ling" and "tan mei ling" are the same person label.
+  function normName(s) {
+    return String(s || '').normalize('NFKC').replace(/\s+/g, ' ').trim().toLowerCase();
+  }
+
+  function sameName(a, b) {
+    return !!a && !!b && normName(a) === normName(b);
+  }
+
+  // Meta finished loading and shows a different name for the same UID: our
+  // first scrape read the previous customer. PSID-linked data is keyed by UID
+  // and stays; a name-search result is redone with the right name.
+  function correctCustomerName(uid, domName) {
+    sessionState.name = domName;
+    const panel = document.getElementById(PANEL_ID);
+    if (!panel) return;
+    const link = panel.querySelector('.cim-name-link');
+    if (link) setText(link, domName);
+    else setText(panel.querySelector('.cim-name'), `Name: ${domName}`);
+    if (!sessionState.psid && ['candidates', 'no-match', 'searching', 'error'].includes(sessionState.view?.type)) {
+      sessionState.resolved = false;
+      proceedWithLookup(uid, domName, panel);
     }
   }
 
@@ -5918,7 +7115,16 @@
 
     switch (view.type) {
       case 'loading': {
-        body.textContent = 'Loading...';
+        const sk = document.createElement('div');
+        sk.className = 'cim-skeleton';
+        sk.setAttribute('aria-label', 'Loading customer');
+        ['70%', '45%', '85%', '60%', '90%', '50%'].forEach((w) => {
+          const line = document.createElement('div');
+          line.className = 'cim-skeleton-line';
+          line.style.width = w;
+          sk.appendChild(line);
+        });
+        body.appendChild(sk);
         break;
       }
       case 'searching': {
@@ -6152,6 +7358,9 @@
 
     chrome.runtime.sendMessage({ type: 'SEARCH_MANYCHAT_BY_NAME', name }, (response) => {
       if (getUserIdFromUrl() !== uid) return;
+      // The name was corrected (correctCustomerName) while this search ran —
+      // a newer search with the right name owns the panel now.
+      if (sessionState.name !== name) return;
       const livePanel = document.getElementById(PANEL_ID);
       if (!livePanel) return;
 
@@ -6393,6 +7602,16 @@
   }
 
   function check() {
+    checkPanel();
+    tightenSidebar();
+    markChatHeader();
+    compactMetaHeaders();
+    const uid = location.href.includes(ALLOWED_ASSET_ID) ? getUserIdFromUrl() : null;
+    ensureNoteBar(!!uid);
+    if (uid) updateCustomerSync(!!document.getElementById(PANEL_ID));
+  }
+
+  function checkPanel() {
     if (!location.href.includes(ALLOWED_ASSET_ID)) {
       document.getElementById(PANEL_ID)?.remove();
       return;
@@ -6406,7 +7625,12 @@
     if (!panel) return;
 
     if (uid !== sessionState.uid) {
-      sessionState = { uid, name: null, resolved: false, view: null, cartHasItems: null, expiredAvailable: null, myrSum: null, sgdSum: null, manychatInfo: null };
+      stashNoteDraft();
+      closeNoteEditor(false);
+      previousCustomer = { name: sessionState.name, at: Date.now() };
+      lastDomName = '';
+      nameConflict = false;
+      sessionState = { uid, name: null, resolved: false, view: null, cartHasItems: null, expiredAvailable: null, myrSum: null, sgdSum: null, manychatInfo: null, psid: null, notes: null };
       aiPreviousText = '';
       panel.querySelector('.cim-uid').textContent = `UID: ${uid}`;
       panel.querySelector('.cim-name').textContent = 'Name: detecting...';
@@ -6434,10 +7658,152 @@
     if (sessionState.name == null) {
       const name = getCustomerNameFromDom();
       if (!name) return;
+      // Meta can switch the URL before the chat: the name still on screen is
+      // the previous customer's. Wait for it to change; after
+      // STALE_NAME_WAIT_MS accept it (two customers can share a name).
+      if (previousCustomer && sameName(name, previousCustomer.name) && Date.now() - previousCustomer.at < STALE_NAME_WAIT_MS) {
+        setTimeout(scheduleCheck, 400);
+        return;
+      }
       sessionState.name = name;
       panel.querySelector('.cim-name').textContent = `Name: ${name}`;
       proceedWithLookup(uid, name, panel);
     }
+  }
+
+  // ── Compact right sidebar ────────────────────────────────────────────────
+  // Meta pads the profile header (avatar + "View profile") and the section our
+  // panel sits in by 16px/12px, with a divider between them. Found by
+  // measurement, not Meta's classes: from each anchor, the nearest ancestor
+  // with ≥12px vertical padding that doesn't also contain the other anchor.
+  // The divider is a border on either branch, or a ≤3px element between the
+  // two branches. Marked with classes; styles.css does the rest.
+  let sidebarMarks = [];
+  let sidebarScanAt = 0;
+  function findViewProfileLeaf() {
+    for (const el of document.querySelectorAll('a, span, div')) {
+      if (el.children.length === 0 && el.textContent.trim() === 'View profile' && !el.closest('#' + PANEL_ID)) return el;
+    }
+    return null;
+  }
+
+  function paddedAncestor(start, other) {
+    for (let el = start.parentElement, i = 0; el && el !== document.body && i < 5; el = el.parentElement, i++) {
+      if (other && el.contains(other)) return null;
+      const cs = getComputedStyle(el);
+      if (parseFloat(cs.paddingTop) >= 12 || parseFloat(cs.paddingBottom) >= 12) return el;
+    }
+    return null;
+  }
+
+  function markSidebar(el, cls) {
+    if (!el.classList.contains(cls)) el.classList.add(cls);
+    sidebarMarks.push([el, cls]);
+  }
+
+  function tightenSidebar() {
+    const panel = document.getElementById(PANEL_ID);
+    if (!panel || panel.classList.contains('cim-floating')) return;
+    if (sidebarMarks.length && sidebarMarks.every(([el, cls]) => el.isConnected && el.classList.contains(cls))) return;
+    if (Date.now() - sidebarScanAt < 1000) return;
+    sidebarScanAt = Date.now();
+    for (const [el, cls] of sidebarMarks) el.classList.remove(cls);
+    sidebarMarks = [];
+
+    const profile = findViewProfileLeaf();
+    const panelSection = paddedAncestor(panel, profile);
+    if (panelSection) markSidebar(panelSection, 'cim-sb-tight');
+    if (!profile) return;
+    const profileSection = paddedAncestor(profile, panel);
+    if (profileSection) {
+      markSidebar(profileSection, 'cim-sb-tight');
+      markSidebar(profileSection, 'cim-sb-profile');
+    }
+
+    // Divider between the two branches.
+    let common = profile.parentElement;
+    while (common && !common.contains(panel)) common = common.parentElement;
+    if (!common) return;
+    const branchOf = (node) => { let b = node; while (b.parentElement !== common) b = b.parentElement; return b; };
+    const pBranch = branchOf(profile);
+    const sBranch = branchOf(panel);
+    // Profile header block: every container from "View profile" up to the
+    // block's edge hugs its content vertically (styles.css, [style*=
+    // "--cim-hug"]): 4px top/bottom padding, no vertical margins, no forced
+    // height. Inline custom property, not a class — survives React rewriting
+    // className. Horizontal spacing and fonts are left alone.
+    for (let el = profile.parentElement; el; el = el.parentElement) {
+      const prop = el === pBranch ? '--cim-hug-edge' : '--cim-hug';
+      if (!el.style.getPropertyValue(prop)) el.style.setProperty(prop, '1');
+      if (el === pBranch) break;
+    }
+    for (let el = profile; el && el !== common; el = el.parentElement) {
+      if (el !== profile && parseFloat(getComputedStyle(el).borderBottomWidth) > 0) markSidebar(el, 'cim-sb-no-bottom');
+    }
+    for (let el = panel.parentElement; el && el !== common; el = el.parentElement) {
+      if (parseFloat(getComputedStyle(el).borderTopWidth) > 0) markSidebar(el, 'cim-sb-no-top');
+    }
+    const kids = Array.from(common.children);
+    for (let i = kids.indexOf(pBranch) + 1; i < kids.indexOf(sBranch); i++) {
+      if (kids[i].getBoundingClientRect().height <= 3) markSidebar(kids[i], 'cim-sb-hide');
+    }
+  }
+
+  // Chat header (avatar, name, "Assign this conversation", action buttons):
+  // from the assignment line, the nearest ancestor holding ≥3 buttons — and
+  // no taller than 120px, so the conversation itself is never matched.
+  let chatHeaderEl = null;
+  let chatHeaderScanAt = 0;
+  function markChatHeader() {
+    if (chatHeaderEl && chatHeaderEl.isConnected && chatHeaderEl.classList.contains('cim-chat-head')) return;
+    if (Date.now() - chatHeaderScanAt < 1000) return;
+    chatHeaderScanAt = Date.now();
+    chatHeaderEl = null;
+    for (const leaf of document.querySelectorAll('span, div')) {
+      if (leaf.children.length !== 0) continue;
+      const t = leaf.textContent.trim();
+      if (t !== 'Assign this conversation' && !t.startsWith('Assigned to ')) continue;
+      if (leaf.closest('#' + PANEL_ID + ', #' + NOTE_BAR_ID)) continue;
+      for (let el = leaf.parentElement, i = 0; el && el !== document.body && i < 10; el = el.parentElement, i++) {
+        if (el.getBoundingClientRect().height > 120) break;
+        if (el.querySelectorAll('[role="button"]').length >= 3) {
+          // Take the outermost wrapper that is still just the header strip —
+          // Meta's big padding usually sits there, not on the inner row.
+          while (el.parentElement && el.parentElement !== document.body &&
+                 el.parentElement.getBoundingClientRect().height <= 120) el = el.parentElement;
+          chatHeaderEl = el;
+          el.classList.add('cim-chat-head');
+          return;
+        }
+      }
+    }
+  }
+
+  // Compact Meta headers: halve every padding above 4px inside the rarely
+  // used areas (profile header, channel tabs, chat header). Fonts, icons and
+  // buttons keep Meta's sizes. Each element's own measured padding is halved
+  // into an inline --cim-p (styles.css applies it under html.cim-compact-meta
+  // to [style*="--cim-p"]). Deliberately NOT a class: React rewrites className
+  // when these buttons re-render on hover, which dropped a class and made
+  // them jump back to full padding; an inline custom property survives that.
+  // The property is also the "done" marker, so a node is never halved twice.
+  const PAD_FACTOR = 0.5;
+  function tightenPadding(root) {
+    if (!root) return;
+    const els = [root, ...root.querySelectorAll('*')].slice(0, 400);
+    for (const el of els) {
+      if (!(el instanceof HTMLElement) || el.style.getPropertyValue('--cim-p') || el.classList.contains('cim-sb-tight')) continue;
+      const cs = getComputedStyle(el);
+      const p = [cs.paddingTop, cs.paddingRight, cs.paddingBottom, cs.paddingLeft].map((x) => parseFloat(x) || 0);
+      if (Math.max(...p) <= 4) continue;
+      const v = p.map((x) => (x <= 4 ? x : Math.max(4, Math.round(x * PAD_FACTOR))));
+      el.style.setProperty('--cim-p', v.map((x) => x + 'px').join(' '));
+    }
+  }
+
+  function compactMetaHeaders() {
+    if (!document.documentElement.classList.contains('cim-compact-meta')) return;
+    document.querySelectorAll('.cim-sb-profile, span[data-surface$="/channel_selector"] > div, .cim-chat-head').forEach(tightenPadding);
   }
 
   function syncCloseBtnVisibility() {
@@ -6504,6 +7870,11 @@
 
   const observer = new MutationObserver(scheduleCheck);
   observer.observe(document.documentElement, { childList: true, subtree: true });
+  // Meta's SPA can change selected_item_id with no DOM change yet; catch it so
+  // the "Switching customer…" cover goes up at once (spec goal 4).
+  setInterval(() => {
+    if (getUserIdFromUrl() !== sessionState.uid) scheduleCheck();
+  }, 500);
 
   initCartSessionCheck();
   scheduleCheck();

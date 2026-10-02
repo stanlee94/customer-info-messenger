@@ -1,0 +1,142 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Fake Business Suite inbox</title>
+<script type="application/json">{"require":[["ServerJS",null,null,[{"define":[["CurrentUserInitialData",[],{"ACCOUNT_ID":"100001","USER_ID":"100001","NAME":"Angel Chok","SHORT_NAME":"Angel"},270]]}]]]}</script>
+<style>
+  body { margin: 0; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; background: #f0f2f5; }
+  .app { display: flex; height: 100vh; }
+  .nav { width: 64px; background: #fff; border-right: 1px solid #ddd; }
+  .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .topbar { display: flex; align-items: center; border-bottom: 1px solid #ddd; min-height: 60px; }
+  .hdr { padding: 10px 16px; }
+  .hdr .t { font-size: 20px; font-weight: 700; }
+  .hdr .s { font-size: 13px; color: #65676b; }
+  .cols { flex: 1; display: flex; min-height: 0; }
+  .list { width: 300px; background: #fff; border-right: 1px solid #ddd; }
+  .list a { display: block; padding: 12px; border-bottom: 1px solid #eee; color: #050505; text-decoration: none; }
+  .chat { flex: 1; background: #fff; display: flex; flex-direction: column; min-width: 0; }
+  .chathead { padding: 12px; border-bottom: 1px solid #eee; }
+  .msgs { flex: 1; padding: 16px; color: #65676b; }
+  .side { width: 330px; background: #fff; border-left: 1px solid #ddd; overflow-y: auto; }
+  .side .prof { padding: 16px 12px; }
+  .side .avrow { display:flex; gap:12px; align-items:center; } .side .pav { width:48px; height:48px; border-radius:50%; background:#c7ccd3; }
+  .side .divider { height:1px; background:#ddd; }
+  .side .sec.mine { padding: 16px 12px; }
+  .side .sec { padding: 8px 16px; border-top: 1px solid #eee; }
+  .mb { display:inline-flex; align-items:center; height:36px; padding:0 12px; border:1px solid #ccd0d5; border-radius:6px; background:#fff; cursor:pointer; font-size:15px; font-weight:600; justify-content:center; }
+  .fx { display:flex; align-items:center; justify-content:center; gap:8px; }
+  .vh { font-size:17px; position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+  .sep { width:1px; height:28px; background:#ddd; margin:0 4px; }
+  .lb { position:fixed; background:#fff; border:1px solid #ccc; border-radius:8px; box-shadow:0 4px 12px rgba(0,0,0,.2); z-index:2147483647; }
+  .lb div { padding:8px 16px; cursor:pointer; }
+  .tl { display:flex; flex-direction:column; height:100%; }
+  .tlh { display:flex; gap:12px; padding:12px 16px 6px; } .srch { flex:1; border:1px solid #ccd0d5; border-radius:8px; padding:10px 12px; font-size:17px; color:#65676b; } .mbtn2 { border:1px solid #ccd0d5; border-radius:8px; padding:10px 16px; font-size:17px; font-weight:600; }
+  .chips { display:flex; gap:8px; padding:6px 16px 12px; } .chips span { background:#f0f2f5; border-radius:6px; padding:6px 10px; font-size:16px; white-space:nowrap; }
+  .row { display:flex !important; gap:16px; padding:16px !important; border:none !important; }
+  .av { flex:none; width:48px; height:48px; border-radius:50%; background:#c7ccd3; }
+  .rc { flex:1; min-width:0; } .rn { display:flex; justify-content:space-between; font-size:17px; } .rt { color:#65676b; font-size:15px; }
+  .rp { font-size:15px; color:#65676b; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin:4px 0 6px; }
+  .rtags { display:flex; gap:8px; overflow:hidden; } .rtags span { background:#f0f2f5; border-radius:6px; padding:4px 10px; font-size:15px; white-space:nowrap; }
+  .chan { padding: 12px 16px; background:#fff; border-bottom:1px solid #ddd; } .tab { padding:10px 16px; border-radius:8px; font-size:17px; } .tab.on { background:#e7f0fb; color:#1d64c2; font-weight:600; }
+  .chathead { display:flex; align-items:center; gap:12px; padding:14px 16px !important; } .cav { width:44px; height:44px; border-radius:50%; background:#c7ccd3; flex:none; }
+  .hb { padding:8px 12px; border:1px solid #ccd0d5; border-radius:6px; display:flex; align-items:center; justify-content:center; }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="nav"><div><span>Inbox</span></div></div>
+  <div class="main" style="min-width: 800px">
+    <div class="topbar">
+      <div class="hdr"><div><div class="t"><span>Inbox</span></div><div class="s"><span>Respond to messages from your customers across Messenger and Instagram</span></div></div></div>
+      <div class="tbwrap" style="display:flex;flex-grow:1;justify-content:flex-end;padding-right:12px">
+        <div class="tb" role="toolbar" style="display:flex;align-items:center;gap:8px">
+          <div><div><div class="mb" role="button" tabindex="0" data-k="ad"><span><div class="fx"><div class="fx"><div class="ico">📢</div><div>Create messaging ad</div></div></div></span></div></div></div>
+          <div><div><div class="mb" role="button" tabindex="0" data-k="automations"><span><div class="fx"><div class="vh" data-sscoverage-ignore="true">Automations</div><div class="fx" style="flex-grow:1;width:100%"><div class="ico">⚛</div></div></div></span></div></div></div>
+          <div><div class="mb" role="button" tabindex="0" data-k="insights"><span><div class="fx"><div class="vh" data-sscoverage-ignore="true">Messaging insights</div><div class="fx" style="flex-grow:1;width:100%"><div class="ico">▮</div></div></div></span></div></div>
+          <div class="sep"></div>
+          <div><span style="display:inline"><div><label class="vh" data-sscoverage-ignore="true">Availability status</label><div class="mb" role="combobox" tabindex="0" id="avail" aria-haspopup="listbox"><span class="fx"><span class="ico">🟢</span><span id="availText">Available</span> ▾</span></div></div></span></div>
+          <div><div class="mb" role="button" tabindex="0" data-k="settings"><span><div class="fx"><div class="vh" data-sscoverage-ignore="true">Message settings</div><div class="fx" style="flex-grow:1;width:100%"><div class="ico">⚙</div></div></div></span></div></div>
+          <div class="fx"><div class="fx"><div class="sep"></div></div><div><div class="mb" role="button" tabindex="0" data-k="todos"><span><div class="fx"><div class="ico">☑</div><div>To-dos</div></div></span></div></div></div>
+          <div><div role="button" tabindex="-1" data-k="avatar" style="position:relative;width:32px;height:32px"><svg width="32" height="32"><image width="32" height="32" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Ccircle cx='16' cy='16' r='16' fill='%2365a30d'/%3E%3C/svg%3E"/></svg><img alt="Facebook" width="12" height="12" style="position:absolute;right:-2px;bottom:-2px" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12'%3E%3Ccircle cx='6' cy='6' r='6' fill='%230866ff'/%3E%3C/svg%3E"></div></div>
+        </div>
+      </div>
+    </div>
+    <span data-surface-wrapper="1" data-surface="/bizweb:inbox/bizweb:INBOX/lib:bizweb_inbox:main_content/lib:bizweb_inbox:content_layout/channel_selector" style="display: inline;"><div class="chan" id="chanBox"><div><div role="tablist" style="display:flex;gap:8px"><a role="tab" class="tab on">All messages</a><a role="tab" class="tab">Messenger</a><a role="tab" class="tab">Instagram</a><a role="tab" class="tab">WhatsApp</a><a role="tab" class="tab">Facebook comments</a><a role="tab" class="tab">Instagram comments</a></div></div></div></span>
+    <div class="cols" style="min-width: 800px">
+      <div class="list" style="flex:0 0 400px;width:400px"><div data-pagelet="GenericThreadListView" class="tl"><div class="tlh"><div class="srch">🔍 Search</div><div class="mbtn2">Manage</div></div><div style="padding:6px 16px 12px"><span data-surface="/bizweb:inbox/bizweb:INBOX/lib:bizweb_inbox:main_content/lib:bizweb_inbox:content_layout/lib:inbox:thread_and_detail/lib:bizweb_inbox:quick_filters/lib:inbox:filters" style="display: contents;"><div style="display:flex;gap:8px;align-items:center"><div class="chips" style="display:flex;gap:8px;flex:none;padding:0"><span>Unread</span><span>Priority</span><span>Ad replies</span><span>Follow up</span></div><div><div aria-label="Filters" role="button" id="filtersBtn" style="width:32px;height:32px;display:flex;align-items:center;justify-content:center">⚙︎</div></div></div></span></div><a href="#" data-uid="111" data-name="Tan Mei Ling" class="row"><div class="av"></div><div class="rc"><div class="rn"><span>Tan Mei Ling</span><span class="rt">09:46</span></div><div class="rp">You: Hi dear, can keep in fridge for longer than a week?</div><div class="rtags"><span>新加坡</span></div></div></a><a href="#" data-uid="222" data-name="Lim Ah Kow" class="row"><div class="av"></div><div class="rc"><div class="rn"><span>Lim Ah Kow</span><span class="rt">09:45</span></div><div class="rp">Miau Miau No1292 LORONG 6F JALAN KUCHING TAMAN</div><div class="rtags"><span>东马</span><span>ad_id.123</span><span>+4 more</span></div></div></a><a href="#" data-uid="333" data-name="Unlinked Person" class="row"><div class="av"></div><div class="rc"><div class="rn"><span>Unlinked Person</span><span class="rt">09:38</span></div><div class="rp">You: 您好～温馨提醒您的订单今天已经在派送中</div><div class="rtags"><span>ad_id.456</span></div></div></a></div></div>
+      <div class="chat">
+        <div class="chathead" id="chatHead"><div class="cav"></div><div style="flex:1"><div id="chatName" style="-webkit-line-clamp:1">Tan Mei Ling</div><div>Assigned to Angel Chok</div></div><div role="button" class="hb">⚠</div><div role="button" class="hb">🗑</div><div role="button" class="hb">★</div><div role="button" class="hb">✉</div><div role="button" class="hb">✓</div></div>
+        <div class="msgs">…conversation…</div>
+      </div>
+      <div class="side">
+        <div class="profwrap" id="profBlock" style="padding:8px 0"><div class="prof"><div class="avrow" style="margin:8px 0;min-height:72px"><div class="pav"></div><div style="flex:1"><div><span id="sideName" style="font-size:20px;font-weight:700">Tan Mei Ling</span></div><div><a href="#">View profile</a></div></div><div role="button">···</div><div role="button">›</div></div></div></div>
+        <div class="divider"></div>
+        <div class="secwrap"><div class="sec mine"><div><span>Contact details</span></div><div>+60 12-345 6789</div></div></div>
+        <div class="sec"><div><span>Labels</span></div></div>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+  // Switch conversation like Meta: URL first, chat/sidebar name `delay` ms later.
+  window.switchTo = function (uid, name, delay) {
+    const u = new URL(location.href);
+    u.searchParams.set('selected_item_id', uid);
+    history.pushState({}, '', u);
+    const apply = () => {
+      document.getElementById('chatName').textContent = name;
+      const side = document.getElementById('sideName');
+      if (side) side.textContent = name;
+    };
+    if (delay) setTimeout(apply, delay); else apply();
+  };
+  // Meta-like handlers: delegated at the root (like React), plus a portal listbox for Available.
+  window.__clicks = [];
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest('[role="button"][data-k]');
+    if (b) window.__clicks.push(b.dataset.k);
+    const av = e.target.closest('#avail');
+    if (av) {
+      const r = av.getBoundingClientRect();
+      const lb = document.createElement('div');
+      lb.className = 'lb'; lb.setAttribute('role', 'listbox');
+      lb.style.left = r.left + 'px'; lb.style.top = (r.bottom + 4) + 'px';
+      ['Available', 'Away'].forEach((t) => { const o = document.createElement('div'); o.setAttribute('role', 'option'); o.textContent = t; lb.appendChild(o); });
+      document.body.appendChild(lb);
+    }
+    const opt = e.target.closest('[role="option"]');
+    if (opt) { document.getElementById('availText').textContent = opt.textContent; opt.parentElement.remove(); }
+  });
+  // Meta-like hover label: a separate fixed layer at body level (z-index 10).
+  const layer = document.createElement('div');
+  layer.id = 'tipLayer'; layer.style.cssText = 'position:fixed;inset:0 auto auto 0;z-index:10;';
+  document.body.appendChild(layer);
+  document.addEventListener('mouseover', (e) => {
+    const b = e.target.closest('[role="button"][data-k], [role="combobox"]');
+    layer.innerHTML = '';
+    if (!b) return;
+    setTimeout(() => {
+      const r = b.getBoundingClientRect();
+      const t = document.createElement('div');
+      t.setAttribute('role', 'tooltip'); t.id = 'metaTip';
+      t.textContent = 'Tip: ' + (b.dataset.k || 'availability');
+      t.style.cssText = 'position:fixed;background:#1c2b33;color:#fff;padding:6px 10px;border-radius:6px;font-size:13px;left:' + (r.left - 140) + 'px;top:' + (r.top + 4) + 'px';
+      layer.appendChild(t);
+    }, 100);
+  });
+  // React-like: hovering a tab / header button re-renders it and rewrites its
+  // className to React's own value (dropping anything another script added).
+  document.querySelectorAll('.tab, .hb').forEach((el) => {
+    const own = el.className;
+    el.addEventListener('mouseenter', () => { el.className = own + ' hovered'; });
+    el.addEventListener('mouseleave', () => { el.className = own; });
+  });
+  document.querySelectorAll('.list a').forEach((a) => a.addEventListener('click', (e) => {
+    e.preventDefault();
+    switchTo(a.dataset.uid, a.dataset.name, 0);
+  }));
+</script>
+</body>
+</html>

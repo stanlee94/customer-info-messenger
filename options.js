@@ -38,6 +38,74 @@ ec2LiveInput.addEventListener('change', () => {
   });
 });
 
+// Staff name — signs Balance / Note saves when the Facebook name can't be
+// read from the page. Saves on every edit (debounced), like the live toggle.
+const staffNameInput = document.getElementById('staffName');
+const staffStatus = document.getElementById('staffStatus');
+let staffTimer;
+chrome.storage.local.get('staffName', ({ staffName }) => {
+  if (staffName) staffNameInput.value = staffName;
+});
+staffNameInput.addEventListener('input', () => {
+  clearTimeout(staffTimer);
+  staffTimer = setTimeout(() => {
+    chrome.storage.local.set({ staffName: staffNameInput.value.trim() }, () => {
+      staffStatus.textContent = staffNameInput.value.trim() ? 'Name saved.' : 'Name cleared.';
+      setTimeout(() => { staffStatus.textContent = ''; }, 1500);
+    });
+  }, 400);
+});
+
+// Balance / Note preview backend controls (background.js noteMock*).
+const notesMockFailInput = document.getElementById('notesMockFail');
+const notesStatus = document.getElementById('notesStatus');
+function flashNotesStatus(text) {
+  notesStatus.textContent = text;
+  setTimeout(() => { notesStatus.textContent = ''; }, 2000);
+}
+chrome.storage.local.get('notesMockFail', ({ notesMockFail }) => {
+  notesMockFailInput.value = notesMockFail || '';
+});
+const threadListSizeInput = document.getElementById('threadListSize');
+chrome.storage.local.get('threadListSize', ({ threadListSize }) => {
+  threadListSizeInput.value = ['compact', 'extra', 'off'].includes(threadListSize) ? threadListSize : 'compact';
+});
+threadListSizeInput.addEventListener('change', () => {
+  chrome.storage.local.set({ threadListSize: threadListSizeInput.value }, () => {
+    flashNotesStatus('List size saved — open inbox tabs update by themselves.');
+  });
+});
+const compactMetaInput = document.getElementById('compactMetaHeaders');
+chrome.storage.local.get('compactMetaHeaders', ({ compactMetaHeaders }) => {
+  compactMetaInput.checked = compactMetaHeaders !== false;
+});
+compactMetaInput.addEventListener('change', () => {
+  chrome.storage.local.set({ compactMetaHeaders: compactMetaInput.checked }, () => {
+    flashNotesStatus(compactMetaInput.checked ? 'Compact headers on.' : 'Compact headers off.');
+  });
+});
+const noteBarPlacementInput = document.getElementById('noteBarPlacement');
+chrome.storage.local.get('noteBarPlacement', ({ noteBarPlacement }) => {
+  noteBarPlacementInput.value = noteBarPlacement === 'panel' ? 'panel' : 'header';
+});
+noteBarPlacementInput.addEventListener('change', () => {
+  chrome.storage.local.set({ noteBarPlacement: noteBarPlacementInput.value }, () => {
+    flashNotesStatus('Placement saved — open inbox tabs update by themselves.');
+  });
+});
+notesMockFailInput.addEventListener('change', () => {
+  chrome.storage.local.set({ notesMockFail: notesMockFailInput.value }, () => {
+    flashNotesStatus(notesMockFailInput.value ? 'Failure simulation on.' : 'Failure simulation off.');
+  });
+});
+document.getElementById('clearNotesMock').addEventListener('click', () => {
+  if (!confirm('Delete every preview balance, note and history entry stored in this browser?')) return;
+  chrome.storage.local.get(null, (all) => {
+    const keys = Object.keys(all).filter((k) => k.startsWith('noteMock:') || k === 'noteMockLog');
+    chrome.storage.local.remove(keys, () => flashNotesStatus(`Cleared ${keys.length} item${keys.length === 1 ? '' : 's'}.`));
+  });
+});
+
 document.getElementById('save').addEventListener('click', () => {
   chrome.storage.local.set(
     {
