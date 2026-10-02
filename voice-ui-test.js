@@ -358,27 +358,45 @@ for (let i = 1; i <= 6; i++) { THREAD.push({ text: 'hello ' + i }); THREAD.push(
     await page.close();
   }
 
-  // ── G. WhatsApp-style layout (host's screenshot 2026-10-02: row inside Meta's bubble) ──
+  // ── G. WhatsApp-style layout (host's screenshots 2026-10-02: row inside Meta's bubble, bubble has no padding) ──
   {
-    const LONG = '老板我想问一下上次买的那个花胶还有没有货，如果有的话帮我留两包，还有那个J3也要一包，谢谢你们';
+    const LONG = '老板我想问一下上次买的那个花胶还有没有货，如果有的话帮我留两包，还有那个J3也要一包。另外上个礼拜寄来的燕窝我妈妈很喜欢，想再订三盒，地址跟上次一样，麻烦你们帮我算一下运费，谢谢你们';
     const page = await openPage(browser, { seed: { geminiApiKey: 'k' } }, THREAD);
     await page.evaluate((s) => { window.__tx.text = { long1: s.long }; window.addVoice({ id: 'long1', src: s.src }); window.scrollThread('bottom'); }, { long: LONG, src: src('long1') });
-    await page.waitForFunction(() => ['m1', 'm2', 'long1'].every((id) => document.querySelector(`.cim-voice[data-cim-voice-for="${id}"]`)?.dataset.state === 'done'), null, { timeout: 8000 });
-    const geo = await page.evaluate(() => Object.fromEntries(['m1', 'm2', 'long1'].map((id) => {
+    await page.waitForFunction(() => ['m1', 'm2', 'm5', 'long1'].every((id) => document.querySelector(`.cim-voice[data-cim-voice-for="${id}"]`)?.dataset.state === 'done'), null, { timeout: 8000 });
+    await settle(page, 300);
+    const measure = () => page.evaluate(() => Object.fromEntries(['m1', 'm2', 'm5', 'long1'].map((id) => {
       const row = document.querySelector(`.cim-voice[data-cim-voice-for="${id}"]`);
-      const text = row.querySelector('.cim-voice-text'), pill = row.querySelector('.cim-voice-speed');
-      const bubble = row.closest('.bubble').getBoundingClientRect(), r = row.getBoundingClientRect(), tr = text.getBoundingClientRect(), pr = pill.getBoundingClientRect();
+      const text = row.querySelector('.cim-voice-text'), pill = row.querySelector('.cim-voice-speed'), more = row.querySelector('.cim-voice-more');
+      const bub = row.closest('.bubble'), b = bub.getBoundingClientRect(), tr = text.getBoundingClientRect(), pr = pill.getBoundingClientRect();
+      const play = bub.querySelector('a[aria-label="Voice Message"]:not([aria-hidden])').getBoundingClientRect();
       const cs = getComputedStyle(text);
-      return [id, { inside: r.left >= bubble.left - 0.5 && r.right <= bubble.right + 0.5 && pr.right <= bubble.right + 0.5 && pr.bottom <= bubble.bottom + 0.5 && r.bottom <= bubble.bottom + 0.5,
-        bg: cs.backgroundColor, color: cs.color, bubbleColor: getComputedStyle(row.closest('.bubble')).color,
-        sameLine: pr.top < tr.bottom - 2, pillRightGap: Math.round(r.right - pr.right), pillBelow: pr.top >= tr.bottom - 2, lines: Math.round(tr.height / parseFloat(cs.lineHeight)) }];
+      return [id, { bg: cs.backgroundColor, color: cs.color, bubbleColor: getComputedStyle(bub).color,
+        left: Math.round(tr.left - b.left), playLeft: Math.round(play.left - b.left), right: Math.round(b.right - pr.right), bottom: Math.round(b.bottom - Math.max(tr.bottom, pr.bottom)),
+        width: Math.round(b.width), sameLine: pr.top < tr.bottom - 2, pillBelow: pr.top >= tr.bottom - 2,
+        lines: Math.round(tr.height / parseFloat(cs.lineHeight)), more: more && more.offsetParent ? more.textContent : '' }];
     })));
+    const geo = await measure();
     check('G1 transcript is plain text in the bubble — no inner box', ['m1', 'm2', 'long1'].every((id) => geo[id].bg === 'rgba(0, 0, 0, 0)'), JSON.stringify(geo.m1.bg));
     check('G2 transcript takes the bubble\'s text colour (dark on grey, white on blue)', geo.m1.color === geo.m1.bubbleColor && geo.m2.color === geo.m2.bubbleColor, `${geo.m1.color} / ${geo.m2.color}`);
-    check('G3 row and speed pill stay inside the bubble', ['m1', 'm2', 'long1'].every((id) => geo[id].inside), JSON.stringify(Object.fromEntries(Object.entries(geo).map(([k, v]) => [k, v.inside]))));
-    check('G4 short transcript: pill on the same line, at the right edge', geo.m1.sameLine && geo.m1.pillRightGap <= 1, JSON.stringify(geo.m1));
-    check('G5 long transcript wraps, pill drops to its own line at the right', geo.long1.lines >= 2 && geo.long1.pillBelow && geo.long1.pillRightGap <= 1, JSON.stringify(geo.long1));
+    check('G3 text lines up with Meta\'s player, ≥10 px from the left edge', ['m1', 'm2', 'long1'].every((id) => geo[id].left >= 10 && Math.abs(geo[id].left - geo[id].playLeft) <= 2), JSON.stringify(Object.fromEntries(Object.entries(geo).map(([k, v]) => [k, [v.left, v.playLeft]]))));
+    check('G3b pill ≥10 px from the right edge, row ≥8 px above the bottom edge (clear of the rounded corner)', ['m1', 'm2', 'long1'].every((id) => geo[id].right >= 10 && geo[id].bottom >= 8), JSON.stringify(Object.fromEntries(Object.entries(geo).map(([k, v]) => [k, [v.right, v.bottom]]))));
+    check('G4 short transcript: pill on the same line', geo.m1.sameLine, JSON.stringify(geo.m1));
+    check('G6 a long transcript does not widen the bubble', Math.abs(geo.long1.width - geo.m5.width) <= 1, `${geo.long1.width} vs ${geo.m5.width}`);
+    check('G7 long transcript folds to 4 lines with "Show more"', geo.long1.lines === 4 && geo.long1.more === 'Show more', JSON.stringify(geo.long1));
+    check('G7b short transcript has no "Show more"', geo.m1.more === '');
+    await page.locator('.bubble:has(.cim-voice[data-cim-voice-for="long1"])').screenshot({ path: path.join(OUT, 'G-layout-long.png') });
     await page.screenshot({ path: path.join(OUT, 'G-layout.png') });
+    await page.click('.cim-voice[data-cim-voice-for="long1"] .cim-voice-more', { timeout: 2000 }).catch(() => {});
+    await settle(page, 200);
+    const open1 = (await measure()).long1;
+    check('G8 "Show more" shows the whole transcript, then reads "Show less"', open1.lines > 4 && open1.more === 'Show less' && Math.abs(open1.width - geo.m5.width) <= 1, JSON.stringify(open1));
+    check('G8b expanding does not play or select anything in Meta\'s bubble', (await page.evaluate(() => window.__tx.calls.filter((c) => c.id === 'long1').length)) === 1);
+    await page.locator('.bubble:has(.cim-voice[data-cim-voice-for="long1"])').screenshot({ path: path.join(OUT, 'G-layout-open-long.png') });
+    await page.screenshot({ path: path.join(OUT, 'G-layout-open.png') });
+    await page.click('.cim-voice[data-cim-voice-for="long1"] .cim-voice-more', { timeout: 2000 }).catch(() => {});
+    await settle(page, 200);
+    check('G9 "Show less" folds it back to 4 lines', (await measure()).long1.lines === 4);
     await page.close();
   }
 

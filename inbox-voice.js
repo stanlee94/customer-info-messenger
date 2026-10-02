@@ -66,7 +66,11 @@
     const pill = document.createElement('button');
     pill.type = 'button';
     pill.className = 'cim-voice-speed';
-    row.append(text, pill);
+    // Long transcripts fold to FOLD_LINES (CSS) behind Show more / Show less.
+    const more = document.createElement('button');
+    more.type = 'button';
+    more.className = 'cim-voice-more';
+    row.append(text, more, pill);
     // Keep our clicks away from Meta's message handlers.
     row.addEventListener('click', onRowClick);
     return row;
@@ -87,9 +91,10 @@
     row._cimKey = key;
     row.dataset.state = state;
     const box = row.querySelector('.cim-voice-text');
-    if (state === 'done') box.textContent = text;
+    if (state === 'done') { box.textContent = text; measureFold(row); }
     else if (state === 'pending') box.textContent = 'Transcribing…';
-    else {
+    if (state !== 'done') row.classList.remove('cim-voice--long', 'cim-voice--folded');
+    if (state === 'failed') {
       box.textContent = 'Couldn\'t transcribe · ';
       const retry = document.createElement('button');
       retry.type = 'button';
@@ -110,6 +115,24 @@
     if (pill.classList.contains('cim-voice-speed--fast') !== fast) pill.classList.toggle('cim-voice-speed--fast', fast);
   }
 
+  // One layout read per transcript change: fold it, see whether it overflows.
+  function measureFold(row) {
+    const box = row.querySelector('.cim-voice-text');
+    row.classList.add('cim-voice--long', 'cim-voice--folded');
+    const long = box.scrollHeight > box.clientHeight + 1;
+    if (!long) row.classList.remove('cim-voice--long', 'cim-voice--folded');
+    else applyFold(row);
+  }
+
+  function applyFold(row) {
+    const open = row.dataset.cimVoiceOpen === '1';
+    row.classList.toggle('cim-voice--folded', !open);
+    const more = row.querySelector('.cim-voice-more');
+    const label = open ? 'Show less' : 'Show more';
+    if (more.textContent !== label) more.textContent = label;
+    more.setAttribute('aria-expanded', String(open));
+  }
+
   function renderAll(id) {
     for (const row of document.querySelectorAll(`.cim-voice[data-cim-voice-for="${CSS.escape(id)}"]`)) renderRow(row);
   }
@@ -128,7 +151,7 @@
       row = buildRow();
       host.after(row);
     }
-    if (row.dataset.cimVoiceFor !== id) { row.dataset.cimVoiceFor = id; row._cimKey = ''; }
+    if (row.dataset.cimVoiceFor !== id) { row.dataset.cimVoiceFor = id; row._cimKey = ''; delete row.dataset.cimVoiceOpen; }
     const mine = a.getAttribute('data-cim-voice-mine') === '1';
     if (row.classList.contains('cim-voice--mine') !== mine) row.classList.toggle('cim-voice--mine', mine);
     renderRow(row);
@@ -224,6 +247,12 @@
     e.stopPropagation();
     const row = e.currentTarget;
     if (e.target.closest('.cim-voice-retry')) { e.preventDefault(); retry(row.dataset.cimVoiceFor); return; }
+    if (e.target.closest('.cim-voice-more')) {
+      e.preventDefault();
+      if (row.dataset.cimVoiceOpen === '1') delete row.dataset.cimVoiceOpen; else row.dataset.cimVoiceOpen = '1';
+      applyFold(row);
+      return;
+    }
     if (e.target.closest('.cim-voice-speed')) {
       e.preventDefault();
       setSpeed(SPEEDS[(SPEEDS.indexOf(speed) + 1) % SPEEDS.length]);

@@ -5622,40 +5622,59 @@ html.cim-compact-meta [style*="--cim-hug-edge"] {
 
 /* ── Voice messages: transcript + speed pill inside Meta's audio bubble (inbox-voice.js) ──
    WhatsApp-style: plain transcript text in the bubble's own colour, one speed
-   pill bottom-right (same line when the text is short, own line when it wraps). */
+   pill bottom-right (same line when the text is short, own line when it wraps).
+   Meta's bubble has no padding of its own (its player does), so the row brings
+   its own insets, lined up with the player. width:0 + min-width:100% keeps the
+   row out of the bubble's shrink-to-fit width: the bubble stays the player's
+   width and long text wraps inside it. Long text folds to 4 lines. */
 .cim-voice {
   box-sizing: border-box;
+  width: 0;
+  min-width: 100%;
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
   gap: 4px 8px;
-  max-width: 100%;
-  margin-top: 6px;
+  padding: 0 12px 10px;
+  margin-top: 2px;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", sans-serif;
   font-size: 14px;
-  line-height: 1.35;
+  line-height: 1.4;
   color: inherit;
+  text-align: left;
 }
 .cim-voice-text {
   flex: 1 1 auto;
   min-width: 0;
   white-space: pre-wrap;
-  word-break: break-word;
+  overflow-wrap: anywhere;
   user-select: text;
   cursor: text;
 }
+.cim-voice--long .cim-voice-text { flex-basis: 100%; }
+.cim-voice--folded .cim-voice-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
+}
 .cim-voice[data-state="pending"] .cim-voice-text { opacity: 0.6; }
 .cim-voice[data-state="failed"] .cim-voice-text { opacity: 0.75; }
-.cim-voice-retry {
+.cim-voice-retry,
+.cim-voice-more {
   border: 0;
   background: none;
   padding: 0;
   font: inherit;
+  font-size: 13px;
   font-weight: 600;
   color: inherit;
-  text-decoration: underline;
   cursor: pointer;
 }
+.cim-voice-retry { font-size: inherit; text-decoration: underline; }
+.cim-voice-more { display: none; opacity: 0.7; }
+.cim-voice-more:hover { opacity: 1; text-decoration: underline; }
+.cim-voice--long .cim-voice-more { display: block; }
 .cim-voice-speed {
   flex: none;
   margin-left: auto;
