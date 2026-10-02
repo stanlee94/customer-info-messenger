@@ -62,9 +62,11 @@
     row.className = 'cim-voice';
     const text = document.createElement('div');
     text.className = 'cim-voice-text';
-    const chips = document.createElement('div');
-    chips.className = 'cim-voice-speed';
-    row.append(text, chips);
+    // One WhatsApp-style speed pill that cycles 1× → 1.5× → 2×.
+    const pill = document.createElement('button');
+    pill.type = 'button';
+    pill.className = 'cim-voice-speed';
+    row.append(text, pill);
     // Keep our clicks away from Meta's message handlers.
     row.addEventListener('click', onRowClick);
     return row;
@@ -86,34 +88,26 @@
     row.dataset.state = state;
     const box = row.querySelector('.cim-voice-text');
     if (state === 'done') box.textContent = text;
-    else if (state === 'pending') box.textContent = '📝 Transcribing…';
+    else if (state === 'pending') box.textContent = 'Transcribing…';
     else {
-      box.textContent = 'Transcription failed · ';
+      box.textContent = 'Couldn\'t transcribe · ';
       const retry = document.createElement('button');
       retry.type = 'button';
       retry.className = 'cim-voice-retry';
       retry.textContent = 'Retry';
       box.append(retry);
     }
-    renderChips(row.querySelector('.cim-voice-speed'));
+    renderSpeed(row.querySelector('.cim-voice-speed'));
   }
 
-  function renderChips(box) {
-    if (!box) return;
-    if (!box.firstChild) {
-      for (const r of SPEEDS) {
-        const b = document.createElement('button');
-        b.type = 'button';
-        b.dataset.rate = String(r);
-        b.textContent = r + '×';
-        b.setAttribute('aria-label', `Play at ${r}× speed`);
-        box.append(b);
-      }
-    }
-    for (const b of box.children) {
-      const on = String(Number(b.dataset.rate) === speed);
-      if (b.getAttribute('aria-pressed') !== on) b.setAttribute('aria-pressed', on);
-    }
+  function renderSpeed(pill) {
+    if (!pill) return;
+    const label = speed + '×';
+    if (pill.textContent !== label) pill.textContent = label;
+    const aria = `Playback speed ${label} — click to change`;
+    if (pill.getAttribute('aria-label') !== aria) pill.setAttribute('aria-label', aria);
+    const fast = speed !== 1;
+    if (pill.classList.contains('cim-voice-speed--fast') !== fast) pill.classList.toggle('cim-voice-speed--fast', fast);
   }
 
   function renderAll(id) {
@@ -230,8 +224,10 @@
     e.stopPropagation();
     const row = e.currentTarget;
     if (e.target.closest('.cim-voice-retry')) { e.preventDefault(); retry(row.dataset.cimVoiceFor); return; }
-    const chip = e.target.closest('.cim-voice-speed button[data-rate]');
-    if (chip) { e.preventDefault(); setSpeed(Number(chip.dataset.rate)); }
+    if (e.target.closest('.cim-voice-speed')) {
+      e.preventDefault();
+      setSpeed(SPEEDS[(SPEEDS.indexOf(speed) + 1) % SPEEDS.length]);
+    }
   }
 
   // ── speed ──

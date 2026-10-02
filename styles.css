@@ -5620,52 +5620,59 @@ html.cim-compact-meta [style*="--cim-hug-edge"] {
   display: none;
 }
 
-/* ── Voice messages: transcript + speed row under Meta's audio bubble (inbox-voice.js) ── */
+/* ── Voice messages: transcript + speed pill inside Meta's audio bubble (inbox-voice.js) ──
+   WhatsApp-style: plain transcript text in the bubble's own colour, one speed
+   pill bottom-right (same line when the text is short, own line when it wraps). */
 .cim-voice {
   box-sizing: border-box;
-  width: fit-content;
-  min-width: 200px;
-  max-width: 320px;
-  margin: 4px 0 2px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 4px 8px;
+  max-width: 100%;
+  margin-top: 6px;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", sans-serif;
-  font-size: 12px;
-  line-height: 1.4;
-  color: #1c1e21;
+  font-size: 14px;
+  line-height: 1.35;
+  color: inherit;
 }
-.cim-voice--mine { margin-left: auto; }
 .cim-voice-text {
-  background: #f0f2f5;
-  border-radius: 8px;
-  padding: 6px 8px;
+  flex: 1 1 auto;
+  min-width: 0;
   white-space: pre-wrap;
   word-break: break-word;
   user-select: text;
   cursor: text;
 }
-.cim-voice[data-state="pending"] .cim-voice-text { color: #65676b; }
-.cim-voice[data-state="failed"] .cim-voice-text { color: #b42318; background: #fef3f2; }
+.cim-voice[data-state="pending"] .cim-voice-text { opacity: 0.6; }
+.cim-voice[data-state="failed"] .cim-voice-text { opacity: 0.75; }
 .cim-voice-retry {
   border: 0;
   background: none;
   padding: 0;
   font: inherit;
   font-weight: 600;
-  color: #0a7cff;
+  color: inherit;
   text-decoration: underline;
   cursor: pointer;
 }
-.cim-voice-speed { display: flex; gap: 4px; margin-top: 4px; }
-.cim-voice-speed:empty { display: none; }
-.cim-voice-speed button {
-  border: 1px solid #0a7cff;
-  background: #fff;
-  color: #0a7cff;
-  border-radius: 10px;
-  padding: 1px 8px;
+.cim-voice-speed {
+  flex: none;
+  margin-left: auto;
+  min-width: 36px;
+  border: 0;
+  border-radius: 999px;
+  padding: 2px 8px;
+  background: rgba(0, 0, 0, 0.08);
+  color: inherit;
   font-family: inherit;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   line-height: 16px;
+  font-variant-numeric: tabular-nums;
   cursor: pointer;
 }
-.cim-voice-speed button[aria-pressed="true"] { background: #0a7cff; color: #fff; }
+.cim-voice-speed:hover { background: rgba(0, 0, 0, 0.14); }
+.cim-voice-speed--fast { background: rgba(8, 102, 255, 0.14); color: #0866ff; }
+.cim-voice--mine .cim-voice-speed { background: rgba(255, 255, 255, 0.22); }
+.cim-voice--mine .cim-voice-speed--fast { background: #fff; color: #0866ff; }

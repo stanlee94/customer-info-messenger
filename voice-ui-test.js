@@ -75,7 +75,7 @@ const stub = `
     setTimeout(() => {
       tx.inflight--;
       if (tx.mode === 'undefined') return cb && cb(undefined);
-      const res = tx.fail.has(msg.messageId) ? { ok: false, error: 'gemini_failed', detail: 'HTTP 500' } : { ok: true, text: 'T:' + msg.messageId };
+      const res = tx.fail.has(msg.messageId) ? { ok: false, error: 'gemini_failed', detail: 'HTTP 500' } : { ok: true, text: (tx.text && tx.text[msg.messageId]) || 'T:' + msg.messageId };
       cb && cb(res);
     }, tx.delay);
   };
@@ -139,7 +139,7 @@ for (let i = 1; i <= 6; i++) { THREAD.push({ text: 'hello ' + i }); THREAD.push(
     const row = (id) => page.evaluate((i) => { const r = document.querySelector(`.cim-voice[data-cim-voice-for="${i}"]`); return r ? { state: r.dataset.state, text: r.querySelector('.cim-voice-text').textContent, mine: r.classList.contains('cim-voice--mine'), placed: window.clipRootOf(i)?.nextElementSibling === r } : null; }, id);
     const r1 = await row('m1');
     check('B1 a row under each voice message, right after the bubble', (await page.locator('.cim-voice').count()) === 6 && r1 && r1.placed);
-    check('B2 pending text before the answer', (await row('m1')).text.startsWith('📝 Transcribing'));
+    check('B2 pending text before the answer', (await row('m1')).text === 'Transcribing…');
     check('B3 own messages aligned right (mine class)', (await row('m2')).mine && !(await row('m1')).mine);
     await page.waitForFunction(() => window.__tx.calls.length === 6 && window.__tx.inflight === 0, null, { timeout: 8000 });
     const order = await page.evaluate(() => window.__tx.calls.map((c) => c.id));
@@ -162,7 +162,7 @@ for (let i = 1; i <= 6; i++) { THREAD.push({ text: 'hello ' + i }); THREAD.push(
     // Failure → Retry → success; failures are not cached
     await page.evaluate((s) => { window.__tx.fail.add('f1'); window.addVoice({ id: 'f1', src: s }); window.scrollThread('bottom'); }, src('f1'));
     await page.waitForSelector('.cim-voice[data-cim-voice-for="f1"][data-state="failed"]', { timeout: 5000 });
-    check('B11 failure shows "Transcription failed · Retry" and is not cached', (await row('f1')).text === 'Transcription failed · Retry' && !(await page.evaluate(() => 'voiceTx:f1' in window.__store)));
+    check('B11 failure shows "Couldn\'t transcribe · Retry" and is not cached', (await row('f1')).text === 'Couldn\'t transcribe · Retry' && !(await page.evaluate(() => 'voiceTx:f1' in window.__store)));
     await page.evaluate(() => window.__tx.fail.delete('f1'));
     await page.click('.cim-voice[data-cim-voice-for="f1"] .cim-voice-retry');
     await page.waitForSelector('.cim-voice[data-cim-voice-for="f1"][data-state="done"]', { timeout: 5000 });
@@ -213,20 +213,28 @@ for (let i = 1; i <= 6; i++) { THREAD.push({ text: 'hello ' + i }); THREAD.push(
   // ── C. Speed ──
   {
     const page = await openPage(browser, { seed: { geminiApiKey: 'k' } }, THREAD);
-    await page.waitForSelector('.cim-voice .cim-voice-speed button');
-    check('C1 chips 1× 1.5× 2× under each voice message, 1× pressed by default', (await page.evaluate(() => [...document.querySelector('.cim-voice .cim-voice-speed').children].map((b) => b.textContent + (b.getAttribute('aria-pressed') === 'true' ? '*' : '')).join(' '))) === '1×* 1.5× 2×');
+    const pill = (id) => page.evaluate((i) => document.querySelector(`.cim-voice[data-cim-voice-for="${i}"] .cim-voice-speed`)?.textContent, id);
+    const tap = (id) => page.click(`.cim-voice[data-cim-voice-for="${id}"] .cim-voice-speed`);
+    await page.waitForSelector('.cim-voice .cim-voice-speed');
+    check('C1 one speed pill per voice message, reading 1×', (await page.evaluate(() => [...document.querySelectorAll('.cim-voice')].every((r) => r.querySelectorAll('.cim-voice-speed').length === 1))) && (await pill('m6')) === '1×');
     check('C2 default rate attribute = 1', (await page.evaluate(() => document.documentElement.dataset.cimVoiceRate)) === '1');
-    await page.click('.cim-voice[data-cim-voice-for="m6"] .cim-voice-speed button[data-rate="2"]');
+    await tap('m6');
     await settle(page);
-    check('C3 2× saved and mirrored to the page', (await page.evaluate(() => [document.documentElement.dataset.cimVoiceRate, window.__store.voiceSpeed].join())) === '2,2');
-    check('C4 every row shows 2× pressed', await page.evaluate(() => [...document.querySelectorAll('.cim-voice')].every((r) => r.querySelector('button[aria-pressed="true"]').dataset.rate === '2')));
+    check('C3a one tap → 1.5×', (await pill('m6')) === '1.5×' && (await page.evaluate(() => document.documentElement.dataset.cimVoiceRate)) === '1.5');
+    await tap('m6');
+    await settle(page);
+    check('C3 second tap → 2×, saved and mirrored to the page', (await page.evaluate(() => [document.documentElement.dataset.cimVoiceRate, window.__store.voiceSpeed].join())) === '2,2');
+    check('C4 every row\'s pill shows 2×, marked as not normal speed', await page.evaluate(() => [...document.querySelectorAll('.cim-voice-speed')].every((b) => b.textContent === '2×' && b.classList.contains('cim-voice-speed--fast'))));
     const clipUrl = 'file://' + CLIP_FILE;
     await page.evaluate((u) => window.playClip(u), clipUrl);
     await settle(page, 200);
     check('C5 a voice clip started after choosing 2× plays at 2×, pitch kept', await page.evaluate(() => window.__clip.playbackRate === 2 && window.__clip.preservesPitch === true));
-    await page.click('.cim-voice[data-cim-voice-for="m6"] .cim-voice-speed button[data-rate="1.5"]');
+    await tap('m6');
     await settle(page);
-    check('C6 changing speed while it plays changes the playing clip', (await page.evaluate(() => window.__clip.playbackRate)) === 1.5);
+    check('C6 third tap while it plays → back to 1× on the playing clip', (await pill('m6')) === '1×' && (await page.evaluate(() => window.__clip.playbackRate)) === 1);
+    await tap('m6');
+    await settle(page);
+    check('C6b fourth tap → 1.5× on the playing clip', (await page.evaluate(() => window.__clip.playbackRate)) === 1.5);
     await page.evaluate(() => window.__clip.load());
     await page.evaluate(() => window.__clip.play().catch(() => {}));
     await settle(page, 200);
@@ -241,8 +249,8 @@ for (let i = 1; i <= 6; i++) { THREAD.push({ text: 'hello ' + i }); THREAD.push(
   }
   {
     const page = await openPage(browser, { seed: { geminiApiKey: 'k', voiceSpeed: 2 } }, THREAD);
-    await page.waitForSelector('.cim-voice .cim-voice-speed button');
-    check('C10 saved speed applied on load', (await page.evaluate(() => [document.documentElement.dataset.cimVoiceRate, document.querySelector('.cim-voice button[aria-pressed="true"]').dataset.rate].join())) === '2,2');
+    await page.waitForSelector('.cim-voice .cim-voice-speed');
+    check('C10 saved speed applied on load', (await page.evaluate(() => [document.documentElement.dataset.cimVoiceRate, document.querySelector('.cim-voice .cim-voice-speed').textContent].join())) === '2,2×');
     await page.close();
   }
 
@@ -344,9 +352,33 @@ for (let i = 1; i <= 6; i++) { THREAD.push({ text: 'hello ' + i }); THREAD.push(
     await page.evaluate((s) => { window.__tx.delay = 50; window.__tx.mode = 'dead'; window.addVoice({ id: 'dead1', src: s }); window.scrollThread('bottom'); }, src('dead1'));
     await page.waitForSelector('.cim-voice[data-cim-voice-for="dead1"][data-state="failed"]', { timeout: 3000 }).catch(() => {});
     check('F3 extension context gone → new message shows failed, not Transcribing forever', (await page.evaluate(() => document.querySelector('.cim-voice[data-cim-voice-for="dead1"]')?.dataset.state)) === 'failed');
-    await page.click('.cim-voice[data-cim-voice-for="m6"] .cim-voice-speed button[data-rate="2"]').catch(() => {});
+    await page.click('.cim-voice[data-cim-voice-for="m6"] .cim-voice-speed').catch(() => {});
     await settle(page);
     check('F3b a speed click with the context gone throws nothing into the page', !results.some((r) => r.startsWith('PAGEERROR')));
+    await page.close();
+  }
+
+  // ── G. WhatsApp-style layout (host's screenshot 2026-10-02: row inside Meta's bubble) ──
+  {
+    const LONG = '老板我想问一下上次买的那个花胶还有没有货，如果有的话帮我留两包，还有那个J3也要一包，谢谢你们';
+    const page = await openPage(browser, { seed: { geminiApiKey: 'k' } }, THREAD);
+    await page.evaluate((s) => { window.__tx.text = { long1: s.long }; window.addVoice({ id: 'long1', src: s.src }); window.scrollThread('bottom'); }, { long: LONG, src: src('long1') });
+    await page.waitForFunction(() => ['m1', 'm2', 'long1'].every((id) => document.querySelector(`.cim-voice[data-cim-voice-for="${id}"]`)?.dataset.state === 'done'), null, { timeout: 8000 });
+    const geo = await page.evaluate(() => Object.fromEntries(['m1', 'm2', 'long1'].map((id) => {
+      const row = document.querySelector(`.cim-voice[data-cim-voice-for="${id}"]`);
+      const text = row.querySelector('.cim-voice-text'), pill = row.querySelector('.cim-voice-speed');
+      const bubble = row.closest('.bubble').getBoundingClientRect(), r = row.getBoundingClientRect(), tr = text.getBoundingClientRect(), pr = pill.getBoundingClientRect();
+      const cs = getComputedStyle(text);
+      return [id, { inside: r.left >= bubble.left - 0.5 && r.right <= bubble.right + 0.5 && pr.right <= bubble.right + 0.5 && pr.bottom <= bubble.bottom + 0.5 && r.bottom <= bubble.bottom + 0.5,
+        bg: cs.backgroundColor, color: cs.color, bubbleColor: getComputedStyle(row.closest('.bubble')).color,
+        sameLine: pr.top < tr.bottom - 2, pillRightGap: Math.round(r.right - pr.right), pillBelow: pr.top >= tr.bottom - 2, lines: Math.round(tr.height / parseFloat(cs.lineHeight)) }];
+    })));
+    check('G1 transcript is plain text in the bubble — no inner box', ['m1', 'm2', 'long1'].every((id) => geo[id].bg === 'rgba(0, 0, 0, 0)'), JSON.stringify(geo.m1.bg));
+    check('G2 transcript takes the bubble\'s text colour (dark on grey, white on blue)', geo.m1.color === geo.m1.bubbleColor && geo.m2.color === geo.m2.bubbleColor, `${geo.m1.color} / ${geo.m2.color}`);
+    check('G3 row and speed pill stay inside the bubble', ['m1', 'm2', 'long1'].every((id) => geo[id].inside), JSON.stringify(Object.fromEntries(Object.entries(geo).map(([k, v]) => [k, v.inside]))));
+    check('G4 short transcript: pill on the same line, at the right edge', geo.m1.sameLine && geo.m1.pillRightGap <= 1, JSON.stringify(geo.m1));
+    check('G5 long transcript wraps, pill drops to its own line at the right', geo.long1.lines >= 2 && geo.long1.pillBelow && geo.long1.pillRightGap <= 1, JSON.stringify(geo.long1));
+    await page.screenshot({ path: path.join(OUT, 'G-layout.png') });
     await page.close();
   }
 

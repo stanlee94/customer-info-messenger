@@ -9,9 +9,11 @@
   .msg { display: flex; flex-direction: column; align-items: flex-start; margin: 10px 0; }
   .msg.mine { align-items: flex-end; }
   .txt { background: #f0f0f0; border-radius: 18px; padding: 8px 12px; font-size: 15px; height: 60px; }
-  .clip-root { background: #0866ff; border-radius: 18px; padding: 8px 12px; }
+  .bubble { background: #f0f0f0; color: #050505; border-radius: 18px; padding: 8px 12px; max-width: 360px; }
+  .msg.mine .bubble { background: #0866ff; color: #fff; }
+  .clip-root { display: flex; }
   ._1mj2 { position: relative; }
-  ._1miz { display: flex; align-items: center; gap: 8px; color: #fff; text-decoration: none; }
+  ._1miz { display: flex; align-items: center; gap: 8px; color: inherit; text-decoration: none; }
   ._1mj4 { position: absolute; inset: 0 auto 0 0; overflow: hidden; }
 </style>
 </head>
@@ -34,10 +36,10 @@
     const msg = document.createElement('div');
     msg.className = 'msg' + (v.mine ? ' mine' : '');
     msg.setAttribute('data-message-id', v.id);
-    msg.innerHTML = '<div class="clip-root"><div class="_1mj2">' +
+    msg.innerHTML = '<div class="bubble"><div class="clip-root"><div class="_1mj2">' +
       '<a aria-label="Voice Message" class="_1miz" role="button" href="#" style="width: 200px;"><span>▶</span><span class="dur">0:0' + (v.dur ?? 6) + '</span></a>' +
       '<div class="_1mj4" style="width: 0px;"><a aria-label="Voice Message" class="_1miz" role="button" aria-hidden="true" href="#" style="width: 200px;"><span>▶</span></a></div>' +
-      '</div></div>';
+      '</div></div></div>';
     const visible = msg.querySelector('a:not([aria-hidden])');
     visible[FK] = chain(v);
     visible.__fixtureId = v.id;   // test-side bookkeeping only; the extension reads the fiber
