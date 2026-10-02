@@ -8155,23 +8155,32 @@
   // when these buttons re-render on hover, which dropped a class and made
   // them jump back to full padding; an inline custom property survives that.
   // The property is also the "done" marker, so a node is never halved twice.
+  // flatV: top/bottom padding capped at FLAT_V_PX instead of halved — the chat
+  // header (host's request). Never on buttons or inside them: flattening a
+  // button squashes it, so they keep the halved padding.
   const PAD_FACTOR = 0.5;
-  function tightenPadding(root) {
+  const FLAT_V_PX = 2;
+  function tightenPadding(root, flatV) {
     if (!root) return;
     const els = [root, ...root.querySelectorAll('*')].slice(0, 400);
     for (const el of els) {
       if (!(el instanceof HTMLElement) || el.style.getPropertyValue('--cim-p') || el.classList.contains('cim-sb-tight')) continue;
       const cs = getComputedStyle(el);
       const p = [cs.paddingTop, cs.paddingRight, cs.paddingBottom, cs.paddingLeft].map((x) => parseFloat(x) || 0);
-      if (Math.max(...p) <= 4) continue;
-      const v = p.map((x) => (x <= 4 ? x : Math.max(4, Math.round(x * PAD_FACTOR))));
+      const flat = flatV && !el.closest('[role="button"]');
+      const v = p.map((x, i) => {
+        if (flat && i % 2 === 0) return Math.min(x, FLAT_V_PX);
+        return x <= 4 ? x : Math.max(4, Math.round(x * PAD_FACTOR));
+      });
+      if (v.every((x, i) => x === p[i])) continue;
       el.style.setProperty('--cim-p', v.map((x) => x + 'px').join(' '));
     }
   }
 
   function compactMetaHeaders() {
     if (!document.documentElement.classList.contains('cim-compact-meta')) return;
-    document.querySelectorAll('.cim-sb-profile, span[data-surface$="/channel_selector"] > div, .cim-chat-head').forEach(tightenPadding);
+    document.querySelectorAll('.cim-sb-profile, span[data-surface$="/channel_selector"] > div').forEach((el) => tightenPadding(el, false));
+    document.querySelectorAll('.cim-chat-head').forEach((el) => tightenPadding(el, true));
   }
 
   function syncCloseBtnVisibility() {

@@ -207,7 +207,9 @@ function check(name, cond, extra) {
   check('channel tabs bar padding 12/16 → 6/8', (await cs('#chanBox', 'padding')) === '6px 8px', await cs('#chanBox', 'padding'));
   check('tab padding 10/16 → 5/8', (await cs('.tab', 'padding')) === '5px 8px', await cs('.tab', 'padding'));
   check('tab font unchanged (17px)', (await cs('.tab', 'fontSize')) === '17px');
-  check('chat header padding 14/16 → 7/8', (await cs('#chatHead', 'padding')) === '7px 8px', await cs('#chatHead', 'padding'));
+  check('chat header: top/bottom 14 → 2, sides 16 → 8', (await cs('#chatHead', 'padding')) === '2px 8px', await cs('#chatHead', 'padding'));
+  check('chat header: name block top/bottom 6 → 2', (await cs('#chatNameBlock', 'padding')) === '2px 0px', await cs('#chatNameBlock', 'padding'));
+  check('chat header hugs its tallest item (44px avatar → 48px)', await page.evaluate(() => Math.round(document.getElementById('chatHead').getBoundingClientRect().height)) === 48 + 1, String(await page.evaluate(() => document.getElementById('chatHead').getBoundingClientRect().height)));
   check('chat name font unchanged', (await cs('#chatName', 'fontSize')) === '16px', await cs('#chatName', 'fontSize'));
   check('nothing scaled', (await cs('#chanBox', 'zoom')) === '1' && (await cs('#chatHead', 'zoom')) === '1' && (await cs('.prof', 'zoom')) === '1');
   check('chat header buttons still clickable', await page.evaluate(() => { const b = document.querySelectorAll('#chatHead [role="button"]')[2]; const r = b.getBoundingClientRect(); return document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) === b; }));
