@@ -243,6 +243,67 @@ for (let i = 1; i <= 6; i++) { THREAD.push({ text: 'hello ' + i }); THREAD.push(
     await page.close();
   }
 
+  // ── D. Scrolling up through a long history ──
+  {
+    const page = await openPage(browser, { seed: { geminiApiKey: 'k' } }, THREAD);
+    await page.evaluate(() => { window.__tx.delay = 20; });
+    await page.waitForFunction(() => window.__tx.calls.length === 6 && window.__tx.inflight === 0, null, { timeout: 8000 });
+    await page.evaluate(() => { window.__cimVoiceStats.maxSyncMs = 0; window.__cimVoiceDebug.maxTagMs = 0; });
+    // Meta loads older messages 20 at a time as the agent scrolls up.
+    for (let batch = 0; batch < 10; batch++) {
+      await page.evaluate((b) => {
+        for (let i = 0; i < 20; i++) {
+          const n = b * 20 + i;
+          window.addText('older ' + n, { prepend: true });
+          window.addVoice({ id: 'h' + n, src: `https://cdn.fbsbx.com/v/t59.3654-21/h${n}_n.mp4/audioclip-1-h${n}.mp4?oe=1&dl=1`, prepend: true });
+        }
+        window.scrollThread('top');
+      }, batch);
+      await settle(page, 120);
+    }
+    // While older ones are still queued, the one now at the top must jump ahead.
+    await page.evaluate(() => { window.__tx.delay = 300; });
+    const before = await page.evaluate(() => window.__tx.calls.length);
+    await page.evaluate((s) => { window.addVoice({ id: 'top1', src: s, prepend: true }); window.scrollThread('top'); }, src('top1'));
+    await page.waitForFunction(() => window.__tx.calls.some((c) => c.id === 'top1'), null, { timeout: 15000 });
+    const pos = await page.evaluate((b) => window.__tx.calls.slice(b).findIndex((c) => c.id === 'top1'), before);
+    check('D1 a message scrolled into view jumps the queue', pos >= 0 && pos <= 2, `position ${pos}`);
+    await page.evaluate(() => { window.__tx.delay = 20; });
+    await page.waitForFunction(() => window.__tx.calls.length === 207 && window.__tx.inflight === 0, null, { timeout: 30000 }).catch(() => {});
+    const s = await page.evaluate(() => ({
+      tagged: document.querySelectorAll('a[data-cim-voice-id]').length,
+      rows: document.querySelectorAll('.cim-voice').length,
+      calls: window.__tx.calls.length,
+      unique: new Set(window.__tx.calls.map((c) => c.id)).size,
+      sync: window.__cimVoiceStats.maxSyncMs,
+      tag: window.__cimVoiceDebug.maxTagMs,
+      getNull: window.__getNull,
+      maxInflight: window.__tx.maxInflight,
+    }));
+    check('D2 207 voice messages: every one tagged and given one row', s.tagged === 207 && s.rows === 207, JSON.stringify(s));
+    check('D3 each transcribed exactly once', s.calls === 207 && s.unique === 207);
+    check('D4 isolated sync stays under 5 ms', s.sync < 5, s.sync.toFixed(2) + ' ms');
+    check('D5 page-side tagging stays under 5 ms', s.tag < 5, s.tag.toFixed(2) + ' ms');
+    check('D6 still ≤2 in flight, whole store never read', s.maxInflight <= 2 && s.getNull === 0);
+    await page.close();
+  }
+
+  // ── E. Cache pruning ──
+  {
+    const seed = { geminiApiKey: 'k' };
+    for (let i = 0; i < 3010; i++) seed['voiceTx:old' + i] = { t: 'x', at: 1000 + i };
+    seed['rfm:123'] = { v: 1, t: 1 };
+    const page = await openPage(browser, { seed, pruneDelay: 400 }, THREAD);
+    await page.waitForFunction(() => Object.keys(window.__store).filter((k) => k.startsWith('voiceTx:')).length < 3000, null, { timeout: 5000 }).catch(() => {});
+    const left = await page.evaluate(() => {
+      const keys = Object.keys(window.__store).filter((k) => k.startsWith('voiceTx:old'));
+      return { n: keys.length, oldestGone: !('voiceTx:old0' in window.__store) && !('voiceTx:old499' in window.__store), keptNext: 'voiceTx:old500' in window.__store, rfm: 'rfm:123' in window.__store, getNull: window.__getNull };
+    });
+    check('E1 above 3,000 transcripts → oldest 500 dropped', left.n === 2510 && left.oldestGone && left.keptNext, JSON.stringify(left));
+    check('E2 pruning leaves other keys alone and never reads the whole store', left.rfm && left.getNull === 0);
+    await page.close();
+  }
+
   // ── more sections above this line ──
 
   await browser.close();
