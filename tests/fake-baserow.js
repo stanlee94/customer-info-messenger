@@ -120,8 +120,11 @@
             const f = k.match(/^filter__(.+)__equal$/);
             if (f) out = out.filter((r) => String(r[f[1]] ?? '') === v);
           }
-          const order = u.searchParams.get('order_by') || 'id';
-          out.sort((a, b) => (order === '-id' ? b.id - a.id : a.id - b.id));
+          // Real Baserow only sorts by fields — `order_by=id` is a 400
+          // (ERROR_ORDER_BY_FIELD_NOT_FOUND, seen on 794). Unsorted = row order.
+          const order = u.searchParams.get('order_by');
+          if (order && /^-?id$/.test(order)) return json(400, { error: 'ERROR_ORDER_BY_FIELD_NOT_FOUND', detail: `The field ${order} was not found in the table.` });
+          out.sort((a, b) => a.id - b.id);
           const size = Number(u.searchParams.get('size') || 100);
           return json(200, { count: out.length, next: out.length > size ? 'more' : null, previous: null, results: out.slice(0, size).map((r) => present(table, r)) });
         }

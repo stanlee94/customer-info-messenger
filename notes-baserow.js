@@ -213,15 +213,17 @@
       };
     }
 
-    async function logRows(config, psid, extraFilter, order) {
-      const r = await api(config, 'GET', `${config.logTableId}/?user_field_names=true&size=200&order_by=${order}` +
+    // Oldest first. Baserow can't sort by row id (`order_by=id` is a 400), so
+    // sort here: ids only grow, so id order is the order the changes happened.
+    async function logRows(config, psid, extraFilter) {
+      const r = await api(config, 'GET', `${config.logTableId}/?user_field_names=true&size=200` +
         `&filter__PSID__equal=${encodeURIComponent(psid)}${extraFilter}`);
-      return r.notFound ? [] : (r.data.results || []).map(logRowOut);
+      return r.notFound ? [] : (r.data.results || []).slice().sort((a, b) => a.id - b.id).map(logRowOut);
     }
 
     async function history(psid) {
       if (!psid) return fail('bad-request', 'Missing PSID.');
-      return withConfig(true, async (config) => ({ ok: true, rows: await logRows(config, psid, '', '-id') }));
+      return withConfig(true, async (config) => ({ ok: true, rows: (await logRows(config, psid, '')).reverse() }));
     }
 
     // What this chat (UID) saved to this PSID, per field: the value before
@@ -232,7 +234,7 @@
       uid = clean(uid);
       if (!psid || !uid) return fail('bad-request', 'Missing PSID or conversation id.');
       return withConfig(true, async (config) => {
-        const entries = await logRows(config, psid, `&filter__UID__equal=${encodeURIComponent(uid)}`, 'id');
+        const entries = await logRows(config, psid, `&filter__UID__equal=${encodeURIComponent(uid)}`);
         const rows = entries.length ? await rowsByPsid(config, psid) : [];
         const row = rows.length === 1 ? rows[0] : null;
         const items = [];
