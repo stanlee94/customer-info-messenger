@@ -19,6 +19,16 @@
         "styles.css"
       ],
       "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://business.facebook.com/latest/inbox/*"
+      ],
+      "js": [
+        "inbox-voice-main.js"
+      ],
+      "world": "MAIN",
+      "run_at": "document_idle"
     }
   ],
   "background": {

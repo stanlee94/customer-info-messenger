@@ -1,0 +1,66 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Fake Business Suite thread with voice messages</title>
+<style>
+  body { margin: 0; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; background: #f0f2f5; }
+  .thread { width: 640px; height: 420px; overflow-y: auto; background: #fff; margin: 16px; padding: 8px 16px; box-sizing: border-box; }
+  .msg { display: flex; flex-direction: column; align-items: flex-start; margin: 10px 0; }
+  .msg.mine { align-items: flex-end; }
+  .txt { background: #f0f0f0; border-radius: 18px; padding: 8px 12px; font-size: 15px; height: 60px; }
+  .clip-root { background: #0866ff; border-radius: 18px; padding: 8px 12px; }
+  ._1mj2 { position: relative; }
+  ._1miz { display: flex; align-items: center; gap: 8px; color: #fff; text-decoration: none; }
+  ._1mj4 { position: absolute; inset: 0 auto 0 0; overflow: hidden; }
+</style>
+</head>
+<body>
+<div class="thread" id="thread"></div>
+<script>
+  // Mirrors the real chain (2026-10-02): anchor → … → AudioClip {src, duration,
+  // isFromViewer} (depth 5) → div → BizInboxMessageAudioBubble {audio, messageID}
+  // (depth 7) → … → div[data-message-id] (depth 19). Depths here are shorter on
+  // purpose: the code must find props by shape, not depth.
+  const FK = '__reactFiber$test';
+  function chain(v) {
+    const bubble = { type: { displayName: 'BizInboxMessageAudioBubble' }, memoizedProps: { audio: { attachmentType: 'audio', url: v.src }, isFromViewer: !!v.mine, messageID: v.id }, return: { type: 'div', memoizedProps: { 'data-message-id': v.id, className: 'x' }, return: null } };
+    const div = { type: 'div', memoizedProps: { className: 'x', children: [] }, return: bubble };
+    const clip = { type: { name: 'AudioClip' }, memoizedProps: { duration: v.dur ?? 6, isFromViewer: !!v.mine, location: 'messenger', showHelp: false, src: v.src, width: 200 }, return: div };
+    const inner = { type: 'span', memoizedProps: { className: 'x' }, return: { type: 'div', memoizedProps: {}, return: clip } };
+    return { type: 'a', memoizedProps: { 'aria-label': 'Voice Message', href: '#' }, return: inner };
+  }
+  function voiceNode(v) {
+    const msg = document.createElement('div');
+    msg.className = 'msg' + (v.mine ? ' mine' : '');
+    msg.setAttribute('data-message-id', v.id);
+    msg.innerHTML = '<div class="clip-root"><div class="_1mj2">' +
+      '<a aria-label="Voice Message" class="_1miz" role="button" href="#" style="width: 200px;"><span>▶</span><span class="dur">0:0' + (v.dur ?? 6) + '</span></a>' +
+      '<div class="_1mj4" style="width: 0px;"><a aria-label="Voice Message" class="_1miz" role="button" aria-hidden="true" href="#" style="width: 200px;"><span>▶</span></a></div>' +
+      '</div></div>';
+    const visible = msg.querySelector('a:not([aria-hidden])');
+    visible[FK] = chain(v);
+    visible.__fixtureId = v.id;   // test-side bookkeeping only; the extension reads the fiber
+    msg.querySelector('a[aria-hidden]')[FK] = chain(v);
+    return msg;
+  }
+  const thread = document.getElementById('thread');
+  window.addVoice = (v) => { const n = voiceNode(v); v.prepend ? thread.prepend(n) : thread.append(n); return n; };
+  window.addText = (t, o = {}) => { const n = document.createElement('div'); n.className = 'msg'; n.innerHTML = '<div class="txt"></div>'; n.firstChild.textContent = t; o.prepend ? thread.prepend(n) : thread.append(n); return n; };
+  // First match; with a message rendered twice (B10) use querySelectorAll instead.
+  window.anchorOf = (id) => [...thread.querySelectorAll('a[aria-label="Voice Message"]:not([aria-hidden])')].find((a) => a.__fixtureId === id);
+  window.clipRootOf = (id) => window.anchorOf(id)?.parentElement.parentElement;
+  // React reusing a node for a different message: same <a>, new props, and a
+  // text change (React would re-render the duration).
+  window.reuseVoice = (oldId, nv) => {
+    const a = window.anchorOf(oldId);
+    a[FK] = chain(nv);
+    a.__fixtureId = nv.id;
+    a.querySelector('.dur').textContent = '0:0' + (nv.dur ?? 7);
+  };
+  window.swapConversation = (items) => { thread.replaceChildren(); items.forEach((it) => it.text ? window.addText(it.text) : window.addVoice(it)); window.scrollThread('bottom'); };
+  window.scrollThread = (where) => { thread.scrollTop = where === 'top' ? 0 : thread.scrollHeight; };
+  window.playClip = (url) => { const el = new Audio(url); window.__clip = el; el.play().catch(() => {}); return el; };
+</script>
+</body>
+</html>
