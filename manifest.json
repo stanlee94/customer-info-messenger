@@ -13,7 +13,8 @@
         "https://business.facebook.com/latest/inbox/*"
       ],
       "js": [
-        "content.js"
+        "content.js",
+        "inbox-voice.js"
       ],
       "css": [
         "styles.css"

@@ -84,13 +84,16 @@ function check(name, cond, extra) {
   results.push(`${cond ? 'PASS' : 'FAIL'}  ${name}${extra ? '  — ' + extra : ''}`);
 }
 
-async function openPage(browser, seed, initial) {
+async function openPage(browser, seed, initial, opts = {}) {
   const page = await browser.newPage({ viewport: { width: 900, height: 700 } });
   page.on('pageerror', (e) => results.push('PAGEERROR ' + e.message));
   await page.addInitScript((s) => { window.__seed = s.seed; window.__cimVoicePruneDelay = s.pruneDelay; }, seed);
   await page.addInitScript(stub);
   await page.goto('file://' + path.join(EXT, 'voice-ui-fixture.html'));
   await page.evaluate((items) => window.swapConversation(items), initial);
+  // Optional: park the thread mid-way (top of message `scrollToId`) before our scripts run.
+  if (opts.scrollToId) await page.evaluate((id) => { const t = document.getElementById('thread'); t.scrollTop = t.querySelector(`[data-message-id="${id}"]`).offsetTop - t.offsetTop - 4; }, opts.scrollToId);
+  page.visibleAtLoad = await page.evaluate(() => [...document.querySelectorAll('a[aria-label="Voice Message"]:not([aria-hidden])')].filter((a) => { const r = a.getBoundingClientRect(), t = document.getElementById('thread').getBoundingClientRect(); return r.bottom > t.top && r.top < t.bottom; }).map((a) => a.__fixtureId));
   await page.addStyleTag({ path: path.join(EXT, 'styles.css') });
   await page.addScriptTag({ path: path.join(EXT, 'inbox-voice-main.js') });
   if (fs.existsSync(path.join(EXT, 'inbox-voice.js'))) await page.addScriptTag({ path: path.join(EXT, 'inbox-voice.js') });
@@ -123,6 +126,84 @@ for (let i = 1; i <= 6; i++) { THREAD.push({ text: 'hello ' + i }); THREAD.push(
     await settle(page);
     check('A5 a voice button without React props is left alone', await page.evaluate(() => !document.getElementById('nofiber').hasAttribute('data-cim-voice-id')));
     check('A6 Meta nodes not moved: hidden copy still inside its wrapper', await page.evaluate(() => [...document.querySelectorAll('a[aria-hidden="true"]')].every((a) => a.parentElement.classList.contains('_1mj4'))));
+    await page.close();
+  }
+
+  // ── B. Rows, cache, queue, retry (inbox-voice.js) ──
+  let savedStore;
+  {
+    const page = await openPage(browser, { seed: { geminiApiKey: 'k' } }, THREAD, { scrollToId: 'm2' });
+    const row = (id) => page.evaluate((i) => { const r = document.querySelector(`.cim-voice[data-cim-voice-for="${i}"]`); return r ? { state: r.dataset.state, text: r.querySelector('.cim-voice-text').textContent, mine: r.classList.contains('cim-voice--mine'), placed: window.clipRootOf(i)?.nextElementSibling === r } : null; }, id);
+    const r1 = await row('m1');
+    check('B1 a row under each voice message, right after the bubble', (await page.locator('.cim-voice').count()) === 6 && r1 && r1.placed);
+    check('B2 pending text before the answer', (await row('m1')).text.startsWith('📝 Transcribing'));
+    check('B3 own messages aligned right (mine class)', (await row('m2')).mine && !(await row('m1')).mine);
+    await page.waitForFunction(() => window.__tx.calls.length === 6 && window.__tx.inflight === 0, null, { timeout: 8000 });
+    const order = await page.evaluate(() => window.__tx.calls.map((c) => c.id));
+    const visible = page.visibleAtLoad;
+    check('B4 the first request is a message on screen, not the newest off-screen one', visible.length > 0 && !visible.includes('m6') && visible.includes(order[0]), `order ${order} visible at load ${visible}`);
+    const rest = order.filter((id) => !visible.includes(id));
+    check('B5 the rest newest-first', rest.join() === rest.slice().sort().reverse().join(), rest.join());
+    check('B6 never more than 2 in flight', (await page.evaluate(() => window.__tx.maxInflight)) <= 2);
+    await settle(page);
+    check('B7 every row shows its own transcript', (await Promise.all(['m1', 'm2', 'm3', 'm4', 'm5', 'm6'].map(row))).every((r, i) => r.state === 'done' && r.text === 'T:m' + (i + 1)));
+    check('B8 cached per message id', await page.evaluate(() => window.__store['voiceTx:m3']?.t === 'T:m3' && typeof window.__store['voiceTx:m3'].at === 'number'));
+    // React drops our row → re-inserted, no new request
+    await page.evaluate(() => document.querySelector('.cim-voice[data-cim-voice-for="m2"]').remove());
+    await settle(page);
+    check('B9 row removed by a re-render comes back with its text, no new request', (await row('m2'))?.text === 'T:m2' && (await page.evaluate(() => window.__tx.calls.length)) === 6);
+    // Same message rendered twice → one request, both rows filled
+    await page.evaluate((s) => { window.addVoice({ id: 'd1', src: s }); window.addVoice({ id: 'd1', src: s }); }, src('d1'));
+    await page.waitForFunction(() => document.querySelectorAll('.cim-voice[data-cim-voice-for="d1"][data-state="done"]').length === 2, null, { timeout: 5000 }).catch(() => {});
+    check('B10 same message twice → 1 request, both rows show the text', (await page.evaluate(() => window.__tx.calls.filter((c) => c.id === 'd1').length)) === 1 && (await page.locator('.cim-voice[data-cim-voice-for="d1"][data-state="done"]').count()) === 2);
+    // Failure → Retry → success; failures are not cached
+    await page.evaluate((s) => { window.__tx.fail.add('f1'); window.addVoice({ id: 'f1', src: s }); window.scrollThread('bottom'); }, src('f1'));
+    await page.waitForSelector('.cim-voice[data-cim-voice-for="f1"][data-state="failed"]', { timeout: 5000 });
+    check('B11 failure shows "Transcription failed · Retry" and is not cached', (await row('f1')).text === 'Transcription failed · Retry' && !(await page.evaluate(() => 'voiceTx:f1' in window.__store)));
+    await page.evaluate(() => window.__tx.fail.delete('f1'));
+    await page.click('.cim-voice[data-cim-voice-for="f1"] .cim-voice-retry');
+    await page.waitForSelector('.cim-voice[data-cim-voice-for="f1"][data-state="done"]', { timeout: 5000 });
+    check('B12 Retry → transcript', (await row('f1')).text === 'T:f1');
+    // Service worker died mid-request → undefined → failed
+    await page.evaluate((s) => { window.__tx.mode = 'undefined'; window.addVoice({ id: 'u1', src: s }); window.scrollThread('bottom'); }, src('u1'));
+    await page.waitForSelector('.cim-voice[data-cim-voice-for="u1"][data-state="failed"]', { timeout: 5000 });
+    check('B13 no answer (worker killed) → failed with Retry', !!(await row('u1')));
+    // Extension reloaded → sendMessage throws → failed, no page error
+    await page.evaluate((s) => { window.__tx.mode = 'throw'; window.addVoice({ id: 'x1', src: s }); window.scrollThread('bottom'); }, src('x1'));
+    await page.waitForSelector('.cim-voice[data-cim-voice-for="x1"][data-state="failed"]', { timeout: 5000 });
+    check('B14 extension context gone → failed, nothing thrown into the page', !results.some((r) => r.startsWith('PAGEERROR')));
+    await page.evaluate(() => { window.__tx.mode = ''; });
+    // Late answer must not land on another customer's message
+    await page.evaluate((s) => { window.__tx.delay = 800; window.addVoice({ id: 'late1', src: s }); window.scrollThread('bottom'); }, src('late1'));
+    await page.waitForFunction(() => window.__tx.calls.some((c) => c.id === 'late1'), null, { timeout: 5000 });
+    await page.evaluate((s) => window.swapConversation([{ text: 'other customer' }, { id: 'y1', src: s }]), src('y1'));
+    await page.waitForTimeout(1800);
+    check('B15 answer for a closed chat never shows under the new chat', (await row('y1'))?.text === 'T:y1' && !(await page.evaluate(() => [...document.querySelectorAll('.cim-voice')].some((r) => r.textContent.includes('T:late1')))));
+    // React reuses the y1 node for z1 → row follows
+    await page.evaluate((s) => { window.__tx.delay = 150; window.reuseVoice('y1', { id: 'z1', src: s }); }, src('z1'));
+    await page.waitForFunction(() => document.querySelector('.cim-voice[data-cim-voice-for="z1"]')?.dataset.state === 'done', null, { timeout: 5000 }).catch(() => {});
+    check('B16 reused node → row switches to the new message', (await row('z1'))?.text === 'T:z1' && !(await row('y1')));
+    // Key removed → feature off; key back → on
+    await page.evaluate(() => chrome.storage.local.set({ geminiApiKey: '' }));
+    await settle(page);
+    check('B17 no Gemini key → no rows', (await page.locator('.cim-voice').count()) === 0);
+    await page.evaluate(() => chrome.storage.local.set({ geminiApiKey: 'k' }));
+    await settle(page, 500);
+    check('B18 key set again → rows back from cache, no new request', (await row('z1'))?.text === 'T:z1' && (await page.evaluate(() => window.__tx.calls.filter((c) => c.id === 'z1').length)) === 1);
+    check('B19 never read the whole store', (await page.evaluate(() => window.__getNull)) === 0);
+    await page.screenshot({ path: path.join(OUT, 'B-rows.png') });
+    savedStore = await page.evaluate(() => JSON.parse(JSON.stringify(window.__store)));
+    await page.close();
+  }
+  {
+    const page = await openPage(browser, { seed: savedStore }, THREAD);
+    await settle(page, 600);
+    check('B20 reload: transcripts from cache, 0 requests', (await page.evaluate(() => window.__tx.calls.length)) === 0 && (await page.locator('.cim-voice[data-state="done"]').count()) === 6);
+    await page.close();
+  }
+  {
+    const page = await openPage(browser, { seed: {} }, THREAD);
+    check('B21 no key from the start → no rows, no requests', (await page.locator('.cim-voice').count()) === 0 && (await page.evaluate(() => window.__tx.calls.length)) === 0);
     await page.close();
   }
 

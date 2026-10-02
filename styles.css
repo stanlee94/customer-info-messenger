@@ -5619,3 +5619,53 @@ html.cim-compact-meta [style*="--cim-hug-edge"] {
 #cim-purchase-panel .cim-name-check[hidden] {
   display: none;
 }
+
+/* ── Voice messages: transcript + speed row under Meta's audio bubble (inbox-voice.js) ── */
+.cim-voice {
+  box-sizing: border-box;
+  width: fit-content;
+  min-width: 200px;
+  max-width: 320px;
+  margin: 4px 0 2px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", sans-serif;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #1c1e21;
+}
+.cim-voice--mine { margin-left: auto; }
+.cim-voice-text {
+  background: #f0f2f5;
+  border-radius: 8px;
+  padding: 6px 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+  cursor: text;
+}
+.cim-voice[data-state="pending"] .cim-voice-text { color: #65676b; }
+.cim-voice[data-state="failed"] .cim-voice-text { color: #b42318; background: #fef3f2; }
+.cim-voice-retry {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: #0a7cff;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.cim-voice-speed { display: flex; gap: 4px; margin-top: 4px; }
+.cim-voice-speed:empty { display: none; }
+.cim-voice-speed button {
+  border: 1px solid #0a7cff;
+  background: #fff;
+  color: #0a7cff;
+  border-radius: 10px;
+  padding: 1px 8px;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  cursor: pointer;
+}
+.cim-voice-speed button[aria-pressed="true"] { background: #0a7cff; color: #fff; }
