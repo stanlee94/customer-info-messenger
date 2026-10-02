@@ -205,6 +205,15 @@
     <label for="aiApiToken">API Token (optional)</label>
     <input type="password" id="aiApiToken" autocomplete="off" />
 
+    <h3>Voice message transcripts</h3>
+    <p class="hint">
+      Gemini API key (Google AI Studio). When set, every voice message in the inbox gets a
+      word-for-word transcript and 1× / 1.5× / 2× speed buttons underneath. Empty = off.
+      Voice clips are sent to Google.
+    </p>
+    <label for="geminiApiKey">Gemini API Key</label>
+    <input type="password" id="geminiApiKey" autocomplete="off" />
+
     <button id="save">Save</button>
     <span id="status"></span>
     <script src="options.js"></script>

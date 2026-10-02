@@ -2,7 +2,7 @@ const MANYCHAT_API_BASE = 'https://api.manychat.com';
 const CART_API_BASE = 'https://yxch9n4n6e.execute-api.ap-southeast-1.amazonaws.com/latest';
 const ORDER_STATUS_API_BASE = 'https://7n881aguj8.execute-api.ap-southeast-1.amazonaws.com';
 
-importScripts('notes-baserow.js');
+importScripts('notes-baserow.js', 'voice-transcribe.js');
 
 // Let content scripts read/write chrome.storage.session (default is
 // trusted-contexts only). Used for browser-session prefs like the cart's
@@ -1292,7 +1292,19 @@ const notesBackend = NotesBaserow.createNotesBackend({
   }),
 });
 
+// Voice message transcripts (inbox-voice.js → TRANSCRIBE_VOICE). Only
+// cdn.fbsbx.com clips are fetched; off when no Gemini key is set.
+const voiceTranscriber = VoiceTranscribe.createVoiceTranscriber({
+  fetch: (...a) => fetch(...a),
+  getKey: async () => (await chrome.storage.local.get('geminiApiKey')).geminiApiKey || '',
+});
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === 'TRANSCRIBE_VOICE') {
+    voiceTranscriber.transcribe(message).then(sendResponse);
+    return true;
+  }
+
   if (message?.type === 'GET_CUSTOMER_NOTES') {
     notesBackend.load(String(message.psid || '')).then(sendResponse);
     return true;

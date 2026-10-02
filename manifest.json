@@ -33,6 +33,8 @@
     "http://localhost:8000/*",
     "https://ec2.full2house.com/*",
     "https://www.facebook.com/plugins/*",
-    "https://*.fbcdn.net/*"
+    "https://*.fbcdn.net/*",
+    "https://cdn.fbsbx.com/*",
+    "https://generativelanguage.googleapis.com/*"
   ]
 }

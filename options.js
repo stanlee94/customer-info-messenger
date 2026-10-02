@@ -5,12 +5,13 @@ const baserowUsersTableIdInput = document.getElementById('baserowUsersTableId');
 const baserowOrdersTableIdInput = document.getElementById('baserowOrdersTableId');
 const baserowNoteLogTableIdInput = document.getElementById('baserowNoteLogTableId');
 const aiApiUrlInput = document.getElementById('aiApiUrl');
+const geminiApiKeyInput = document.getElementById('geminiApiKey');
 const aiApiTokenInput = document.getElementById('aiApiToken');
 const status = document.getElementById('status');
 
 chrome.storage.local.get(
-  ['manychatToken', 'baserowBaseUrl', 'baserowToken', 'baserowUsersTableId', 'baserowOrdersTableId', 'baserowNoteLogTableId', 'aiApiUrl', 'aiApiToken'],
-  ({ manychatToken, baserowBaseUrl, baserowToken, baserowUsersTableId, baserowOrdersTableId, baserowNoteLogTableId, aiApiUrl, aiApiToken }) => {
+  ['manychatToken', 'baserowBaseUrl', 'baserowToken', 'baserowUsersTableId', 'baserowOrdersTableId', 'baserowNoteLogTableId', 'aiApiUrl', 'aiApiToken', 'geminiApiKey'],
+  ({ manychatToken, baserowBaseUrl, baserowToken, baserowUsersTableId, baserowOrdersTableId, baserowNoteLogTableId, aiApiUrl, aiApiToken, geminiApiKey }) => {
     if (manychatToken) tokenInput.value = manychatToken;
     if (baserowBaseUrl) baserowBaseUrlInput.value = baserowBaseUrl;
     if (baserowToken) baserowTokenInput.value = baserowToken;
@@ -18,6 +19,7 @@ chrome.storage.local.get(
     if (baserowOrdersTableId) baserowOrdersTableIdInput.value = baserowOrdersTableId;
     if (baserowNoteLogTableId) baserowNoteLogTableIdInput.value = baserowNoteLogTableId;
     if (aiApiUrl) aiApiUrlInput.value = aiApiUrl;
+    if (geminiApiKey) geminiApiKeyInput.value = geminiApiKey;
     if (aiApiToken) aiApiTokenInput.value = aiApiToken;
   }
 );
@@ -103,6 +105,7 @@ document.getElementById('save').addEventListener('click', () => {
       baserowNoteLogTableId: baserowNoteLogTableIdInput.value.trim(),
       aiApiUrl: aiApiUrlInput.value.trim().replace(/\/+$/, ''),
       aiApiToken: aiApiTokenInput.value.trim(),
+      geminiApiKey: geminiApiKeyInput.value.trim(),
     },
     () => {
       status.textContent = 'Saved.';
