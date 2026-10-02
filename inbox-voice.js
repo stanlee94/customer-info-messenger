@@ -19,6 +19,9 @@
   const CACHE_DROP = 500;
   const PRUNE_DELAY_MS = window.__cimVoicePruneDelay ?? 30000;
   const SPEEDS = [1, 1.5, 2];
+  // Content-side backstop above the worst legitimate background time
+  // (30 s download + 3 × 60 s Gemini + 8 s of retry waits).
+  const REQUEST_TIMEOUT_MS = window.__cimVoiceReqTimeout ?? 220000;
 
   let enabled = false;
   let speed = 1;
@@ -26,6 +29,7 @@
   const failed = new Set();     // ids whose last attempt failed (never cached)
   const lookedUp = new Set();   // ids whose cache entry was read (or is being read)
   const inflight = new Set();
+  const deadlines = new Map();   // id → timer of an in-flight request
   const queue = [];             // ids waiting, in want() order (newest first)
   const queued = new Set();
   const onScreen = new Set();
@@ -116,9 +120,15 @@
     for (const row of document.querySelectorAll(`.cim-voice[data-cim-voice-for="${CSS.escape(id)}"]`)) renderRow(row);
   }
 
-  function ensureRow(a, id) {
+  // claimed: host → id for this sync pass. Two buttons under one host (a
+  // message with two clips, or a shallower DOM than expected) would otherwise
+  // pass the single row back and forth forever; the first (newest) one wins.
+  function ensureRow(a, id, claimed) {
     const host = hostOf(a);
-    if (!host || !host.parentElement) return;
+    if (!host || !host.parentElement) return false;
+    const owner = claimed.get(host);
+    if (owner !== undefined && owner !== id) return false;
+    claimed.set(host, id);
     let row = host.nextElementSibling;
     if (!row || !row.classList.contains('cim-voice')) {
       row = buildRow();
@@ -128,6 +138,7 @@
     const mine = a.getAttribute('data-cim-voice-mine') === '1';
     if (row.classList.contains('cim-voice--mine') !== mine) row.classList.toggle('cim-voice--mine', mine);
     renderRow(row);
+    return true;
   }
 
   function removeAllRows() {
@@ -138,11 +149,18 @@
   function want(id) {
     if (memo.has(id) || failed.has(id) || inflight.has(id) || queued.has(id) || lookedUp.has(id)) return;
     lookedUp.add(id);
-    chrome.storage.local.get([CACHE_PREFIX + id], (r) => {
-      const hit = r && r[CACHE_PREFIX + id];
-      if (hit && typeof hit.t === 'string') { memo.set(id, hit.t); renderAll(id); return; }
-      enqueue(id, false);
-    });
+    try {
+      chrome.storage.local.get([CACHE_PREFIX + id], (r) => {
+        const hit = r && r[CACHE_PREFIX + id];
+        if (hit && typeof hit.t === 'string') { memo.set(id, hit.t); renderAll(id); return; }
+        enqueue(id, false);
+      });
+    } catch (e) {
+      // Extension reloaded while this tab stayed open: every chrome.* call throws.
+      lookedUp.delete(id);
+      failed.add(id);
+      renderAll(id);
+    }
   }
 
   function enqueue(id, front) {
@@ -160,11 +178,14 @@
   }
 
   function finish(id, res) {
+    if (!inflight.has(id)) return;   // already timed out — ignore a late answer
+    clearTimeout(deadlines.get(id));
+    deadlines.delete(id);
     inflight.delete(id);
     if (res && res.ok) {
       const t = typeof res.text === 'string' ? res.text : '';
       memo.set(id, t);
-      chrome.storage.local.set({ [CACHE_PREFIX + id]: { t, at: Date.now() } });
+      try { chrome.storage.local.set({ [CACHE_PREFIX + id]: { t, at: Date.now() } }); } catch (e) { /* context gone: shown, not cached */ }
     } else {
       failed.add(id);
     }
@@ -184,6 +205,7 @@
       const url = srcOf.get(id);
       if (!url) continue;
       inflight.add(id);
+      deadlines.set(id, setTimeout(() => finish(id, { ok: false, error: 'timeout' }), REQUEST_TIMEOUT_MS));
       try {
         chrome.runtime.sendMessage({ type: 'TRANSCRIBE_VOICE', url, messageId: id }, (res) => {
           void chrome.runtime.lastError;
@@ -216,7 +238,7 @@
   function setSpeed(r) {
     if (!SPEEDS.includes(r) || r === speed) return;
     speed = r;
-    chrome.storage.local.set({ voiceSpeed: r });
+    try { chrome.storage.local.set({ voiceSpeed: r }); } catch (e) { /* context gone: applies to this page only */ }
     applySpeed();
     for (const row of document.querySelectorAll('.cim-voice')) renderRow(row);
   }
@@ -232,6 +254,7 @@
     const t0 = performance.now();
     if (!enabled) { removeAllRows(); return; }
     const anchors = document.querySelectorAll(TAGGED);
+    const claimed = new Map();
     for (let i = anchors.length - 1; i >= 0; i--) {   // bottom-up = newest first
       const a = anchors[i];
       const id = a.getAttribute('data-cim-voice-id');
@@ -243,14 +266,13 @@
         ioDeadline = performance.now() + IO_WAIT_MS;
         io.observe(a);
       }
-      ensureRow(a, id);
-      want(id);
+      if (ensureRow(a, id, claimed)) want(id);
     }
     // Rows whose button is gone or now belongs to another message.
     for (const row of document.querySelectorAll('.cim-voice')) {
       const prev = row.previousElementSibling;
-      const a = prev && (prev.matches?.(TAGGED) ? prev : prev.querySelector?.(TAGGED));
-      if (!a || a.getAttribute('data-cim-voice-id') !== row.dataset.cimVoiceFor) row.remove();
+      const mine = `${TAGGED}[data-cim-voice-id="${CSS.escape(row.dataset.cimVoiceFor || '')}"]`;
+      if (!prev || !(prev.matches?.(mine) || prev.querySelector?.(mine))) row.remove();
     }
     pump();
     stats.syncs++;
@@ -283,7 +305,11 @@
   function setEnabled(on) {
     if (enabled === on) return;
     enabled = on;
-    if (!on) { queue.length = 0; queued.clear(); }
+    if (!on) {
+      for (const id of queued) lookedUp.delete(id);
+      queue.length = 0;
+      queued.clear();
+    }
     applySpeed();
     schedule();
   }

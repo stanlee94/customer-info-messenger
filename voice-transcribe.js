@@ -14,6 +14,7 @@
   const MAX_BYTES = 15 * 1024 * 1024;   // Gemini inline limit is 20 MB per request
   const RETRY_DELAYS = [2000, 6000];
   const TIMEOUT_MS = 60000;
+  const DOWNLOAD_TIMEOUT_MS = 30000;
   // Only used with a general model; the transcribe model takes no prompt.
   const PROMPT = 'Transcribe this voice message word for word in the language(s) actually spoken. ' +
     'Do not translate, summarise or add anything. Write Mandarin and Cantonese in Chinese characters; ' +
@@ -48,43 +49,54 @@
     return found ? parts.join('').trim() : null;
   }
 
-  function createVoiceTranscriber({ fetch, getKey, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), model = MODEL, timeoutMs = TIMEOUT_MS }) {
+  // Runs fn(signal) with an abort after ms. The deadline covers the body read
+  // too (arrayBuffer/json), not just the response headers.
+  async function withDeadline(ms, fn) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), ms);
+    try { return await fn(ctrl.signal); } finally { clearTimeout(timer); }
+  }
+
+  function createVoiceTranscriber({ fetch, getKey, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), model = MODEL, timeoutMs = TIMEOUT_MS, downloadTimeoutMs = DOWNLOAD_TIMEOUT_MS }) {
     async function download(url) {
-      let res;
-      try { res = await fetch(url, { credentials: 'omit' }); } catch (e) {
+      try {
+        return await withDeadline(downloadTimeoutMs, async (signal) => {
+          const res = await fetch(url, { credentials: 'omit', signal });
+          if (!res.ok) return { ok: false, error: 'download_failed', detail: 'HTTP ' + res.status };
+          const buf = await res.arrayBuffer();
+          if (buf.byteLength > MAX_BYTES) return { ok: false, error: 'too_large' };
+          if (!buf.byteLength) return { ok: false, error: 'download_failed', detail: 'empty' };
+          return { ok: true, buf };
+        });
+      } catch (e) {
         return { ok: false, error: 'download_failed', detail: String(e?.message || e) };
       }
-      if (!res.ok) return { ok: false, error: 'download_failed', detail: 'HTTP ' + res.status };
-      const buf = await res.arrayBuffer();
-      if (buf.byteLength > MAX_BYTES) return { ok: false, error: 'too_large' };
-      if (!buf.byteLength) return { ok: false, error: 'download_failed', detail: 'empty' };
-      return { ok: true, buf };
     }
 
-    async function postOnce(key, body) {
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-      try {
-        return await fetch(API, {
+    // One Gemini attempt: { ok, text } | { ok: false, status } | throws (network, timeout).
+    function postOnce(key, body) {
+      return withDeadline(timeoutMs, async (signal) => {
+        const res = await fetch(API, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
           body: JSON.stringify(body),
-          signal: ctrl.signal,
+          signal,
         });
-      } finally { clearTimeout(timer); }
+        if (!res.ok) return { ok: false, status: res.status };
+        let json = null;
+        try { json = await res.json(); } catch (e) { if (signal.aborted) throw e; }
+        return { ok: true, text: readText(json) };
+      });
     }
 
     async function callGemini(key, body) {
       for (let attempt = 0; ; attempt++) {
         let retryable, detail;
         try {
-          const res = await postOnce(key, body);
-          if (res.ok) {
-            const text = readText(await res.json().catch(() => null));
-            return text === null ? { ok: false, error: 'bad_response' } : { ok: true, text };
-          }
-          retryable = res.status === 429 || res.status >= 500;
-          detail = 'HTTP ' + res.status;
+          const r = await postOnce(key, body);
+          if (r.ok) return r.text === null ? { ok: false, error: 'bad_response' } : { ok: true, text: r.text };
+          retryable = r.status === 429 || r.status >= 500;
+          detail = 'HTTP ' + r.status;
         } catch (e) {
           retryable = true;
           detail = String(e?.message || e);
@@ -94,13 +106,18 @@
       }
     }
 
+    // Never rejects: background.js passes the result straight to sendResponse.
     async function transcribe({ url } = {}) {
-      if (!/^https:\/\/cdn\.fbsbx\.com\//.test(String(url || ''))) return { ok: false, error: 'bad_url' };
-      const key = await getKey();
-      if (!key) return { ok: false, error: 'no_key' };
-      const dl = await download(url);
-      if (!dl.ok) return dl;
-      return callGemini(key, buildRequest(model, toBase64(dl.buf)));
+      try {
+        if (!/^https:\/\/cdn\.fbsbx\.com\//.test(String(url || ''))) return { ok: false, error: 'bad_url' };
+        const key = await getKey();
+        if (!key) return { ok: false, error: 'no_key' };
+        const dl = await download(url);
+        if (!dl.ok) return dl;
+        return await callGemini(key, buildRequest(model, toBase64(dl.buf)));
+      } catch (e) {
+        return { ok: false, error: 'internal', detail: String(e?.message || e) };
+      }
     }
 
     return { transcribe };

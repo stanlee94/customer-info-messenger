@@ -1301,7 +1301,7 @@ const voiceTranscriber = VoiceTranscribe.createVoiceTranscriber({
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === 'TRANSCRIBE_VOICE') {
-    voiceTranscriber.transcribe(message).then(sendResponse);
+    voiceTranscriber.transcribe(message).then(sendResponse, (e) => sendResponse({ ok: false, error: 'internal', detail: String(e) }));
     return true;
   }
 

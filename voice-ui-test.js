@@ -38,6 +38,7 @@ const stub = `
   window.__getNull = 0;
   const local = {
     get(keys, cb) {
+      if (window.__tx && window.__tx.mode === 'dead') throw new Error('Extension context invalidated.');
       let out = {};
       if (keys == null) { window.__getNull++; out = clone(store); }
       else (Array.isArray(keys) ? keys : [keys]).forEach((k) => { if (k in store) out[k] = clone(store[k]); });
@@ -47,6 +48,7 @@ const stub = `
     },
     getKeys(cb) { const p = Promise.resolve(Object.keys(store)); if (cb) p.then(cb); return p; },
     set(obj, cb) {
+      if (window.__tx && window.__tx.mode === 'dead') throw new Error('Extension context invalidated.');
       const changes = {};
       for (const k in obj) { changes[k] = { oldValue: store[k], newValue: clone(obj[k]) }; store[k] = clone(obj[k]); }
       setTimeout(() => { listeners.forEach((l) => l(changes, 'local')); cb && cb(); }, 0);
@@ -64,11 +66,12 @@ const stub = `
   window.__tx = { delay: 150, calls: [], inflight: 0, maxInflight: 0, fail: new Set(), mode: '' };
   window.chrome = { storage: { local, onChanged: { addListener: (l) => listeners.push(l) } }, runtime: { lastError: undefined } };
   chrome.runtime.sendMessage = (msg, cb) => {
-    if (window.__tx.mode === 'throw') throw new Error('Extension context invalidated.');
+    if (window.__tx.mode === 'throw' || window.__tx.mode === 'dead') throw new Error('Extension context invalidated.');
     if (msg.type !== 'TRANSCRIBE_VOICE') { cb && cb({ ok: false, error: 'stub' }); return; }
     const tx = window.__tx;
     tx.calls.push({ id: msg.messageId, url: msg.url });
     tx.inflight++; tx.maxInflight = Math.max(tx.maxInflight, tx.inflight);
+    if (tx.mode === 'hang') { window.__hung = (window.__hung || []).concat(() => cb && cb({ ok: true, text: 'LATE:' + msg.messageId })); return; }
     setTimeout(() => {
       tx.inflight--;
       if (tx.mode === 'undefined') return cb && cb(undefined);
@@ -87,7 +90,7 @@ function check(name, cond, extra) {
 async function openPage(browser, seed, initial, opts = {}) {
   const page = await browser.newPage({ viewport: { width: 900, height: 700 } });
   page.on('pageerror', (e) => results.push('PAGEERROR ' + e.message));
-  await page.addInitScript((s) => { window.__seed = s.seed; window.__cimVoicePruneDelay = s.pruneDelay; }, seed);
+  await page.addInitScript((s) => { window.__seed = s.seed; window.__cimVoicePruneDelay = s.pruneDelay; window.__cimVoiceReqTimeout = s.reqTimeout; }, seed);
   await page.addInitScript(stub);
   await page.goto('file://' + path.join(EXT, 'voice-ui-fixture.html'));
   await page.evaluate((items) => window.swapConversation(items), initial);
@@ -301,6 +304,49 @@ for (let i = 1; i <= 6; i++) { THREAD.push({ text: 'hello ' + i }); THREAD.push(
     });
     check('E1 above 3,000 transcripts → oldest 500 dropped', left.n === 2510 && left.oldestGone && left.keptNext, JSON.stringify(left));
     check('E2 pruning leaves other keys alone and never reads the whole store', left.rfm && left.getNull === 0);
+    await page.close();
+  }
+
+  // ── F. Fixes from the final review ──
+  {
+    const page = await openPage(browser, { seed: { geminiApiKey: 'k' }, reqTimeout: 600 }, THREAD);
+    await page.waitForFunction(() => window.__tx.calls.length === 6 && window.__tx.inflight === 0, null, { timeout: 8000 });
+    // F1: two voice buttons under one host (one message with two clips / shallower DOM) must not loop
+    await page.evaluate((s) => {
+      const a = window.addVoice({ id: 's1', src: s[0] }); const b = window.addVoice({ id: 's2', src: s[1] });
+      a.querySelector('._1mj2').append(b.querySelector('a:not([aria-hidden])'));
+      window.scrollThread('bottom');
+    }, [src('s1'), src('s2')]);
+    await settle(page, 600);
+    const n0 = await page.evaluate(() => window.__cimVoiceStats.syncs);
+    await page.waitForTimeout(1000);
+    const n1 = await page.evaluate(() => window.__cimVoiceStats.syncs);
+    check('F1 two buttons sharing one host → no endless re-render loop', n1 - n0 < 5, `${n1 - n0} syncs in 1 s idle`);
+    check('F1b the shared host gets exactly one row', (await page.evaluate(() => window.clipRootOf('s1').parentElement.querySelectorAll(':scope > .cim-voice').length)) === 1);
+    // F2: background never answers → row fails after the content-side deadline; a late answer is ignored
+    await page.evaluate((s) => { window.__tx.mode = 'hang'; window.addVoice({ id: 'h1', src: s }); window.scrollThread('bottom'); }, src('hang1'));
+    await page.waitForSelector('.cim-voice[data-cim-voice-for="h1"][data-state="failed"]', { timeout: 5000 }).catch(() => {});
+    check('F2 no answer at all → failed with Retry after the deadline', (await page.evaluate(() => document.querySelector('.cim-voice[data-cim-voice-for="h1"]')?.dataset.state)) === 'failed');
+    await page.evaluate(() => { (window.__hung || []).forEach((f) => f()); });
+    await settle(page);
+    check('F2b a late answer after the deadline is ignored (no cache, stays failed)', (await page.evaluate(() => document.querySelector('.cim-voice[data-cim-voice-for="h1"]').dataset.state)) === 'failed' && !(await page.evaluate(() => 'voiceTx:h1' in window.__store)));
+    await page.evaluate(() => { window.__tx.mode = ''; });
+    // F4: key off and on while messages are still queued → they still get transcribed
+    await page.evaluate((list) => { window.__tx.delay = 400; list.forEach(([id, s]) => window.addVoice({ id, src: s, prepend: true })); }, ['q1', 'q2', 'q3', 'q4', 'q5', 'q6'].map((id) => [id, src(id)]));
+    await settle(page, 450);
+    await page.evaluate(() => chrome.storage.local.set({ geminiApiKey: '' }));
+    await settle(page, 100);
+    await page.evaluate(() => chrome.storage.local.set({ geminiApiKey: 'k' }));
+    await page.waitForFunction(() => ['q1', 'q2', 'q3', 'q4', 'q5', 'q6'].every((id) => document.querySelector(`.cim-voice[data-cim-voice-for="${id}"]`)?.dataset.state === 'done'), null, { timeout: 8000 }).catch(() => {});
+    const qs = await page.evaluate(() => ['q1', 'q2', 'q3', 'q4', 'q5', 'q6'].map((id) => document.querySelector(`.cim-voice[data-cim-voice-for="${id}"]`)?.dataset.state).join());
+    check('F4 key cleared and set again mid-queue → every queued message still transcribed', qs === 'done,done,done,done,done,done', qs);
+    // F3: extension reloaded (every chrome.* call throws) → a new message fails, nothing thrown
+    await page.evaluate((s) => { window.__tx.delay = 50; window.__tx.mode = 'dead'; window.addVoice({ id: 'dead1', src: s }); window.scrollThread('bottom'); }, src('dead1'));
+    await page.waitForSelector('.cim-voice[data-cim-voice-for="dead1"][data-state="failed"]', { timeout: 3000 }).catch(() => {});
+    check('F3 extension context gone → new message shows failed, not Transcribing forever', (await page.evaluate(() => document.querySelector('.cim-voice[data-cim-voice-for="dead1"]')?.dataset.state)) === 'failed');
+    await page.click('.cim-voice[data-cim-voice-for="m6"] .cim-voice-speed button[data-rate="2"]').catch(() => {});
+    await settle(page);
+    check('F3b a speed click with the context gone throws nothing into the page', !results.some((r) => r.startsWith('PAGEERROR')));
     await page.close();
   }
 

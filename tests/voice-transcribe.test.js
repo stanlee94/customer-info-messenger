@@ -147,3 +147,39 @@ test('200 with an unreadable body → bad_response', async () => {
   const { t } = setup({ responses: [reply(200, { status: 'failed' })] });
   assert.equal((await t.transcribe({ url: CLIP })).error, 'bad_response');
 });
+
+// ── Fixes from the final review (I2): nothing may hang or reject ──
+test('a clip download that never answers times out → download_failed', async () => {
+  const calls = [];
+  const fetch = (url, opts) => { calls.push(url); return new Promise((_, reject) => opts.signal.addEventListener('abort', () => reject(new Error('aborted')))); };
+  const t = createVoiceTranscriber({ fetch, getKey: async () => 'k', sleep: async () => {}, downloadTimeoutMs: 30 });
+  const res = await t.transcribe({ url: CLIP });
+  assert.equal(res.error, 'download_failed');
+  assert.equal(calls.length, 1);
+});
+
+test('a clip body that stalls mid-read times out → download_failed', async () => {
+  const fetch = async (url, opts) => ({ ok: true, status: 200, arrayBuffer: () => new Promise((_, reject) => opts.signal.addEventListener('abort', () => reject(new Error('aborted')))) });
+  const t = createVoiceTranscriber({ fetch, getKey: async () => 'k', sleep: async () => {}, downloadTimeoutMs: 30 });
+  assert.equal((await t.transcribe({ url: CLIP })).error, 'download_failed');
+});
+
+test('a Gemini body that stalls after the headers times out and is retried', async () => {
+  let n = 0;
+  const fetch = async (url, opts) => {
+    if (url.startsWith('https://cdn.fbsbx.com/')) return { ok: true, status: 200, arrayBuffer: async () => Uint8Array.from([1]).buffer };
+    n++;
+    if (n === 1) return { ok: true, status: 200, json: () => new Promise((_, reject) => opts.signal.addEventListener('abort', () => reject(new Error('aborted')))) };
+    return { ok: true, status: 200, json: async () => okJson('ok') };
+  };
+  const t = createVoiceTranscriber({ fetch, getKey: async () => 'k', sleep: async () => {}, timeoutMs: 30 });
+  assert.deepEqual(await t.transcribe({ url: CLIP }), { ok: true, text: 'ok' });
+  assert.equal(n, 2);
+});
+
+test('transcribe never rejects: an unexpected throw becomes {ok:false, error:"internal"}', async () => {
+  const t = createVoiceTranscriber({ fetch: async () => { throw new Error('x'); }, getKey: async () => { throw new Error('storage gone'); } });
+  const res = await t.transcribe({ url: CLIP });
+  assert.equal(res.ok, false);
+  assert.equal(res.error, 'internal');
+});
