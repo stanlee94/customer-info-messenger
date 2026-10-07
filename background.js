@@ -2,7 +2,7 @@ const MANYCHAT_API_BASE = 'https://api.manychat.com';
 const CART_API_BASE = 'https://yxch9n4n6e.execute-api.ap-southeast-1.amazonaws.com/latest';
 const ORDER_STATUS_API_BASE = 'https://7n881aguj8.execute-api.ap-southeast-1.amazonaws.com';
 
-importScripts('notes-baserow.js', 'voice-transcribe.js');
+importScripts('notes-baserow.js', 'voice-transcribe.js', 'order-status.js');
 
 // Let content scripts read/write chrome.storage.session (default is
 // trusted-contexts only). Used for browser-session prefs like the cart's
@@ -495,31 +495,13 @@ function getRegionPostcode(areaId) {
     .catch((err) => ({ ok: false, error: err.message }));
 }
 
-function fetchOrderStatuses(orderIds) {
-  if (!orderIds.length) return Promise.resolve({ ok: true, statuses: {} });
-  return fetch(`${ORDER_STATUS_API_BASE}/orders/${orderIds.join(',')}`)
-    .then((res) => {
-      // 404 = none of the SNs exist in the ERP yet (e.g. a customer whose
-      // only orders were placed today). That's a valid "all NO DATA" answer,
-      // not an API failure — mixed batches return 200 with notFound entries.
-      if (res.status === 404) return { data: [] };
-      if (!res.ok) throw new Error(`Order status API error: ${res.status}`);
-      return res.json();
-    })
-    .then((json) => {
-      const statuses = {};
-      const items = Array.isArray(json) ? json : Array.isArray(json?.data) ? json.data : [];
-      items.forEach((item) => {
-        const id = item.onlineOrderNumber;
-        // aggregateStatus covers the whole split-order family (PARTIAL_AUDIT
-        // when only some children shipped); legacy status is one child only.
-        const st = item.aggregateStatus || item.status;
-        if (id && st) statuses[String(id)] = st;
-      });
-      return { ok: true, statuses };
-    })
-    .catch((err) => ({ ok: false, error: err.message }));
-}
+// Status tags: one signed lookup per order on qianyi-api-query's track route
+// (order-status.js has why — the old batch /orders/:ids answers 404 for
+// everything since the ERP retired its static signature).
+const fetchOrderStatuses = OrderStatus.createOrderStatusFetcher({
+  fetch: (...args) => fetch(...args),
+  baseUrl: ORDER_STATUS_API_BASE,
+});
 
 function throwBaserowError(res) {
   return res.text().then((text) => {

@@ -5757,7 +5757,7 @@
     tag.className = `cim-status-tag cim-status-tag--${kind}`;
     tag.textContent = STATUS_TAG_LABELS[kind];
     if (kind === 'nodata') {
-      tag.title = 'No ERP activity in the last 60 days — status unknown (old order, likely shipped long ago)';
+      tag.title = 'Not found in the ERP — the order has not reached the ERP yet, or the status lookup failed';
     }
     return tag;
   }
