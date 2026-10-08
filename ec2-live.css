@@ -344,17 +344,65 @@
    :not([colspan]) guard keeps the "点击加载更多" row alone.
    =========================================================================== */
 
+/* Widths: --ddr-cw1/2/4 on .l-table when the host dragged a header grip
+   (installColumnResize), else the defaults. table-layout: fixed on both
+   tables, so content can never widen a column (a batch chip on the card's
+   line 2 squeezed 留言内容 to one character with the auto layout). */
+.ddr-msg-head,
+.ddr-msg-body { table-layout: fixed !important; }
+
+/* The fallbacks below apply only until installColumnResize runs: it always
+   sets the three variables - the host's saved widths, or defaults computed
+   from the table's width (defaultColPcts). Plain percentages only: Chrome
+   treats a calc()/max() mixing % and px on a fixed-layout cell as auto. */
 .ddr-msg-head th:nth-child(1),
-.ddr-msg-body > tbody > tr > td:nth-child(1):not([colspan]) { width: 52% !important; }
+.ddr-msg-body > tbody > tr > td:nth-child(1):not([colspan]) { width: var(--ddr-cw1, 52%) !important; }
 
 .ddr-msg-head th:nth-child(2),
-.ddr-msg-body > tbody > tr > td:nth-child(2):not([colspan]) { width: 30% !important; }
+.ddr-msg-body > tbody > tr > td:nth-child(2):not([colspan]) { width: var(--ddr-cw2, 30%) !important; }
 
 .ddr-msg-head th:nth-child(3),
 .ddr-msg-body > tbody > tr > td:nth-child(3):not([colspan]) { display: none !important; }
 
 .ddr-msg-head th:nth-child(4),
-.ddr-msg-body > tbody > tr > td:nth-child(4):not([colspan]) { width: 18% !important; }
+.ddr-msg-body > tbody > tr > td:nth-child(4):not([colspan]) { width: var(--ddr-cw4, 18%) !important; }
+
+/* A cell keeps its column: the card's two lines wrap when the column is
+   narrower than they are (the 🛒 pill and chips never shrink), and nothing
+   paints into the neighbouring cell. */
+.ddr-msg-body > tbody > tr > td:not([colspan]) { overflow: hidden; }
+.ddr-msg-body > tbody > tr > td:nth-child(2):not([colspan]) { overflow-wrap: anywhere; }
+.ddr-r1,
+.ddr-r2 { flex-wrap: wrap; row-gap: 3px; }
+
+/* Column grips on the header's inner borders (installColumnResize). */
+.ddr-msg-head th { position: relative; overflow: visible !important; }
+.ddr-col-grip {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: -6px;
+  z-index: 3;
+  width: 12px;
+  cursor: col-resize;
+  touch-action: none;
+}
+.ddr-col-grip::after {
+  content: "";
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  left: 5px;
+  width: 2px;
+  border-radius: 1px;
+  background: #CBD5E1;
+  transition: background var(--ddr-motion);
+}
+.ddr-col-grip:hover::after,
+.ddr-col-dragging .ddr-col-grip::after { background: #2563EB; }
+.ddr-col-grip:focus-visible { outline: 2px solid #2563EB; outline-offset: -2px; border-radius: 3px; }
+html.ddr-col-dragging,
+html.ddr-col-dragging * { cursor: col-resize !important; user-select: none !important; }
 
 .ddr-msg-head th {
   font-size: 14px !important;
@@ -2922,3 +2970,223 @@ body:has(.ddr-col-left) { background: var(--ddr-page) !important; }
   overflow-wrap: anywhere;
 }
 .ddr-tip-block-t.ddr-tip-block-muted { font-weight: 500; font-style: italic; color: #CBD5E1; }
+
+/* ===========================================================================
+   Medium and small windows (2026-10-08)
+
+   Above 1024px the three cards stand side by side (Live · Bid summary ·
+   Comments). Below that the comment table gets too narrow for the customer
+   card, the comment and the 得标 cell, so:
+
+     Medium (750–1023px)                Small (< 750px, one page scroll)
+     ┌───────┬──────────┬────────┐       ┌───────┬──────────┐
+     │ video │ controls │  bids  │       │ video │ controls │  Live
+     │       │ 刷新 · fx │ (grid) │       │       │ timer    │
+     │       │ timer    │        │       ├───────┴──────────┤
+     ├───────┴──────────┴────────┤       │ bids (grid)      │  Bids
+     │ comments (full width,     │       ├──────────────────┤
+     │ the rest of the window)   │       │ comments, one    │  Comments
+     └───────────────────────────┘       │ window tall      │
+                                         └──────────────────┘
+   750px is EC2's own switch: below it the page loads css/mob.css instead of
+   live.css (its rem sizes are ~3x bigger), so the two rules agree.
+
+   CSS only, nothing moved: the same grid items, re-placed. The video overlays
+   (stats badge, video ···, 结束直播 / 跑马灯) are absolutely placed children of
+   the column grid; given a grid-row / grid-column their containing block is
+   that grid area - the video cell - so they follow the video wherever it is.
+   ⇄ Flip is desktop-only: hidden here, and every placement below is written
+   as :is(html, .ddr-flip) … so it also beats the .ddr-flip rules.
+   =========================================================================== */
+
+@media (max-width: 1023.98px) {
+  .ddr-flip-btn { display: none !important; }
+
+  .ddr-col-left.ddr-col-left.ddr-col-left,
+  :is(html, .ddr-flip) .ddr-col-left.ddr-col-left.ddr-col-left {
+    float: none !important;
+    width: 100% !important;
+    padding-bottom: 0 !important;
+    column-gap: var(--ddr-gutter);
+  }
+  :is(html, .ddr-flip) .ddr-col-right.ddr-col-right.ddr-col-right {
+    float: none !important;
+    width: 100% !important;
+    padding: var(--ddr-gutter) !important;
+  }
+
+  /* Video: fills its cell (EC2 sizes the iframe in rem, 2.96rem / 10rem). */
+  :is(html, .ddr-flip) .ddr-col-left .l-iframe {
+    grid-column: 1;
+    grid-row: 1;
+    height: auto !important;
+    min-height: 0;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: var(--ddr-card-r) 0 0 var(--ddr-card-r);
+    background: #0F172A;
+  }
+  .ddr-col-left .l-iframe .iframecon,
+  .ddr-col-left .l-iframe iframe {
+    width: 100% !important;
+    height: 100% !important;
+    margin: 0 !important;
+  }
+
+  /* The Live card behind video + controls. */
+  :is(html, .ddr-flip) .ddr-col-left::before { grid-column: 1 / 3; grid-row: 1; }
+
+  /* Controls, 刷新 + converter and the timer: their own column beside the video. */
+  :is(html, .ddr-flip) .ddr-live-scroll {
+    grid-column: 2;
+    grid-row: 1;
+    border-radius: 0 var(--ddr-card-r) var(--ddr-card-r) 0;
+  }
+  :is(html, .ddr-flip) .ddr-col-left .l-group-btn,
+  :is(html, .ddr-flip) .ddr-goods .ddr-refresh-row { grid-column: auto; grid-row: auto; }
+  .ddr-col-left .l-group-btn { border-radius: 0 var(--ddr-card-r) 0 0; }
+
+  /* Overlays: placed in the video's grid cell. */
+  :is(html, .ddr-flip) .ddr-vstats,
+  :is(html, .ddr-flip) .ddr-vid-more,
+  :is(html, .ddr-flip) #endLiveBtnDiv,
+  :is(html, .ddr-flip) #edit_marquee_div { grid-column: 1 / 2; grid-row: 1 / 2; }
+  /* (Both lines explicit: an absolutely placed item's "auto" end line is the
+     grid's padding edge, not the next line.) */
+  :is(html, .ddr-flip) .ddr-vstats { top: 6px; left: 6px; max-width: calc(100% - 50px); }
+  :is(html, .ddr-flip) .ddr-vid-more { top: 6px; right: 6px; }
+  :is(html, .ddr-flip) #endLiveBtnDiv,
+  :is(html, .ddr-flip) #edit_marquee_div { right: 6px !important; }
+  :is(html, .ddr-flip) #endLiveBtnDiv { top: 44px !important; }
+  :is(html, .ddr-flip) #edit_marquee_div { top: 82px !important; }
+
+  /* Bid summary: codes in as many columns as fit, read top to bottom then
+     the next column (B1 B2 B3 … down the first column) - CSS columns, which
+     balance the column heights. Hairline rule between columns. */
+  :is(html, .ddr-flip) .ddr-goods #flowDivOne { border: 0 !important; }
+  .ddr-goods #allGroup tbody {
+    display: block;
+    column-width: 104px;
+    column-gap: 1px;
+    column-rule: 1px solid #EEF2F6;
+  }
+  .ddr-goods #allGroup tbody tr { break-inside: avoid; }
+  .ddr-goods #allGroup tbody tr.nogroup,
+  .ddr-goods #allGroup tbody tr:has(> td[colspan]) { column-span: all; }
+  .ddr-goods #allGroup tbody td:nth-child(1),
+  .ddr-goods #allGroup tbody td:nth-child(3) { font-size: 15px; }
+  .ddr-goods #allGroup tbody tr { min-height: 32px; }
+  /* Wide enough for the header's 关键字 word again. */
+  .ddr-goods #allGroup thead th:first-child { font-size: 11.5px !important; }
+}
+
+/* ---- Medium: a band across the top, comments under it -------------------- */
+@media (min-width: 750px) and (max-width: 1023.98px) {
+  :root {
+    --ddr-band-h: clamp(300px, 44vh, 470px);
+    /* EC2's desktop video box is ~0.585 as wide as it is tall (251 x 429 at 1440). */
+    --ddr-vid-w: calc((var(--ddr-band-h) - var(--ddr-gutter)) * 0.585);
+  }
+  :is(html, .ddr-flip) .ddr-col-left.ddr-col-left.ddr-col-left {
+    height: var(--ddr-band-h);
+    grid-template-columns: var(--ddr-vid-w) minmax(210px, 1fr) minmax(0, 1.15fr);
+    grid-template-rows: minmax(0, 1fr);
+  }
+  :is(html, .ddr-flip) .ddr-goods #flowDivOne { grid-column: 3; grid-row: 1; }
+  .ddr-col-right .l-table { height: calc(100vh - var(--ddr-band-h) - 2 * var(--ddr-gutter)) !important; }
+
+  .ddr-msg-head th:nth-child(1),
+  .ddr-msg-body > tbody > tr > td:nth-child(1):not([colspan]) { width: var(--ddr-cw1, 56%) !important; }
+  .ddr-msg-head th:nth-child(2),
+  .ddr-msg-body > tbody > tr > td:nth-child(2):not([colspan]) { width: var(--ddr-cw2, 18%) !important; }
+  .ddr-msg-head th:nth-child(4),
+  .ddr-msg-body > tbody > tr > td:nth-child(4):not([colspan]) { width: var(--ddr-cw4, 26%) !important; }
+}
+
+/* ---- Small: one page scroll - Live, Bids, Comments ----------------------- */
+@media (max-width: 749.98px) {
+  :root {
+    --ddr-vid-w: min(44vw, 300px);
+    --ddr-live-h: max(300px, calc(var(--ddr-vid-w) / 0.585));
+  }
+  :is(html, .ddr-flip) .ddr-col-left.ddr-col-left.ddr-col-left {
+    height: auto;
+    grid-template-columns: var(--ddr-vid-w) minmax(0, 1fr);
+    grid-template-rows: var(--ddr-live-h) auto;
+    row-gap: var(--ddr-gutter);
+  }
+  /* The bid list takes its full height: the page scrolls, not the list. */
+  :is(html, .ddr-flip) .ddr-goods #flowDivOne {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    contain: none;
+  }
+  .ddr-col-right .l-table { height: calc(100vh - 2 * var(--ddr-gutter)) !important; }
+  .ddr-col-right .l-table > .tab-body { overscroll-behavior: auto; }
+
+  /* Narrow controls column: the live name to one line, no eyebrow. */
+  .ddr-col-left .l-group-btn > p[data-ddr-live]::before { display: none; }
+  .ddr-col-left .l-group-btn > p[data-ddr-live]::after { -webkit-line-clamp: 1; }
+  .ddr-col-left .l-group-btn > .ddr-sales-btn,
+  .ddr-col-left .l-group-btn > .ddr-batch-btn { height: 40px; padding: 0 4px !important; font-size: 14px; }
+  /* The MYR / SGD pills say which field is which: the labels' height goes to the timer. */
+  .ddr-fx-label { display: none; }
+  .ddr-fx { gap: 5px; }
+  .ddr-fx-field { padding-top: 5px; padding-bottom: 5px; }
+
+  /* Customer card: the name may use the whole line (lines wrap, see the table section). */
+  .ddr-name { max-width: 100%; flex: 0 1 auto; }
+
+  /* Comment rows: the customer card on its own line, comment and 得标 under it.
+     Display only - the cells stay in their order, so okWin's
+     .parent().parent().prev().prev() walk is untouched. */
+  .ddr-msg-body,
+  .ddr-msg-body > tbody { display: block !important; width: 100% !important; }
+  .ddr-msg-body > tbody > tr {
+    display: grid !important;
+    grid-template-columns: minmax(0, 38%) minmax(0, 62%);
+  }
+  .ddr-msg-body > tbody > tr > td:nth-child(1):not([colspan]) {
+    grid-column: 1 / -1;
+    width: auto !important;
+    border-bottom: 0 !important;
+  }
+  .ddr-msg-body > tbody > tr > td:nth-child(2):not([colspan]) {
+    grid-column: 1;
+    width: auto !important;
+    padding: 2px 6px 6px 16px !important;
+    text-align: left !important;
+  }
+  .ddr-msg-body > tbody > tr > td:nth-child(4):not([colspan]) {
+    grid-column: 2;
+    width: auto !important;
+    padding: 2px 20px 6px 6px !important;
+  }
+  .ddr-msg-body > tbody > tr > td[colspan] { grid-column: 1 / -1; }
+  /* Our own posts have no 得标: the preview takes the whole line. */
+  .ddr-msg-body > tbody > tr.ddr-own > td:nth-child(2):not([colspan]) { grid-column: 1 / -1; padding-right: 16px !important; }
+  .ddr-msg-body > tbody > tr.ddr-own > td:nth-child(4):not([colspan]) { display: none !important; }
+
+  /* Header: one line - 留言用户 + count, then the 搜索 and 下载 buttons. The
+     留言内容 / 得标 words go (the columns are no longer side by side). */
+  .ddr-msg-head,
+  .ddr-msg-head > thead { display: block !important; width: 100% !important; }
+  .ddr-msg-head > thead > tr { display: flex !important; align-items: center; }
+  .ddr-msg-head th:nth-child(1) { flex: 1 1 auto; min-width: 0; width: auto !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ddr-msg-head th:nth-child(2),
+  .ddr-msg-head th:nth-child(4) { flex: none; width: auto !important; font-size: 0 !important; padding: 6px 4px !important; }
+  .ddr-msg-head th:nth-child(4) { padding-right: 10px !important; }
+  .ddr-msg-head th:nth-child(4) .help-button { display: none !important; }
+  .ddr-msg-head th :is(#searchMsg, #downMsgData) { float: none !important; font-size: 13px !important; }
+  .ddr-col-grip { display: none; }
+
+  /* Messenger history / Who's in the live: less margin round the modal, and a
+     chat header that leaves the customer's name some room. */
+  .ddr-chat-overlay,
+  .ddr-who-overlay { padding: 10px !important; }
+  .ddr-chat-head { gap: 8px; padding: 10px 10px 10px 12px; }
+  .ddr-chat-avatar { width: 38px; height: 38px; font-size: 17px; }
+  .ddr-chat-btn { height: 34px; min-width: 34px; padding: 0 8px; }
+  .ddr-chat-close { width: 34px; padding: 0; }
+  .ddr-chat-body { padding: 8px 10px 12px; }
+}

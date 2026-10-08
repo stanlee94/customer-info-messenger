@@ -1744,6 +1744,180 @@
     return true;
   }
 
+  // ------------------------------------------------------- column widths
+
+  /**
+   * The comment table's three visible columns (留言用户 · 留言内容 · 得标) are
+   * resized by dragging the grips on the header's two inner borders (or with
+   * ←/→ on a focused grip); double-click a grip to go back to the default.
+   *
+   * Widths are percentages in CSS custom properties on .l-table (--ddr-cw1,
+   * --ddr-cw2, --ddr-cw4), read by the header and body width rules - both
+   * tables use table-layout: fixed, so a wide card can no longer push the
+   * comment column to one character (it did with a batch chip on line 2).
+   * Saved per layout in localStorage ddrColWidths ({wide, medium}); the small
+   * layout stacks the cells, so it has no grips.
+   */
+  const COLW_KEY = 'ddrColWidths';
+  const COLW_VARS = ['--ddr-cw1', '--ddr-cw2', '--ddr-cw4'];
+  const COLW_MIN = [170, 56, 120]; // px: card, comment code, 得标 status + 取消
+  const mqWide = window.matchMedia('(min-width: 1024px)');
+  const mqSmall = window.matchMedia('(max-width: 749.98px)');
+  const colMode = () => (mqWide.matches ? 'wide' : mqSmall.matches ? 'small' : 'medium');
+
+  function readColWidths() {
+    try {
+      const v = JSON.parse(localStorage.getItem(COLW_KEY) || '{}');
+      return v && typeof v === 'object' ? v : {};
+    } catch (err) {
+      return {};
+    }
+  }
+
+  function setColVars(wrap, pcts) {
+    COLW_VARS.forEach((k, i) => {
+      if (pcts) wrap.style.setProperty(k, `${pcts[i]}%`);
+      else wrap.style.removeProperty(k);
+    });
+  }
+
+  /**
+   * Defaults when nothing is saved: 得标 18% (24% on the medium layout), never
+   * under 150px (170px) for 已得标 + 取消; the comment column gets what is left
+   * after ~550px for the customer card, between 116px (the comment time on one line) and 30% - so at 1440 the
+   * columns are the original 52 / 30 / 18, and on a narrower table the comment
+   * column gives way before the card has to wrap; 留言用户 takes the rest.
+   */
+  function defaultColPcts(mode, total) {
+    const c4 = Math.max(total * (mode === 'medium' ? 0.24 : 0.18), mode === 'medium' ? 170 : 150);
+    const c2 = Math.min(Math.max(total - 550 - c4, 116), total * 0.3);
+    return [total - c2 - c4, c2, c4].map((w) => Math.round((w / total) * 1000) / 10);
+  }
+
+  function applyColWidths() {
+    const wrap = document.querySelector('.ddr-col-right .l-table');
+    const table = document.querySelector('.ddr-msg-head');
+    if (!wrap) return;
+    const mode = colMode();
+    if (mode === 'small') return setColVars(wrap, null);
+    const saved = readColWidths()[mode];
+    if (Array.isArray(saved) && saved.length === 3 && saved.every((n) => n > 0)) return setColVars(wrap, saved);
+    const total = table ? table.getBoundingClientRect().width : 0;
+    setColVars(wrap, total > 300 ? defaultColPcts(mode, total) : null);
+  }
+
+  function saveColWidths(pcts) {
+    const all = readColWidths();
+    const mode = colMode();
+    if (pcts) all[mode] = pcts;
+    else delete all[mode];
+    try {
+      localStorage.setItem(COLW_KEY, JSON.stringify(all));
+    } catch (err) {
+      /* ignore */
+    }
+  }
+
+  /** Header cells of the three visible columns (the 3rd, 留言时间, is hidden). */
+  function headCols() {
+    const ths = [...document.querySelectorAll('.ddr-msg-head thead th')];
+    return ths.length >= 4 ? [ths[0], ths[1], ths[3]] : null;
+  }
+
+  /** Moves the border after column i by dx px, keeping both neighbours above their minimum. */
+  function colPctsAfter(i, dx, start, total) {
+    const lo = COLW_MIN[i] - start[i];
+    const hi = start[i + 1] - COLW_MIN[i + 1];
+    const d = Math.max(Math.min(dx, hi), Math.min(lo, hi));
+    const px = start.slice();
+    px[i] += d;
+    px[i + 1] -= d;
+    return px.map((w) => Math.round((w / total) * 1000) / 10);
+  }
+
+  function colChanged() {
+    // Won names and the 取消 label are fitted to measured widths: re-fit them.
+    window.dispatchEvent(new Event('resize'));
+  }
+
+  function installColumnResize() {
+    const cols = headCols();
+    const wrap = document.querySelector('.ddr-col-right .l-table');
+    if (!cols || !wrap || cols[0].querySelector('.ddr-col-grip')) return;
+    applyColWidths();
+    mqWide.addEventListener('change', applyColWidths);
+    mqSmall.addEventListener('change', applyColWidths);
+    // Defaults depend on the table's width (saved widths are percentages).
+    let t;
+    window.addEventListener('resize', () => {
+      clearTimeout(t);
+      t = setTimeout(applyColWidths, 120);
+    });
+
+    const measure = () => {
+      const now = headCols();
+      const table = document.querySelector('.ddr-msg-head');
+      return now && table ? { start: now.map((c) => c.getBoundingClientRect().width), total: table.getBoundingClientRect().width } : null;
+    };
+
+    [0, 1].forEach((i) => {
+      const grip = document.createElement('span');
+      grip.className = 'ddr-col-grip';
+      grip.tabIndex = 0;
+      grip.setAttribute('role', 'separator');
+      grip.setAttribute('aria-orientation', 'vertical');
+      grip.setAttribute('aria-label', i === 0 ? 'Resize 留言用户 / 留言内容' : 'Resize 留言内容 / 得标');
+      grip.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0) return;
+        const m = measure();
+        if (!m) return;
+        e.preventDefault();
+        e.stopPropagation();
+        grip.setPointerCapture(e.pointerId);
+        document.documentElement.classList.add('ddr-col-dragging');
+        const x0 = e.clientX;
+        let last = null;
+        const move = (ev) => {
+          last = colPctsAfter(i, ev.clientX - x0, m.start, m.total);
+          setColVars(wrap, last);
+        };
+        const up = () => {
+          grip.removeEventListener('pointermove', move);
+          grip.removeEventListener('pointerup', up);
+          grip.removeEventListener('pointercancel', up);
+          document.documentElement.classList.remove('ddr-col-dragging');
+          if (last) {
+            saveColWidths(last);
+            colChanged();
+          }
+        };
+        grip.addEventListener('pointermove', move);
+        grip.addEventListener('pointerup', up);
+        grip.addEventListener('pointercancel', up);
+      });
+      grip.addEventListener('dblclick', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        saveColWidths(null);
+        applyColWidths();
+        colChanged();
+      });
+      grip.addEventListener('keydown', (e) => {
+        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+        const m = measure();
+        if (!m) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const pcts = colPctsAfter(i, (e.key === 'ArrowLeft' ? -1 : 1) * m.total * 0.01, m.start, m.total);
+        setColVars(wrap, pcts);
+        saveColWidths(pcts);
+        colChanged();
+      });
+      grip.addEventListener('click', (e) => e.stopPropagation());
+      cols[i].appendChild(grip);
+    });
+  }
+
   // ------------------------------------------------------------ goods list
 
   /**
@@ -4042,6 +4216,7 @@
     const layout = () => {
       if (!(tagTables() && reclaimSpace())) return false;
       installLiveScroll();
+      installColumnResize();
       installDock();
       installVideoMenu();
       installVideoStats();
