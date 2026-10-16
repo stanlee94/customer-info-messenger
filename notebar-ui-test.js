@@ -81,6 +81,25 @@ const stub = `
     UNLINK_BASEROW_UID: async () => ({ ok: true }),
     LINK_BASEROW_UID: async () => ({ ok: true }),
     OPEN_OPTIONS_PAGE: async () => { window.__optionsOpened = true; return { ok: true }; },
+    // Synthetic statements (never real bank data). PBB updated today 05:06 pm.
+    GET_BANK_TRANSACTIONS: async (m) => {
+      await new Promise((r) => setTimeout(r, 80));
+      if (window.__bankFail === m.bank) return { ok: false, error: 'Bank statement API error: 500' };
+      const d = new Date(); const today = String(d.getDate()).padStart(2, '0') + '/' + String(d.getMonth() + 1).padStart(2, '0') + '/' + d.getFullYear();
+      if (m.bank === 'ocbc') return { ok: true, updatedTime: '01/09/2026 11:40 am', rows: [
+        { date: '01/09/2026', reference: '7001', method: 'CASH DEPOSIT     CDM', amount: '37.00', description: 'SG BUYER | NOTE' },
+        { date: '31/08/2026', reference: '7002', method: 'FAST TRANSFER', amount: '128.00', description: 'ANOTHER SG' },
+      ] };
+      const rows = [
+        { date: today, reference: '100001', method: 'DUITNOW TRSF CR', amount: '128.00', description: 'TAN MEI LING | payment order|  ' },
+        { date: today, reference: '100002', method: 'DUITNOW TRSF CR', amount: '1128.00', description: 'LIM AH KOW' },
+        { date: today, reference: '100003', method: 'DEP-ECP', amount: '1643.90', description: 'CHONG WEI | F0955820260113003753' },
+        { date: today, reference: '100004', method: 'TSFR FUND CR-ATM/EFT', amount: '128.50', description: 'SOMEONE' },
+        { date: today, reference: '200128', method: 'DEP-CASH', amount: '55.00', description: 'CASH' },
+      ];
+      for (let i = 0; i < 60; i++) rows.push({ date: '01/10/2026', reference: 'F' + i, method: 'DEP-CASH', amount: '10.00', description: 'FILLER ' + i });
+      return { ok: true, updatedTime: today + ' 05:06 pm', rows };
+    },
   };
   chrome.runtime.sendMessage = (msg, cb) => {
     window.__msgs = (window.__msgs || []).concat(msg.type);
@@ -631,6 +650,101 @@ function check(name, cond, extra) {
   // Narrow window
   await p2.setViewportSize({ width: 1180, height: 760 });
   await p2.screenshot({ path: path.join(OUT, '17-narrow.png') });
+  await p2.close();
+
+  // Meta's one-row header (2026-10-16): [Inbox][Messages | Leads][toolbar]
+  const p3 = await browser.newPage({ viewport: { width: 1440, height: 820 } });
+  p3.on('pageerror', (e) => results.push('PAGEERROR ' + e.message));
+  await p3.addInitScript(stub);
+  await p3.goto(url + '&layout=row');
+  const box = (sel) => p3.evaluate((s) => { const r = document.querySelector(s).getBoundingClientRect(); return { l: Math.round(r.left), r: Math.round(r.right), w: Math.round(r.width), h: Math.round(r.height) }; }, sel);
+  const tabsBefore = [await box('#tabMessages'), await box('#tabLeads')];
+  const rowH3 = (await box('.topbar')).h;
+  await p3.addStyleTag({ path: path.join(EXT, 'styles.css') });
+  await p3.addScriptTag({ path: path.join(EXT, 'content.js') });
+  await p3.waitForFunction(() => document.querySelector('#cim-note-bar .cim-nb-status')?.textContent === 'Never set', null, { timeout: 8000 });
+  check('row header: bar in the header row, not the panel', await p3.evaluate(() => { const b = document.getElementById('cim-note-bar'); return b.parentElement === document.querySelector('.topbar') && !b.classList.contains('cim-note-bar--in-panel') && b.classList.contains('cim-note-bar--row'); }));
+  check('row header: bar right before the toolbar', await p3.evaluate(() => document.getElementById('cim-note-bar').nextElementSibling === document.querySelector('.tbwrap')));
+  check('row header: Inbox shown, Meta\'s Messages | Leads strip hidden', await p3.locator('#inboxHeading').isVisible() && !(await p3.locator('#tabMessages').isVisible()) && !(await p3.locator('#tabLeads').isVisible()));
+  check('row header: tabs not moved out of Meta\'s strip', await p3.evaluate(() => document.getElementById('spaceTabs').contains(document.getElementById('tabMessages')) && document.getElementById('spaceTabs').contains(document.getElementById('tabLeads'))));
+  const nb = await box('#cim-note-bar');
+  check('row header: bar between Inbox and Tools, wide', nb.l > (await box('#inboxHeading')).r && nb.r < (await box('#cim-tb-toggle')).l && nb.w > 800, JSON.stringify(nb));
+  check('row header: Tools collapses the toolbar', await p3.locator('#cim-tb-toggle').isVisible() && !(await p3.locator('[data-k="automations"]').isVisible()) && !(await p3.locator('.cim-tb-views').isVisible()));
+  check('row header: row height unchanged', (await box('.topbar')).h === rowH3, `${rowH3} → ${(await box('.topbar')).h}`);
+  await p3.screenshot({ path: path.join(OUT, '18-row-header.png') });
+  await p3.click('#cim-tb-toggle');
+  const views = () => p3.evaluate(() => Array.from(document.querySelectorAll('.cim-tb-view')).map((b) => b.textContent.trim() + (b.getAttribute('aria-pressed') === 'true' ? '*' : '')).join('|'));
+  check('Tools: View section lists Messages | Leads, Messages open', (await views()) === 'Messages*|Leads', await views());
+  check('Tools: View section on top, divider, then Meta\'s tools', await p3.evaluate(() => { const v = document.querySelector('.cim-tb-views').getBoundingClientRect(); const first = document.querySelector('[role="toolbar"] > .cim-tb-first').getBoundingClientRect(); return v.top > document.getElementById('cim-tb-toggle').getBoundingClientRect().bottom && first.top >= v.bottom && getComputedStyle(document.querySelector('.cim-tb-views')).borderBottomWidth === '1px'; }));
+  check('Tools: View items inside the white panel', await p3.evaluate(() => { const m = document.querySelector('[role="toolbar"]'); return Array.from(document.querySelectorAll('.cim-tb-view')).every((b) => { const r = b.getBoundingClientRect(); return document.elementFromPoint(r.right + 4, r.top + r.height / 2) === m; }); }));
+  check('Tools: Meta\'s tools still all there', await p3.locator('[data-k="automations"]').isVisible() && await p3.locator('[data-k="todos"]').isVisible() && await p3.locator('#avail').isVisible());
+  await p3.screenshot({ path: path.join(OUT, '18b-tools-views.png') });
+  await p3.click('.cim-tb-view:has-text("Leads")');
+  check('Tools → Leads: presses Meta\'s real Leads tab, dropdown closes', (await p3.evaluate(() => window.__view)) === 'tabLeads' && !(await p3.locator('.cim-tb-views').isVisible()));
+  await p3.click('#cim-tb-toggle');
+  await p3.waitForTimeout(200);
+  check('Tools: Leads now marked open', (await views()) === 'Messages|Leads*', await views());
+  await p3.click('.cim-tb-view:has-text("Messages")');
+  check('Tools → Messages: back to Messages', (await p3.evaluate(() => window.__view)) === 'tabMessages');
+  await p3.evaluate(() => chrome.storage.local.set({ noteBarPlacement: 'panel' }));
+  await p3.waitForFunction(() => document.getElementById('cim-note-bar')?.classList.contains('cim-note-bar--in-panel'));
+  check('row header → panel: Tools removed, toolbar + tabs back', await p3.evaluate(() => !document.getElementById('cim-tb-toggle') && !document.querySelector('.cim-tb-views') && !document.getElementById('cim-note-bar').classList.contains('cim-note-bar--row')) && await p3.locator('[data-k="automations"]').isVisible() && await p3.locator('#tabLeads').isVisible());
+  const tabsAfter = [await box('#tabMessages'), await box('#tabLeads')];
+  check('row header → panel: tabs exactly where Meta put them', JSON.stringify(tabsAfter) === JSON.stringify(tabsBefore), JSON.stringify([tabsBefore, tabsAfter]));
+  await p3.evaluate(() => chrome.storage.local.set({ noteBarPlacement: 'header' }));
+  await p3.waitForFunction(() => document.getElementById('cim-note-bar')?.parentElement === document.querySelector('.topbar'), null, { timeout: 4000 });
+  check('row header ← panel: back in the row, tabs hidden again', await p3.evaluate(() => document.getElementById('cim-note-bar').nextElementSibling === document.querySelector('.tbwrap')) && !(await p3.locator('#tabLeads').isVisible()));
+
+  // Bank transactions card under the panel (synthetic statements)
+  const bankReqs = () => p3.evaluate(() => (window.__msgs || []).filter((t) => t === 'GET_BANK_TRANSACTIONS').length);
+  const bankMeta = () => p3.evaluate(() => document.querySelector('#cim-bank-card .cim-bank-meta').textContent);
+  const bankRows = () => p3.evaluate(() => Array.from(document.querySelectorAll('#cim-bank-card .cim-bank-row')).map((r) => (r.classList.contains('cim-bank-row--exact') ? '=' : '') + r.querySelector('.cim-bank-amt').textContent));
+  const bankType = async (q) => { await p3.fill('#cim-bank-card .cim-bank-input', q); await p3.waitForTimeout(250); };
+  await p3.waitForFunction(() => /PBB transactions/.test(document.querySelector('#cim-bank-card .cim-bank-meta')?.textContent || ''), null, { timeout: 4000 });
+  check('bank card: right under the panel, in the sidebar', await p3.evaluate(() => document.getElementById('cim-purchase-panel').nextElementSibling === document.getElementById('cim-bank-card') && !!document.getElementById('cim-bank-card').closest('.side')) && await p3.locator('#cim-bank-card').isVisible());
+  check('bank card: both banks loaded once', (await bankReqs()) === 2, String(await bankReqs()));
+  const tabTxt = () => p3.evaluate(() => Array.from(document.querySelectorAll('#cim-bank-card .cim-bank-tab')).map((t) => (t.classList.contains('cim-bank-tab--on') ? '*' : '') + t.querySelector('.cim-bank-tab-name').textContent + ' ' + t.querySelector('.cim-bank-tab-time').textContent).join(' | '));
+  check('bank card: PBB on, each bank shows its own update time', (await tabTxt()) === '*PBB 5:06 pm | OCBC 1 Sep · 11:40 am', await tabTxt());
+  check('bank card: empty search shows the count only', (await bankMeta()).startsWith('65 PBB transactions') && (await bankRows()).length === 0, await bankMeta());
+  await bankType('128');
+  check('bank search "128": exact amount first, then rows containing 128', JSON.stringify(await bankRows()) === JSON.stringify(['=RM 128.00', 'RM 1,128.00', 'RM 128.50', 'RM 55.00']), JSON.stringify(await bankRows()));
+  check('bank search "128": meta counts exact vs contains', (await bankMeta()) === '1 exact amount · 3 more contain “128”', await bankMeta());
+  await bankType('RM 1,643.9');
+  check('bank search "RM 1,643.9" finds 1,643.90', JSON.stringify(await bankRows()) === JSON.stringify(['=RM 1,643.90']), JSON.stringify(await bankRows()));
+  await bankType('tan mei');
+  check('bank search by name (case-blind), description cleaned', (await bankRows()).length === 1 && (await p3.evaluate(() => document.querySelector('#cim-bank-card .cim-bank-desc').textContent)) === 'TAN MEI LING · payment order');
+  await bankType('F09558202601');
+  check('bank search by order number in the description', JSON.stringify(await bankRows()) === JSON.stringify(['RM 1,643.90']), JSON.stringify(await bankRows()));
+  await bankType('filler');
+  check('bank search: at most 50 rows + "Showing 50 of 60"', (await bankRows()).length === 50 && (await p3.evaluate(() => document.querySelector('#cim-bank-card .cim-bank-more')?.textContent)) === 'Showing 50 of 60 — type more to narrow down.');
+  check('bank results scroll inside the card (≤360px)', await p3.evaluate(() => document.querySelector('#cim-bank-card .cim-bank-results').getBoundingClientRect().height <= 360));
+  await p3.screenshot({ path: path.join(OUT, '20-bank-filler.png') });
+  await bankType('cash deposit cdm');
+  check('bank search: PBB has no OCBC rows', (await bankRows()).length === 0 && (await bankMeta()).startsWith('No PBB transaction matches'));
+  await p3.click('#cim-bank-card .cim-bank-tab[data-bank="ocbc"]');
+  check('OCBC: same search, OCBC padded spaces matched, S$', JSON.stringify(await bankRows()) === JSON.stringify(['S$ 37.00']) && (await tabTxt()).startsWith('PBB 5:06 pm | *OCBC'), JSON.stringify(await bankRows()) + ' ' + await tabTxt());
+  await bankType('128');
+  check('OCBC "128": its own exact row', JSON.stringify(await bankRows()) === JSON.stringify(['=S$ 128.00']), JSON.stringify(await bankRows()));
+  await p3.locator('#cim-bank-card .cim-bank-card, #cim-bank-card .cim-bank-results').first().screenshot({ path: path.join(OUT, '21-bank-ocbc.png') }).catch(() => {});
+  await p3.evaluate(() => { window.__keysSeen = 0; document.addEventListener('keydown', () => window.__keysSeen++); });
+  await p3.press('#cim-bank-card .cim-bank-input', 'Escape');
+  check('bank search: Escape clears, key not passed to Meta', (await p3.inputValue('#cim-bank-card .cim-bank-input')) === '' && (await p3.evaluate(() => window.__keysSeen)) === 0);
+  await bankType('37');
+  const cardEl = await p3.evaluate(() => { window.__bankEl = document.getElementById('cim-bank-card'); return true; });
+  await p3.evaluate(() => switchTo('222', 'Lim Ah Kow', 0));
+  await p3.waitForFunction(() => document.querySelector('#cim-purchase-panel .cim-name')?.textContent === 'Name: Lim Ah Kow', null, { timeout: 5000 });
+  await p3.waitForTimeout(500);
+  check('customer switch: same card, OCBC + search kept, no reload', cardEl && await p3.evaluate(() => document.getElementById('cim-bank-card') === window.__bankEl && document.getElementById('cim-purchase-panel').nextElementSibling === window.__bankEl) && (await p3.inputValue('#cim-bank-card .cim-bank-input')) === '37' && (await bankReqs()) === 2, String(await bankReqs()));
+  await p3.evaluate(() => { window.__bankFail = 'ocbc'; });
+  await p3.click('#cim-bank-card .cim-bank-reload');
+  await p3.waitForTimeout(400);
+  check('reload: both banks re-read', (await bankReqs()) === 4, String(await bankReqs()));
+  check('OCBC fails on reload: red tab, old rows kept, PBB fine', await p3.evaluate(() => document.querySelector('#cim-bank-card .cim-bank-tab[data-bank="ocbc"]').classList.contains('cim-bank-tab--error') && !document.querySelector('#cim-bank-card .cim-bank-tab[data-bank="public"]').classList.contains('cim-bank-tab--error')) && JSON.stringify(await bankRows()) === JSON.stringify(['=S$ 37.00']));
+  await p3.screenshot({ path: path.join(OUT, '21-bank-ocbc.png') });
+  await p3.evaluate(() => { document.querySelector('#cim-bank-card').remove(); });
+  await p3.evaluate(() => document.querySelector('.msgs').append(document.createElement('span')));
+  await p3.waitForTimeout(500);
+  check('card dropped by a re-render: put back, no reload', await p3.evaluate(() => document.getElementById('cim-bank-card') === window.__bankEl && document.getElementById('cim-purchase-panel').nextElementSibling === window.__bankEl) && (await bankReqs()) === 4);
 
   await browser.close();
   console.log(results.join('\n'));

@@ -799,7 +799,9 @@
   const NOTE_NAME_FIX_MS = 2000;
   const NOTE_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const noteDrafts = new Map(); // psid → { balance, note } — unsaved text left behind on a customer switch
-  let noteHiddenHeader = null;   // Meta's "Inbox / Respond to messages" block we hid
+  // Where the bar sits in Meta's header: { row, before, hide } — inserted into
+  // `row` before `before`; `hide` = Meta's block we hid (old header only).
+  let noteHeaderSlot = null;
   let noteHeaderMissingSince = 0;
   let noteHeaderLastScan = 0;
   let noteBarPlacement = 'header'; // 'header' | 'panel' (options page)
@@ -924,14 +926,45 @@
     else if (n.status === 'ready') noteDrafts.delete(n.psid);
   }
 
-  // Meta's page header: a leaf "Inbox" with a "Respond to messages…" leaf
+  // Where the bar goes in Meta's header. Two layouts:
+  // - old: "Inbox / Respond to messages…" text block — the bar replaces it;
+  // - since 2026-10-16: one row [Inbox heading][Messages | Leads][toolbar] —
+  //   the bar goes in that row right before the toolbar, nothing is hidden
+  //   (Messages / Leads are real controls).
+  function findInboxHeaderSlot() {
+    const s = noteHeaderSlot;
+    if (s && s.before.isConnected && s.before.parentElement === s.row) return s;
+    if (Date.now() - noteHeaderLastScan < 1000) return null;
+    noteHeaderLastScan = Date.now();
+    const block = findInboxHeaderBlock();
+    if (block && block.parentElement) return { row: block.parentElement, before: block, hide: block };
+    return findInboxHeaderRow();
+  }
+
+  // New header: a leaf role="heading" "Inbox" whose row (≤3 levels up, ≤80px
+  // tall — never the left nav or the whole app) holds Meta's toolbar.
+  function findInboxHeaderRow() {
+    for (const h of document.querySelectorAll('[role="heading"]')) {
+      if (h.children.length !== 0 || h.textContent.trim() !== 'Inbox') continue;
+      if (h.closest('#' + NOTE_BAR_ID + ', #' + PANEL_ID)) continue;
+      let row = h.parentElement;
+      for (let depth = 0; depth < 3 && row && row !== document.body; depth++, row = row.parentElement) {
+        const toolbar = row.querySelector('[role="toolbar"]');
+        if (!toolbar) continue;
+        if (row.getBoundingClientRect().height > 80) break;
+        let before = toolbar;
+        while (before.parentElement !== row) before = before.parentElement;
+        return { row, before, hide: null };
+      }
+    }
+    return null;
+  }
+
+  // Old header: a leaf "Inbox" with a "Respond to messages…" leaf
   // within 3 ancestor levels; the nearest common ancestor is the block we
   // replace. It must hold nothing but those two texts — the left nav also has
   // an "Inbox" leaf, and 3 levels up from it can be the whole app.
   function findInboxHeaderBlock() {
-    if (noteHiddenHeader && noteHiddenHeader.isConnected) return noteHiddenHeader;
-    if (Date.now() - noteHeaderLastScan < 1000) return null;
-    noteHeaderLastScan = Date.now();
     for (const el of document.querySelectorAll('span, div, h1, h2, h3')) {
       if (el.children.length !== 0 || el.textContent.trim() !== 'Inbox') continue;
       if (el.closest('#' + NOTE_BAR_ID + ', #' + PANEL_ID)) continue;
@@ -969,9 +1002,9 @@
   }
 
   function restoreInboxHeader() {
-    if (noteHiddenHeader) {
-      noteHiddenHeader.style.display = '';
-      noteHiddenHeader = null;
+    if (noteHeaderSlot) {
+      if (noteHeaderSlot.hide) noteHeaderSlot.hide.style.display = '';
+      noteHeaderSlot = null;
     }
     restoreToolbarMenu();
   }
@@ -997,8 +1030,10 @@
     if (!wrap.classList.contains('cim-tb-wrap')) wrap.classList.add('cim-tb-wrap');
     if (!toolbar.classList.contains('cim-tb-menu')) toolbar.classList.add('cim-tb-menu');
     wrap.classList.toggle('cim-tb-open', toolbarOpen);
+    const views = ensureViewTabs(row, toolbar);
+    if (wrap.classList.contains('cim-tb-has-views') !== views) wrap.classList.toggle('cim-tb-has-views', views);
     markToolbarSeparators(toolbar);
-    markToolbarItems(toolbar);
+    markToolbarItems(toolbar, views);
     let btn = document.getElementById('cim-tb-toggle');
     if (!btn || btn.parentElement !== wrap || wrap.firstElementChild !== btn) {
       if (!btn) btn = buildToolbarToggle();
@@ -1013,7 +1048,7 @@
   function markToolbarSeparators(toolbar) {
     const ctrl = '[role="button"], [role="combobox"]';
     for (const el of toolbar.querySelectorAll('div, span')) {
-      if (el.closest(ctrl)) continue;
+      if (el.closest(ctrl) || el.closest('.cim-tb-views')) continue;
       const empty = !el.querySelector(ctrl + ', svg, img') && el.textContent.trim() === '';
       const outermost = empty && !(el.parentElement && el.parentElement !== toolbar && el.parentElement.classList.contains('cim-tb-sep'));
       if (outermost !== el.classList.contains('cim-tb-sep')) el.classList.toggle('cim-tb-sep', outermost);
@@ -1024,8 +1059,8 @@
   // view while the rest collapse). Found by content — a button holding an
   // image and no text — not by Meta's classes. Also marks the first/last
   // dropdown items so the panel's padding lands on the right ones.
-  function markToolbarItems(toolbar) {
-    const items = Array.from(toolbar.children);
+  function markToolbarItems(toolbar, views) {
+    const items = Array.from(toolbar.children).filter((el) => !el.classList.contains('cim-tb-views'));
     for (const item of items) {
       const isAccount = Array.from(item.querySelectorAll('[role="button"]')).some(
         (b) => !!b.querySelector('image, img') && b.textContent.trim() === ''
@@ -1038,10 +1073,11 @@
       const last = el === listed[listed.length - 1];
       if (first !== el.classList.contains('cim-tb-first')) el.classList.toggle('cim-tb-first', first);
       if (last !== el.classList.contains('cim-tb-last')) el.classList.toggle('cim-tb-last', last);
-      // Explicit grid row (2…): auto-placed items would be pushed below the
-      // panel background (::before), which claims rows 2… first.
+      // Explicit grid row (2…, or 3… under the View section): auto-placed
+      // items would be pushed below the panel background (::before), which
+      // claims rows 2… first.
       const idx = listed.indexOf(el);
-      const row = idx === -1 ? null : String(Math.min(idx + 2, 17));
+      const row = idx === -1 ? null : String(Math.min(idx + (views ? 3 : 2), 17));
       if (el.getAttribute('data-cim-row') !== row) {
         if (row) el.setAttribute('data-cim-row', row);
         else el.removeAttribute('data-cim-row');
@@ -1073,6 +1109,8 @@
       // (and the note bar) never shifts.
       const menu = toolbarWrap.querySelector('.cim-tb-menu');
       if (menu) toolbarWrap.style.setProperty('--cim-tb-w', Math.ceil(menu.getBoundingClientRect().width) + 'px');
+      // The open view tab may have changed since the last check() tick.
+      if (menu && toolbarWrap.parentElement) ensureViewTabs(toolbarWrap.parentElement, menu);
     }
     toolbarOpen = open;
     toolbarWrap.classList.toggle('cim-tb-open', open);
@@ -1081,9 +1119,119 @@
     document.getElementById('cim-tb-toggle')?.setAttribute('aria-expanded', open ? 'true' : 'false');
   }
 
+  // ── Meta's view tabs (Messages | Leads) → top of the Tools dropdown ──────
+  // Host's request (2026-10-16): the tabs live in Tools, above a divider.
+  // Meta's tab strip is hidden (inline style, re-applied every tick) and our
+  // own items stand in for its tabs; clicking one presses Meta's real
+  // (hidden) tab — never moved, cloned or re-wired. Tabs = the header row's
+  // text buttons outside the toolbar; none (old header) → no section.
+  let viewStrip = null;
+  let viewStripDisplay = ['', ''];
+  const VIEW_ICONS = {
+    Messages: '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="currentColor"><path d="M8 1.5C4.1 1.5 1 4.3 1 7.8c0 1.9.9 3.6 2.4 4.8v2.4l2.3-1.3c.7.2 1.5.3 2.3.3 3.9 0 7-2.8 7-6.2S11.9 1.5 8 1.5z"/></svg>',
+    Leads: '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="currentColor"><path d="M3 1.5h10A1.5 1.5 0 0 1 14.5 3v10a1.5 1.5 0 0 1-1.5 1.5H3A1.5 1.5 0 0 1 1.5 13V3A1.5 1.5 0 0 1 3 1.5zm5 3a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm-3.5 7.5h7c0-1.7-1.6-2.8-3.5-2.8S4.5 10.3 4.5 12z"/></svg>',
+  };
+
+  function findViewTabs(row, toolbar) {
+    const tabs = Array.from(row.querySelectorAll('[role="button"]')).filter((b) =>
+      !toolbar.contains(b) && !b.closest('#' + NOTE_BAR_ID) && !b.parentElement.closest('[role="button"]') && b.textContent.trim());
+    if (!tabs.length) return null;
+    let strip = tabs[0].parentElement;
+    while (strip && strip !== row && !tabs.every((t) => strip.contains(t))) strip = strip.parentElement;
+    if (!strip || strip === row || strip.contains(toolbar) || strip.querySelector('[role="heading"]')) return null;
+    return { tabs, strip };
+  }
+
+  // Meta marks the open tab with a filled background (no aria state seen in
+  // the 2026-10-16 probe); aria-selected/-pressed/-current win if present.
+  // Exactly one filled tab → that one; otherwise no tab is marked.
+  function activeViewTab(tabs) {
+    for (let i = 0; i < tabs.length; i++) {
+      const t = tabs[i];
+      const a = t.getAttribute('aria-selected') ?? t.getAttribute('aria-pressed') ?? t.getAttribute('aria-current');
+      if (a === 'true' || a === 'page') return i;
+    }
+    const filled = tabs.map((t) => !/^(transparent|rgba\(0, 0, 0, 0\))$/.test(getComputedStyle(t).backgroundColor));
+    return filled.filter(Boolean).length === 1 ? filled.indexOf(true) : -1;
+  }
+
+  function pressMetaButton(el) {
+    const o = { bubbles: true, cancelable: true, view: window, button: 0 };
+    try {
+      el.dispatchEvent(new PointerEvent('pointerdown', o));
+      el.dispatchEvent(new MouseEvent('mousedown', o));
+      el.dispatchEvent(new PointerEvent('pointerup', o));
+      el.dispatchEvent(new MouseEvent('mouseup', o));
+      el.dispatchEvent(new MouseEvent('click', o));
+    } catch (e) { el.click(); }
+  }
+
+  function ensureViewTabs(row, toolbar) {
+    const found = findViewTabs(row, toolbar);
+    let box = toolbar.querySelector(':scope > .cim-tb-views');
+    if (!found) {
+      box?.remove();
+      unhideViewStrip();
+      return false;
+    }
+    if (viewStrip && viewStrip !== found.strip) unhideViewStrip();
+    if (viewStrip !== found.strip) {
+      viewStrip = found.strip;
+      // Meta's own inline display (if any), put back on unhide
+      viewStripDisplay = [viewStrip.style.getPropertyValue('display'), viewStrip.style.getPropertyPriority('display')];
+    }
+    if (viewStrip.style.getPropertyValue('display') !== 'none') viewStrip.style.setProperty('display', 'none', 'important');
+    if (!box) {
+      box = document.createElement('div');
+      box.className = 'cim-tb-views';
+      box.setAttribute('data-cim-row', '2');
+      box.innerHTML = '<div class="cim-tb-views-label">View</div>';
+      box.addEventListener('click', (e) => {
+        const b = e.target.closest('.cim-tb-view');
+        const tab = b && box._tabs && box._tabs[Number(b.dataset.i)];
+        if (!tab || !tab.isConnected) return;
+        setToolbarOpen(false);
+        pressMetaButton(tab);
+      });
+    }
+    if (box.parentElement !== toolbar) toolbar.appendChild(box);
+    box._tabs = found.tabs;
+    const names = found.tabs.map((t) => t.textContent.trim());
+    const active = activeViewTab(found.tabs);
+    const key = names.join('|') + '#' + active;
+    if (box.dataset.key !== key) {
+      box.dataset.key = key;
+      box.querySelectorAll('.cim-tb-view').forEach((b) => b.remove());
+      names.forEach((name, i) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'cim-tb-view';
+        b.dataset.i = String(i);
+        b.setAttribute('aria-pressed', i === active ? 'true' : 'false');
+        b.innerHTML = VIEW_ICONS[name] || '';
+        const label = document.createElement('span');
+        label.textContent = name;
+        b.appendChild(label);
+        box.appendChild(b);
+      });
+    }
+    return true;
+  }
+
+  function unhideViewStrip() {
+    if (viewStrip) {
+      const [value, priority] = viewStripDisplay;
+      if (value) viewStrip.style.setProperty('display', value, priority);
+      else viewStrip.style.removeProperty('display');
+    }
+    viewStrip = null;
+  }
+
   function restoreToolbarMenu() {
     toolbarOpen = false;
     document.getElementById('cim-tb-toggle')?.remove();
+    document.querySelector('.cim-tb-views')?.remove();
+    unhideViewStrip();
     lowerMetaTooltips();
     if (toolbarWrap) {
       toolbarWrap.classList.remove('cim-tb-wrap', 'cim-tb-open');
@@ -1363,16 +1511,17 @@
     }
     if (!bar) bar = buildNoteBar();
 
-    const header = noteBarPlacement === 'header' ? findInboxHeaderBlock() : null;
-    if (header && header.parentElement) {
+    const slot = noteBarPlacement === 'header' ? findInboxHeaderSlot() : null;
+    if (slot) {
       noteHeaderMissingSince = 0;
-      if (noteHiddenHeader !== header) { restoreInboxHeader(); noteHiddenHeader = header; }
-      if (header.style.display !== 'none') header.style.display = 'none';
-      if (bar.parentElement !== header.parentElement || bar.nextElementSibling !== header) {
-        header.parentElement.insertBefore(bar, header);
+      if (noteHeaderSlot !== slot) { restoreInboxHeader(); noteHeaderSlot = slot; }
+      if (slot.hide && slot.hide.style.display !== 'none') slot.hide.style.display = 'none';
+      if (bar.parentElement !== slot.row || bar.nextElementSibling !== slot.before) {
+        slot.row.insertBefore(bar, slot.before);
       }
       bar.classList.remove('cim-note-bar--in-panel');
-      ensureToolbarMenu(header.parentElement);
+      if (bar.classList.contains('cim-note-bar--row') === !!slot.hide) bar.classList.toggle('cim-note-bar--row', !slot.hide);
+      ensureToolbarMenu(slot.row);
       raiseMetaTooltips();
     } else {
       if (noteBarPlacement === 'header' && !bar.isConnected) {
@@ -1393,6 +1542,7 @@
       const before = panel.querySelector('.cim-uid');
       if (bar.parentElement !== panel || bar.nextElementSibling !== before) panel.insertBefore(bar, before);
       bar.classList.add('cim-note-bar--in-panel');
+      bar.classList.remove('cim-note-bar--row');
     }
     renderNoteBar();
     placeNoteEditor();
@@ -7975,6 +8125,7 @@
   function check() {
     hideTermsNotice();
     checkPanel();
+    ensureBankCard();
     tightenSidebar();
     markChatHeader();
     compactMetaHeaders();
@@ -8041,6 +8192,251 @@
       panel.querySelector('.cim-name').textContent = `Name: ${name}`;
       proceedWithLookup(uid, name, panel);
     }
+  }
+
+  // ── Bank transactions card (under the panel) ─────────────────────────────
+  // Host's request 2026-10-16: customer service checks a payment without
+  // leaving the inbox. PBB (Public Bank, MYR) | OCBC (SGD) statements from
+  // qianyi-api-query /public-trans — the dashboard's Transactions tab, newest
+  // first. Not tied to the customer: one element (kept in `bankCard`, so a
+  // sidebar re-render that drops it never reloads the data), bank and search
+  // text kept across chats. Loaded when first shown; ↻, or focusing the
+  // search after BANK_STALE_MS, reloads both banks.
+  const BANK_CARD_ID = 'cim-bank-card';
+  const BANKS = [
+    { id: 'public', label: 'PBB', currency: 'RM', name: 'Public Bank' },
+    { id: 'ocbc', label: 'OCBC', currency: 'S$', name: 'OCBC Singapore' },
+  ];
+  const BANK_STALE_MS = 2 * 60 * 1000;
+  const BANK_MAX_ROWS = 50;
+  const bankState = { bank: 'public', query: '', loadedAt: 0, data: {} };
+  BANKS.forEach((b) => { bankState.data[b.id] = { rows: [], updatedTime: null, loading: false, error: null, missing: false, seq: 0 }; });
+  let bankCard = null;
+  let bankRenderTimer = null;
+
+  // Sits right under the docked panel; with the panel floating it stays in
+  // the panel's sidebar spot (before Meta's anchor); no sidebar → parked hidden.
+  function ensureBankCard() {
+    const panel = document.getElementById(PANEL_ID);
+    if (!panel) {
+      bankCard?.remove();
+      return;
+    }
+    if (!bankCard) {
+      bankCard = buildBankCard();
+      renderBankCard();
+      loadBanks();
+    }
+    const docked = !panel.classList.contains('cim-floating') && !panel.classList.contains('cim-parked');
+    if (docked) {
+      if (panel.nextElementSibling !== bankCard) panel.after(bankCard);
+      if (bankCard.classList.contains('cim-bank-parked')) bankCard.classList.remove('cim-bank-parked');
+      return;
+    }
+    if (bankCard.isConnected && bankCard.parentElement !== document.body && bankCard.previousElementSibling !== panel) return;
+    const anchor = findContactDetailsAnchor();
+    if (anchor && anchor.parentElement && !anchor.closest('#' + PANEL_ID)) {
+      anchor.parentElement.insertBefore(bankCard, anchor);
+      bankCard.classList.remove('cim-bank-parked');
+    } else if (bankCard.parentElement !== document.body) {
+      bankCard.classList.add('cim-bank-parked');
+      document.body.appendChild(bankCard);
+    }
+  }
+
+  function buildBankCard() {
+    const card = document.createElement('div');
+    card.id = BANK_CARD_ID;
+    card.innerHTML = `
+      <div class="cim-bank-head">
+        <span class="cim-bank-title">Bank transactions</span>
+        <button type="button" class="cim-bank-reload" aria-label="Reload both statements" title="Reload both statements">↻</button>
+      </div>
+      <div class="cim-bank-tabs" role="tablist"></div>
+      <div class="cim-bank-search">
+        <input type="search" class="cim-bank-input" placeholder="Search amount, name, reference…" autocomplete="off" spellcheck="false">
+        <button type="button" class="cim-bank-clear" aria-label="Clear search" hidden>×</button>
+      </div>
+      <div class="cim-bank-meta" aria-live="polite"></div>
+      <div class="cim-bank-results"></div>`;
+    const tabs = card.querySelector('.cim-bank-tabs');
+    BANKS.forEach((b) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'cim-bank-tab';
+      btn.dataset.bank = b.id;
+      btn.setAttribute('role', 'tab');
+      btn.innerHTML = '<span class="cim-bank-tab-name"></span><span class="cim-bank-tab-time"></span>';
+      btn.querySelector('.cim-bank-tab-name').textContent = b.label;
+      btn.addEventListener('click', () => {
+        if (bankState.bank === b.id) return;
+        bankState.bank = b.id;
+        renderBankCard();
+      });
+      tabs.appendChild(btn);
+    });
+    const input = card.querySelector('.cim-bank-input');
+    input.value = bankState.query;
+    input.addEventListener('input', () => {
+      bankState.query = input.value;
+      clearTimeout(bankRenderTimer);
+      bankRenderTimer = setTimeout(renderBankCard, 120);
+    });
+    input.addEventListener('focus', () => {
+      if (Date.now() - bankState.loadedAt > BANK_STALE_MS) loadBanks();
+    });
+    // Meta's inbox has keyboard shortcuts; typing here is ours alone.
+    input.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Escape' && input.value) {
+        e.preventDefault();
+        input.value = bankState.query = '';
+        renderBankCard();
+      }
+    });
+    card.querySelector('.cim-bank-clear').addEventListener('click', () => {
+      input.value = bankState.query = '';
+      renderBankCard();
+      input.focus();
+    });
+    card.querySelector('.cim-bank-reload').addEventListener('click', () => loadBanks());
+    return card;
+  }
+
+  function loadBanks() {
+    bankState.loadedAt = Date.now();
+    BANKS.forEach((b) => {
+      const d = bankState.data[b.id];
+      const seq = ++d.seq;
+      d.loading = true;
+      chrome.runtime.sendMessage({ type: 'GET_BANK_TRANSACTIONS', bank: b.id }, (res) => {
+        if (seq !== d.seq) return; // a newer reload is on its way
+        d.loading = false;
+        if (res && res.ok) {
+          d.rows = res.rows || [];
+          d.updatedTime = res.updatedTime || null;
+          d.missing = !!res.missing;
+          d.error = null;
+        } else {
+          d.error = (res && res.error) || 'Could not reach the bank statement service.';
+        }
+        renderBankCard();
+      });
+    });
+    renderBankCard();
+  }
+
+  // "16/10/2026 05:06 pm" → "5:06 pm" today, "15 Oct · 5:06 pm" otherwise.
+  function formatBankTime(s) {
+    const m = String(s || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})\s*(am|pm)?/i);
+    if (!m) return s || '';
+    const time = `${Number(m[4])}:${m[5]}${m[6] ? ' ' + m[6].toLowerCase() : ''}`;
+    const now = new Date();
+    if (Number(m[1]) === now.getDate() && Number(m[2]) === now.getMonth() + 1 && Number(m[3]) === now.getFullYear()) return time;
+    return `${Number(m[1])} ${NOTE_MONTHS[Number(m[2]) - 1] || m[2]} · ${time}`;
+  }
+
+  function formatBankAmount(a) {
+    const n = Number(a);
+    return Number.isFinite(n) ? n.toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : String(a || '');
+  }
+
+  // Amount-like query ("128", "RM 1,643.9", "S$37") → rows of exactly that
+  // amount first, then every row whose text contains it (1128.00, a reference…).
+  // Anything else → rows whose date / reference / method / amount /
+  // description contain it, case- and spacing-blind (OCBC pads with spaces).
+  function searchBankRows(rows, query) {
+    const text = query.trim().toLowerCase().replace(/\s+/g, ' ');
+    const numText = text.replace(/^(rm|myr|sgd|s\$|\$)\s*/, '').replace(/,/g, '');
+    const num = /^\d+(\.\d{1,2})?$/.test(numText) ? Number(numText) : null;
+    const needle = num == null ? text : numText;
+    const exact = [];
+    const other = [];
+    for (const r of rows) {
+      if (num != null && Math.abs(Number(r.amount) - num) < 0.005) { exact.push(r); continue; }
+      if (r._hay === undefined) r._hay = [r.date, r.reference, r.method, r.amount, r.description].join(' ').toLowerCase().replace(/\s+/g, ' ');
+      if (r._hay.includes(needle)) other.push(r);
+    }
+    return { exact, other, byAmount: num != null };
+  }
+
+  function renderBankCard() {
+    const card = bankCard;
+    if (!card) return;
+    const bank = BANKS.find((b) => b.id === bankState.bank);
+    const d = bankState.data[bank.id];
+    card.querySelectorAll('.cim-bank-tab').forEach((btn) => {
+      const b = BANKS.find((x) => x.id === btn.dataset.bank);
+      const bd = bankState.data[b.id];
+      const on = b.id === bank.id;
+      btn.classList.toggle('cim-bank-tab--on', on);
+      btn.setAttribute('aria-selected', on ? 'true' : 'false');
+      btn.classList.toggle('cim-bank-tab--error', !!bd.error);
+      const time = bd.loading && !bd.updatedTime ? 'Loading…'
+        : bd.error && !bd.updatedTime ? 'Not loaded'
+        : bd.missing ? 'No statement'
+        : formatBankTime(bd.updatedTime) || '—';
+      setText(btn.querySelector('.cim-bank-tab-time'), time);
+      btn.title = `${b.name} — ${bd.updatedTime ? 'updated ' + bd.updatedTime : time}${bd.error ? '\n' + bd.error : ''}`;
+    });
+    card.querySelector('.cim-bank-reload').classList.toggle('cim-bank-reload--busy', BANKS.some((b) => bankState.data[b.id].loading));
+    card.querySelector('.cim-bank-clear').hidden = !bankState.query;
+
+    const meta = card.querySelector('.cim-bank-meta');
+    const list = card.querySelector('.cim-bank-results');
+    list.textContent = '';
+    meta.classList.remove('cim-bank-meta--error');
+    const q = bankState.query.trim();
+    if (d.error && !d.rows.length) {
+      meta.classList.add('cim-bank-meta--error');
+      meta.textContent = `${bank.label} not loaded — ${d.error} Press ↻ to retry.`;
+      return;
+    }
+    if (d.missing) { meta.textContent = `No ${bank.label} statement uploaded yet.`; return; }
+    if (d.loading && !d.rows.length) { meta.textContent = `Loading ${bank.label}…`; return; }
+    if (!q) {
+      meta.textContent = `${d.rows.length.toLocaleString('en-MY')} ${bank.label} transactions — type an amount or a name.`;
+      return;
+    }
+    const { exact, other, byAmount } = searchBankRows(d.rows, q);
+    const total = exact.length + other.length;
+    if (!total) { meta.textContent = `No ${bank.label} transaction matches “${q}”.`; return; }
+    meta.textContent = byAmount
+      ? `${exact.length} exact amount${exact.length === 1 ? '' : 's'}${other.length ? ` · ${other.length} more contain “${q}”` : ''}`
+      : `${total} match${total === 1 ? '' : 'es'}`;
+    const shown = exact.concat(other).slice(0, BANK_MAX_ROWS);
+    shown.forEach((r, i) => list.appendChild(buildBankRow(r, bank, i < exact.length)));
+    if (total > shown.length) {
+      const more = document.createElement('div');
+      more.className = 'cim-bank-more';
+      more.textContent = `Showing ${shown.length} of ${total} — type more to narrow down.`;
+      list.appendChild(more);
+    }
+  }
+
+  function buildBankRow(r, bank, exact) {
+    const row = document.createElement('div');
+    row.className = 'cim-bank-row' + (exact ? ' cim-bank-row--exact' : '');
+    const top = document.createElement('div');
+    top.className = 'cim-bank-row-top';
+    const amt = document.createElement('span');
+    amt.className = 'cim-bank-amt';
+    amt.textContent = `${bank.currency} ${formatBankAmount(r.amount)}`;
+    const date = document.createElement('span');
+    date.className = 'cim-bank-date';
+    date.textContent = r.date || '';
+    top.append(amt, date);
+    const sub = document.createElement('div');
+    sub.className = 'cim-bank-row-sub';
+    sub.textContent = [String(r.method || '').trim().replace(/\s+/g, ' '), r.reference ? 'Ref ' + r.reference : ''].filter(Boolean).join(' · ');
+    const desc = document.createElement('div');
+    desc.className = 'cim-bank-desc';
+    const text = String(r.description || '').split('|').map((s) => s.trim().replace(/\s{2,}/g, ' ')).filter(Boolean).join(' · ');
+    desc.textContent = text;
+    desc.title = text;
+    row.append(top, sub);
+    if (text) row.appendChild(desc);
+    return row;
   }
 
   // ── Compact right sidebar ────────────────────────────────────────────────

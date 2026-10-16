@@ -527,6 +527,27 @@ function fetchOrderStatuses(orderIds) {
     .catch((err) => ({ ok: false, error: err.message }));
 }
 
+// Bank statements for the panel's bank card: qianyi-api-query's
+// /public-trans (the dashboard's Transactions tab) — `public` = Public Bank
+// (MYR), `ocbc` = OCBC (SGD); { updatedTime, data: [{date, reference, method,
+// amount, description}] }, newest first. 404 = that statement was never
+// uploaded (an ordinary state, not a fault).
+const BANK_IDS = ['public', 'ocbc'];
+function fetchBankTransactions(bank) {
+  if (!BANK_IDS.includes(bank)) return Promise.resolve({ ok: false, error: 'Unknown bank.' });
+  return fetch(`${ORDER_STATUS_API_BASE}/public-trans?bank=${bank}`)
+    .then((res) => {
+      if (res.status === 404) return { missing: true };
+      if (!res.ok) throw new Error(`Bank statement API error: ${res.status}`);
+      return res.json();
+    })
+    .then((json) => {
+      if (json.missing) return { ok: true, missing: true, updatedTime: null, rows: [] };
+      return { ok: true, updatedTime: json?.updatedTime || null, rows: Array.isArray(json?.data) ? json.data : [] };
+    })
+    .catch((err) => ({ ok: false, error: err.message }));
+}
+
 function throwBaserowError(res) {
   return res.text().then((text) => {
     let detail = text;
@@ -1416,6 +1437,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.type === 'GET_ORDER_STATUSES') {
     fetchOrderStatuses(message.orderIds || []).then(sendResponse);
+    return true;
+  }
+
+  if (message?.type === 'GET_BANK_TRANSACTIONS') {
+    fetchBankTransactions(message.bank).then(sendResponse);
     return true;
   }
 

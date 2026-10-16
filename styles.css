@@ -4496,6 +4496,14 @@
   color: #050505;
 }
 
+/* Meta's one-row header (Inbox · Messages | Leads · toolbar): the bar shares
+   the row, takes almost all its free space (Meta's tab strip may grow too)
+   and never squeezes the tabs (basis 0). */
+#cim-note-bar.cim-note-bar--row {
+  flex: 100 1 0;
+  width: auto;
+}
+
 #cim-note-bar * {
   box-sizing: border-box;
 }
@@ -5458,6 +5466,64 @@
   margin-bottom: 8px !important;
 }
 
+/* View section (ensureViewTabs): our stand-ins for Meta's Messages | Leads
+   tabs on top, a divider line under them, Meta's tools below. */
+.cim-tb-wrap.cim-tb-open .cim-tb-menu > .cim-tb-views.cim-tb-views {
+  display: flex !important;
+  flex-direction: column;
+  gap: 6px;
+  margin: 12px 8px 4px !important;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #dadde1;
+}
+
+.cim-tb-has-views.cim-tb-open .cim-tb-menu > .cim-tb-first:not(.cim-tb-account-item):not(.cim-tb-sep) {
+  margin-top: 6px !important;
+}
+
+.cim-tb-views .cim-tb-views-label {
+  padding: 0 2px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #65676b;
+}
+
+.cim-tb-views .cim-tb-view {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  width: 100%;
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid #ccd0d5;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #1c2b33;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cim-tb-views .cim-tb-view:hover {
+  background: #f5f6f7;
+}
+
+.cim-tb-views .cim-tb-view:focus-visible {
+  outline: 2px solid #0a7cff;
+  outline-offset: 2px;
+}
+
+.cim-tb-views .cim-tb-view[aria-pressed="true"] {
+  border-color: #0a7cff;
+  background: #ebf5ff;
+  color: #0064d1;
+}
+
 /* Separators (marked .cim-tb-sep by markToolbarSeparators) out. */
 .cim-tb-open .cim-tb-menu .cim-tb-sep {
   display: none !important;
@@ -5708,4 +5774,253 @@ html.cim-compact-meta [style*="--cim-hug-edge"] {
   background: rgba(239, 68, 68, 0.14);
   pointer-events: none;
   z-index: 1;
+}
+
+/* ── Bank transactions card (#cim-bank-card, ensureBankCard) ──────────────
+   A second card right under the panel: PBB | OCBC toggle (each with its
+   statement's last update), a search box, matching rows (exact amount
+   first, green edge). Same frame as the panel minus the blue top. */
+#cim-bank-card {
+  margin: 0 0 6px;
+  padding: 8px 10px 10px;
+  border: 1px solid #e4e6eb;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.08);
+  font-family: inherit;
+  font-size: 12px;
+  color: #050505;
+}
+
+#cim-bank-card.cim-bank-parked {
+  display: none !important;
+}
+
+#cim-bank-card * {
+  box-sizing: border-box;
+}
+
+#cim-bank-card .cim-bank-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+#cim-bank-card .cim-bank-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #65676b;
+}
+
+#cim-bank-card .cim-bank-reload {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #65676b;
+  font: inherit;
+  font-size: 15px;
+  line-height: 24px;
+  cursor: pointer;
+}
+
+#cim-bank-card .cim-bank-reload:hover {
+  background: #f0f2f5;
+  color: #050505;
+}
+
+#cim-bank-card .cim-bank-reload--busy {
+  animation: cim-bank-spin 0.9s linear infinite;
+  cursor: wait;
+}
+
+@keyframes cim-bank-spin {
+  to { transform: rotate(360deg); }
+}
+
+#cim-bank-card .cim-bank-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  margin-bottom: 8px;
+  border: 1px solid #e4e6eb;
+  border-radius: 8px;
+  background: #f0f2f5;
+}
+
+#cim-bank-card .cim-bank-tab {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  min-width: 0;
+  padding: 4px 4px 5px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #65676b;
+  font: inherit;
+  cursor: pointer;
+}
+
+#cim-bank-card .cim-bank-tab:hover {
+  color: #050505;
+}
+
+#cim-bank-card .cim-bank-tab--on {
+  background: #ffffff;
+  color: #0064d1;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+#cim-bank-card .cim-bank-tab-name {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+#cim-bank-card .cim-bank-tab-time {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 10.5px;
+  font-weight: 500;
+  color: #65676b;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#cim-bank-card .cim-bank-tab--error .cim-bank-tab-time {
+  color: #c62828;
+}
+
+#cim-bank-card .cim-bank-search {
+  position: relative;
+}
+
+#cim-bank-card .cim-bank-input {
+  width: 100%;
+  height: 32px;
+  padding: 0 28px 0 10px;
+  border: 1px solid #ccd0d5;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #050505;
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+#cim-bank-card .cim-bank-input::-webkit-search-cancel-button {
+  display: none;
+}
+
+#cim-bank-card .cim-bank-input:focus {
+  border-color: #0a7cff;
+  box-shadow: 0 0 0 3px rgba(10, 124, 255, 0.15);
+}
+
+#cim-bank-card .cim-bank-clear {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: #65676b;
+  font-size: 16px;
+  line-height: 24px;
+  cursor: pointer;
+}
+
+#cim-bank-card .cim-bank-clear:hover {
+  background: #f0f2f5;
+}
+
+#cim-bank-card .cim-bank-clear[hidden] {
+  display: none;
+}
+
+#cim-bank-card .cim-bank-meta {
+  margin-top: 6px;
+  font-size: 11.5px;
+  color: #65676b;
+}
+
+#cim-bank-card .cim-bank-meta--error {
+  color: #c62828;
+}
+
+#cim-bank-card .cim-bank-results {
+  max-height: 360px;
+  margin-top: 4px;
+  overflow-y: auto;
+}
+
+#cim-bank-card .cim-bank-row {
+  padding: 6px 8px;
+  border-top: 1px solid #f0f2f5;
+  border-left: 3px solid transparent;
+}
+
+#cim-bank-card .cim-bank-row--exact {
+  border-left-color: #16a34a;
+  background: #f0fdf4;
+}
+
+#cim-bank-card .cim-bank-row-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+#cim-bank-card .cim-bank-amt {
+  font-size: 13.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+#cim-bank-card .cim-bank-date {
+  flex: none;
+  font-size: 11px;
+  color: #65676b;
+  font-variant-numeric: tabular-nums;
+}
+
+#cim-bank-card .cim-bank-row-sub {
+  margin-top: 1px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #65676b;
+}
+
+#cim-bank-card .cim-bank-desc {
+  display: -webkit-box;
+  margin-top: 2px;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.35;
+  color: #1c2b33;
+  word-break: break-word;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  user-select: text;
+}
+
+#cim-bank-card .cim-bank-more {
+  padding: 6px 8px 0;
+  font-size: 11px;
+  color: #65676b;
 }

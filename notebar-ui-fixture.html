@@ -86,6 +86,26 @@
 </div>
 </div><!-- .root -->
 <script>
+  // ?layout=row → Meta's header since 2026-10-16 (from the real DOM probe):
+  // one flex row [heading "Inbox"][space_selector (display:contents) > tab strip
+  // that grows][toolbar wrapper]; no "Respond to messages" line.
+  if (new URLSearchParams(location.search).get('layout') === 'row') {
+    const hdr = document.querySelector('.topbar > .hdr');
+    hdr.insertAdjacentHTML('beforebegin', '<div role="heading" id="inboxHeading" style="font-size:20px;font-weight:700;padding-left:16px">Inbox</div>'
+      + '<span data-surface="/bizweb:inbox/bizweb:INBOX/lib:bizweb_inbox:space_selector" style="display:contents"><div id="spaceTabs" style="display:flex;flex-grow:1;gap:8px;padding-left:16px">'
+      + '<div role="none"><div role="button" tabindex="0" class="mb" id="tabMessages" style="border:none;background:#e4e6eb"><span><div class="fx"><div>Messages</div></div></span></div></div>'
+      + '<div role="none"><div role="button" tabindex="0" class="mb" id="tabLeads" style="border:none;background:transparent"><span><div class="fx"><div>Leads</div></div></span></div></div></div></span>');
+    hdr.remove();
+    // Meta's open tab = the filled one; a click (even on the hidden tab) switches it.
+    window.__view = 'tabMessages';
+    document.addEventListener('click', (e) => {
+      const tab = e.target.closest('#tabMessages, #tabLeads');
+      if (!tab) return;
+      window.__view = tab.id;
+      document.querySelectorAll('#tabMessages, #tabLeads').forEach((t) => { t.style.background = t === tab ? '#e4e6eb' : 'transparent'; });
+      document.querySelector('.msgs').append(document.createElement('span')); // Meta re-renders the content
+    });
+  }
   // Switch conversation like Meta: URL first, chat/sidebar name `delay` ms later.
   window.switchTo = function (uid, name, delay) {
     const u = new URL(location.href);
