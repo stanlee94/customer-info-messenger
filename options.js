@@ -84,6 +84,15 @@ compactMetaInput.addEventListener('change', () => {
     flashNotesStatus(compactMetaInput.checked ? 'Compact headers on.' : 'Compact headers off.');
   });
 });
+const keepUnreadInput = document.getElementById('keepUnread');
+chrome.storage.local.get('keepUnread', ({ keepUnread }) => {
+  keepUnreadInput.checked = keepUnread !== false;
+});
+keepUnreadInput.addEventListener('change', () => {
+  chrome.storage.local.set({ keepUnread: keepUnreadInput.checked }, () => {
+    flashNotesStatus(keepUnreadInput.checked ? 'Keep unread on — open inbox tabs update by themselves.' : 'Keep unread off.');
+  });
+});
 const noteBarPlacementInput = document.getElementById('noteBarPlacement');
 chrome.storage.local.get('noteBarPlacement', ({ noteBarPlacement }) => {
   noteBarPlacementInput.value = noteBarPlacement === 'panel' ? 'panel' : 'header';

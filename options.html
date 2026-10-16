@@ -167,6 +167,11 @@
       <span class="switch"><input type="checkbox" id="compactMetaHeaders" role="switch" /><span></span></span>
     </div>
     <p class="hint">On by default. Tightens the spacing (not the text size) of the parts of the inbox that are rarely clicked, so the messages and the customer panel get the room.</p>
+    <div class="toggle-row">
+      <label for="keepUnread">Keep unanswered chats unread</label>
+      <span class="switch"><input type="checkbox" id="keepUnread" role="switch" /><span></span></span>
+    </div>
+    <p class="hint">On by default. When a chat is opened (also Meta's auto-open on load) and the customer's last message has no staff reply after it, the chat is marked unread again with Meta's own "Mark as unread" — so the team only needs to open unread chats. Automations never count as a reply. Chats still waiting for a reply are tinted light red in the conversation list. To close a chat without replying, react ❤️ (or any reaction) to the customer's last message.</p>
     <div id="notesStatus" class="inline-status"></div>
 
     <h3>ManyChat API Token</h3>

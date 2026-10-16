@@ -814,7 +814,10 @@
   const NAME_CONFLICT_MS = 5000;
   const STALE_NAME_WAIT_MS = 3000;
 
-  chrome.storage.local.get(['staffName', 'noteBarPlacement', 'threadListSize', 'compactMetaHeaders'], (r) => {
+  // Keep unanswered chats unread (inbox-unread-main.js, page world, reads this attribute).
+  const applyKeepUnread = (v) => document.documentElement.setAttribute('data-cim-keep-unread', v === false ? '0' : '1');
+  chrome.storage.local.get(['staffName', 'noteBarPlacement', 'threadListSize', 'compactMetaHeaders', 'keepUnread'], (r) => {
+    applyKeepUnread(r.keepUnread);
     document.documentElement.classList.toggle('cim-compact-meta', r.compactMetaHeaders !== false);
     staffOptionName = String(r.staffName || '').trim();
     noteBarPlacement = r.noteBarPlacement === 'panel' ? 'panel' : 'header';
@@ -829,6 +832,7 @@
       renderNoteBar();
     }
     if (changes.threadListSize) applyThreadListSize(changes.threadListSize.newValue);
+    if (changes.keepUnread) applyKeepUnread(changes.keepUnread.newValue);
     if (changes.compactMetaHeaders) {
       document.documentElement.classList.toggle('cim-compact-meta', changes.compactMetaHeaders.newValue !== false);
     }

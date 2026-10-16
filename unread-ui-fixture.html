@@ -1,0 +1,123 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Fake Business Suite inbox for keep-unread</title>
+<style>
+  body { margin: 0; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; display: flex; gap: 12px; }
+  .list { width: 300px; } .row { position: relative; height: 60px; border-bottom: 1px solid #ddd; }
+  .detail { width: 520px; } .head { height: 60px; display: flex; gap: 8px; align-items: center; }
+  .head [role="button"] { width: 32px; height: 32px; background: #eee; border-radius: 6px; }
+  .msg { min-height: 24px; margin: 4px; } .menu { position: fixed; top: 70px; left: 600px; background: #fff; border: 1px solid #999; }
+  .menu [role="menuitem"] { display: block; padding: 6px 10px; }
+  .hidden-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+</style>
+</head>
+<body>
+<div class="list" data-pagelet="GenericThreadListView"><div data-pagelet="BizP13NInboxUinifiedThreadListView" id="rows"></div></div>
+<div class="detail">
+  <div data-pagelet="BizInboxDetailViewHeaderSectionWrapper"><div class="head" id="head"></div></div>
+  <div data-pagelet="BizInboxDetailSectionWrapper"><div id="msgs"></div>
+    <div contenteditable="true" aria-placeholder="Reply in Messenger…" id="composer" style="min-height:30px;border:1px solid #ccc"></div></div>
+</div>
+<script>
+  // Shapes copied from the real probes (2026-10-15): list rows' parent chain
+  // reaches BizInboxThreadListLayout { threadList: [{ threadFBID, isRead, … }] };
+  // each [data-message-id] reaches BizInboxMessageItem { message: { timestamp,
+  // creatorInfo, reactions, deliveryStatePayload }, isFromViewer, participants,
+  // viewerID }. The header's buttons carry their name as hidden text (no
+  // aria-label), "Open Drop-down" + zero-width space when the header is narrow.
+  const FK = '__reactFiber$t', PK = '__reactProps$t';
+  const PAGE = '103550019254847';
+  window.__threads = [];
+  window.__actions = [];
+  window.__fake = { header: 'wide', menuHasItem: true };
+  const layout = { tag: 0, type: { name: 'h' }, memoizedProps: { threadList: window.__threads }, return: null };
+  function renderRows() {
+    const box = document.getElementById('rows');
+    box.innerHTML = '';
+    for (let i = 0; i < 4; i++) {
+      const row = document.createElement('div');
+      row.setAttribute('role', 'presentation'); row.className = 'row';
+      const comp = { tag: 0, type: { name: 'T' }, memoizedProps: { thread: window.__threads[i] || {} }, return: { tag: 0, type: { name: 'c' }, memoizedProps: { rowKey: String(i) }, return: layout } };
+      const host = { tag: 5, type: 'div', memoizedProps: { role: 'presentation' }, return: comp };
+      row[FK] = host; row[PK] = host.memoizedProps;
+      box.appendChild(row);
+    }
+  }
+  window.setThreads = (list) => { window.__threads.splice(0, window.__threads.length, ...list); renderRows(); };
+  const thread = (uid) => window.__threads.find((t) => t.threadFBID === uid);
+  window.toggleRead = (uid, label) => { const t = thread(uid); if (!t) return; window.__actions.push(label + ':' + uid); t.isRead = !t.isRead; drawHead(); };
+
+  // A message: { id, ts, customer, staff, react, sending, otherUid, staleNoReact }
+  window.setChat = (uid, msgs) => {
+    const u = new URL(location.href); u.searchParams.set('selected_item_id', uid); history.replaceState({}, '', u);
+    const box = document.getElementById('msgs');
+    box.innerHTML = '';
+    for (const m of msgs) {
+      const el = document.createElement('div');
+      el.className = 'msg'; el.setAttribute('data-message-id', m.id); el.textContent = m.id;
+      const part = m.otherUid || uid;
+      const message = {
+        messageID: m.id, timestamp: m.ts,
+        creatorInfo: m.staff ? { creatorName: 'Angel Chok', creatorType: 'direct_admin', labelType: 'sent_message' } : null,
+        reactions: m.react ? [{ icon: '❤', user: { name: 'Page', userID: PAGE } }] : [],
+        reactions_v2: [],
+        deliveryStatePayload: { deliveryState: m.sending ? 'SENDING' : 'SENT' },
+      };
+      const props = { message, isFromViewer: !m.customer, participants: [{ userID: part }, { userID: PAGE }], viewerID: PAGE };
+      const item = { tag: 0, type: { name: 'E' }, memoizedProps: props, return: null };
+      const host = { tag: 5, type: 'div', memoizedProps: { 'data-message-id': m.id }, return: { tag: 0, type: { name: 'GeoTooltip' }, memoizedProps: {}, return: item } };
+      el[FK] = host; el[PK] = host.memoizedProps;
+      if (m.staleNoReact) {
+        // __reactFiber$ points at the stale alternate (no reaction); the current
+        // fiber (matching __reactProps$) has the reaction.
+        const staleItem = { tag: 0, type: { name: 'E' }, memoizedProps: Object.assign({}, props, { message: Object.assign({}, message, { reactions: [] }) }), return: null };
+        const staleHost = { tag: 5, type: 'div', memoizedProps: { 'data-message-id': m.id, old: true }, return: { tag: 0, type: { name: 'GeoTooltip' }, memoizedProps: {}, return: staleItem } };
+        staleHost.alternate = host; host.alternate = staleHost;
+        el[FK] = staleHost; el[PK] = host.memoizedProps;
+      }
+      box.appendChild(el);
+    }
+    drawHead();
+  };
+
+  function btn(label, onClick) {
+    const b = document.createElement('div');
+    b.setAttribute('role', 'button'); b.tabIndex = 0;
+    const s = document.createElement('span'); s.className = 'hidden-label'; s.textContent = label;
+    b.appendChild(s);
+    b.addEventListener('click', onClick);
+    return b;
+  }
+  const uidNow = () => new URLSearchParams(location.search).get('selected_item_id');
+  function drawHead() {
+    const head = document.getElementById('head');
+    head.innerHTML = '';
+    const t = thread(uidNow());
+    const label = t && t.isRead === false ? 'Mark as read' : 'Mark as unread';
+    head.appendChild(btn('Assign this conversation', () => window.__actions.push('assign')));
+    if (window.__fake.header === 'none') {
+      // header without any read/unread action
+    } else if (window.__fake.header === 'wide') {
+      head.appendChild(btn(label, () => window.toggleRead(uidNow(), label)));
+      head.appendChild(btn('Move to Done', () => window.__actions.push('done')));
+    } else {
+      head.appendChild(btn('Open Drop-down​', () => {
+        window.__actions.push('menu-open');
+        const m = document.createElement('div');
+        m.className = 'menu'; m.setAttribute('role', 'menu');
+        const add = (text, fn) => { const i = document.createElement('div'); i.setAttribute('role', 'menuitem'); i.textContent = text; i.addEventListener('click', () => { fn(); m.remove(); }); m.appendChild(i); };
+        add('Move to Done', () => window.__actions.push('done'));
+        if (window.__fake.menuHasItem) add(label, () => window.toggleRead(uidNow(), label));
+        document.body.appendChild(m);
+      }));
+    }
+    head.appendChild(btn('See contact', () => window.__actions.push('contact')));
+  }
+  window.renderHead = drawHead;
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { document.querySelectorAll('.menu').forEach((m) => m.remove()); window.__actions.push('escape'); } });
+  renderRows();
+</script>
+</body>
+</html>

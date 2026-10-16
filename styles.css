@@ -5695,3 +5695,17 @@ html.cim-compact-meta [style*="--cim-hug-edge"] {
 .cim-voice-speed--fast { background: rgba(8, 102, 255, 0.14); color: #0866ff; }
 .cim-voice--mine .cim-voice-speed { background: rgba(255, 255, 255, 0.22); }
 .cim-voice--mine .cim-voice-speed--fast { background: #fff; color: #0866ff; }
+
+/* Keep-unread: a PENDING conversation row (unread, or the open chat still
+   waiting — inbox-unread-main.js sets data-cim-pending on Meta's row) is
+   tinted light red over its whole area. An overlay, not a background: Meta's
+   inner boxes paint their own white. Meta's row is absolutely positioned.
+   Text stays near-black: #1C1E21 on the tinted white ≈ 15:1. */
+[data-pagelet="GenericThreadListView"] [role="presentation"][data-cim-pending="1"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgba(239, 68, 68, 0.14);
+  pointer-events: none;
+  z-index: 1;
+}

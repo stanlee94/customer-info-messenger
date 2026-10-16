@@ -26,7 +26,8 @@
         "https://business.facebook.com/latest/inbox/*"
       ],
       "js": [
-        "inbox-voice-main.js"
+        "inbox-voice-main.js",
+        "inbox-unread-main.js"
       ],
       "world": "MAIN",
       "run_at": "document_idle"
