@@ -8132,6 +8132,22 @@
     const uid = location.href.includes(ALLOWED_ASSET_ID) ? getUserIdFromUrl() : null;
     ensureNoteBar(!!uid);
     if (uid) updateCustomerSync(!!document.getElementById(PANEL_ID));
+    mirrorPsid(uid);
+  }
+
+  // inbox-receipts.js (receipt bars) reads the open customer's PSID from here:
+  // set only while the linked customer is the one on screen — never while
+  // "Switching customer…" — and paired with the uid it belongs to.
+  function mirrorPsid(uid) {
+    const h = document.documentElement;
+    const psid = uid && uid === sessionState.uid && !customerSwitching ? sessionState.psid : null;
+    if (psid) {
+      if (h.getAttribute('data-cim-psid-uid') !== uid) h.setAttribute('data-cim-psid-uid', uid);
+      if (h.getAttribute('data-cim-psid') !== psid) h.setAttribute('data-cim-psid', psid);
+    } else {
+      if (h.hasAttribute('data-cim-psid')) h.removeAttribute('data-cim-psid');
+      if (h.hasAttribute('data-cim-psid-uid')) h.removeAttribute('data-cim-psid-uid');
+    }
   }
 
   function checkPanel() {

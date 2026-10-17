@@ -1,0 +1,126 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Fake Business Suite thread with photo / PDF attachments</title>
+<style>
+  body { margin: 0; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; background: #f0f2f5; }
+  .thread { width: 640px; height: 640px; overflow-y: auto; background: #fff; margin: 16px; padding: 8px 16px; box-sizing: border-box; }
+  .msg { display: flex; flex-direction: column; align-items: flex-start; margin: 10px 0; }
+  .msg.mine { align-items: flex-end; }
+  .txt { background: #f0f0f0; border-radius: 18px; padding: 8px 12px; font-size: 15px; }
+  /* Some bubbles sit in a row wrapper: a sibling there would land beside them. */
+  .rowwrap { display: flex; flex-direction: row; align-items: flex-end; gap: 4px; padding-bottom: 6px; }
+  .photo-root { border-radius: 18px; overflow: hidden; display: grid; grid-auto-flow: column; gap: 2px; }
+  .photo-root img { display: block; width: 260px; height: 160px; object-fit: cover; background: #ddd; }
+  /* Real-tab shape (2026-10-17): the photo bubble is taller than the photo — a
+     rounded inner frame with its outline on ::after, space under it. */
+  .photo-root.framed { border-radius: 0; overflow: visible; display: block; padding-bottom: 14px; }
+  .frame { position: relative; border-radius: 18px; overflow: hidden; display: grid; grid-auto-flow: column; gap: 2px; }
+  .frame::after { content: ''; position: absolute; inset: 0; border: 1px solid rgba(0,0,0,.15); border-radius: 18px; pointer-events: none; }
+  /* Probe of the real photo bubble (2026-10-17): block div > inline <a> > inline-block
+     <img> with its own radius + border — the img sits on the text baseline, so
+     the bubble is ~5px taller than the photo. */
+  .photo-root.inline { display: block; border-radius: 0; overflow: visible; width: 297px; }
+  .photo-root.inline a { position: relative; display: inline; }
+  .photo-root.inline img { display: inline-block; width: 297px; height: auto; border: 1px solid #ddd; border-radius: 18px; overflow: clip; box-sizing: border-box; }
+  .file-root { width: 260px; border-radius: 18px; background: #f0f0f0; padding: 10px 12px; box-sizing: border-box; }
+  .file-root a { color: #050505; text-decoration: none; font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="thread" id="thread"></div>
+<script>
+  // Shapes from the host's probe (2026-10-17):
+  //  img → _ → ImageCore → … → BizInboxMessagePhotoBubble {isFromViewer, photos[{url, largeUrl}]}
+  //      → BizInboxMessageAttachmentBubble {message{messageID, timestamp}, isFromViewer}
+  //  a[l.facebook.com] → … → MWXMAAttachmentActionTriggerDefault {attachment, attachmentItem}
+  //      → … → BizInboxMWXMAAttachmentWrapper {attachment{playableUrl, timestampMs[hi,lo]}, isFromViewer, message}
+  // Depths are shorter than Meta's on purpose: the code must find props by shape.
+  const FK = '__reactFiber$test';
+  const thread = document.getElementById('thread');
+  const IMG = (key) => `https://scontent.fkul2-4.fna.fbcdn.net/v/t1.15752-9/${key}?stp=dst-jpg_p480x480&_nc_cat=1&oh=00_X&oe=6A10`;
+  const PDF = (key) => `https://cdn.fbsbx.com/v/t59.2708-21/${key}/receipt.pdf?_nc_cat=1&oh=03_Q&oe=6A11&dl=1`;
+  const split = (ms) => [Math.floor(ms / 2 ** 32), ms % 2 ** 32];
+
+  function wrap(el, inRow) {
+    const msg = document.createElement('div');
+    msg.className = 'msg' + (el._mine ? ' mine' : '');
+    if (inRow) { const r = document.createElement('div'); r.className = 'rowwrap'; r.append(el); msg.append(r); }
+    else msg.append(el);
+    return msg;
+  }
+
+  // v: {mid, ts, keys: [k…], mine, row}
+  function photoNode(v) {
+    const root = document.createElement('div');
+    root.className = 'photo-root';
+    root._mine = !!v.mine;
+    const outer = { type: { displayName: 'BizInboxMessageAttachmentBubble' }, memoizedProps: { message: { messageID: v.mid, timestamp: v.ts }, isFromViewer: !!v.mine, groupMessageIndex: 'x' }, return: null };
+    const bubble = { type: { displayName: 'BizInboxMessagePhotoBubble' }, memoizedProps: { isFromViewer: !!v.mine, photos: v.keys.map((k) => ({ attachmentType: 'photo', url: IMG(k), largeUrl: IMG(k), width: 600, height: 600 })) }, return: outer };
+    bubble.child = { type: 'div', stateNode: root, child: null };
+    let box = root;
+    if (v.inline) root.classList.add('inline');
+    if (v.framed) { root.classList.add('framed'); box = document.createElement('div'); box.className = 'frame'; root.append(box); }
+    for (const k of v.keys) {
+      const a = document.createElement('a');
+      a.href = '#';
+      const img = document.createElement('img');
+      img.src = IMG(k);
+      img.alt = 'photo';
+      a.append(img);
+      box.append(a);
+      const link = { type: { displayName: 'GeoBaseLink' }, memoizedProps: { href: '#' }, return: bubble };
+      img[FK] = { type: 'img', memoizedProps: { src: IMG(k) }, return: { type: { name: '_' }, memoizedProps: {}, return: { type: { name: 'ImageCore' }, memoizedProps: { src: IMG(k) }, return: link } } };
+    }
+    root.__fixture = v;
+    return wrap(root, v.row);
+  }
+
+  // v: {mid, ts, key, mine, row, noMsgTs}
+  function fileNode(v) {
+    const root = document.createElement('div');
+    root.className = 'file-root';
+    root._mine = !!v.mine;
+    const url = PDF(v.key);
+    const attachment = { messageId: v.mid, attachmentFbid: '2211231899809490', playableUrl: url, playableUrlMimeType: 'application/pdf', attachmentIndex: [0, 0], timestampMs: split(v.ts), titleText: 'receipt.pdf' };
+    const wrapper = { type: { displayName: 'BizInboxMWXMAAttachmentWrapper' }, memoizedProps: { attachment, isFromViewer: !!v.mine, message: v.noMsgTs ? { messageID: v.mid } : { messageID: v.mid, timestamp: v.ts }, messageGroupIndex: 'x' }, return: null };
+    wrapper.child = { type: 'div', stateNode: root, child: null };
+    const trigger = { type: { displayName: 'MWXMAAttachmentActionTriggerDefault' }, memoizedProps: { attachment, attachmentItem: { playableUrl: url } }, return: { type: 'div', memoizedProps: {}, return: wrapper } };
+    const a = document.createElement('a');
+    a.href = 'https://l.facebook.com/l.php?u=' + encodeURIComponent(url) + '&h=AT0';
+    a.textContent = 'receipt.pdf';
+    a.addEventListener('click', (e) => e.preventDefault());
+    a[FK] = { type: 'a', memoizedProps: { href: a.href }, return: { type: { name: 'BaseLink' }, memoizedProps: {}, return: trigger } };
+    root.append(a);
+    root.__fixture = v;
+    return wrap(root, v.row);
+  }
+
+  window.__msgClicks = 0;
+  thread.addEventListener('click', () => { window.__msgClicks++; });
+  window.addPhoto = (v) => { const n = photoNode(v); thread.append(n); return n; };
+  window.addFile = (v) => { const n = fileNode(v); thread.append(n); return n; };
+  window.addText = (t) => { const n = document.createElement('div'); n.className = 'msg'; n.innerHTML = '<div class="txt"></div>'; n.firstChild.textContent = t; thread.append(n); return n; };
+  window.rootOf = (mid) => [...thread.querySelectorAll('.photo-root, .file-root')].find((r) => r.__fixture.mid === mid);
+  window.clear = () => thread.replaceChildren();
+  // React reusing a photo node for another message: new src + new props.
+  window.reusePhoto = (mid, nv) => {
+    const root = window.rootOf(mid);
+    const img = root.querySelector('img');
+    const bubble = img[FK].return.return.return.return;
+    bubble.memoizedProps = { isFromViewer: false, photos: nv.keys.map((k) => ({ url: IMG(k), largeUrl: IMG(k) })) };
+    bubble.return.memoizedProps = { message: { messageID: nv.mid, timestamp: nv.ts }, isFromViewer: false };
+    img[FK].memoizedProps = { src: IMG(nv.keys[0]) };
+    img.src = IMG(nv.keys[0]);
+    root.__fixture = nv;
+  };
+  window.setCustomer = (uid, psid) => {
+    history.replaceState(null, '', location.pathname + '?selected_item_id=' + uid);
+    const h = document.documentElement;
+    if (psid) { h.setAttribute('data-cim-psid-uid', uid); h.setAttribute('data-cim-psid', psid); }
+    else { h.removeAttribute('data-cim-psid'); h.removeAttribute('data-cim-psid-uid'); }
+  };
+</script>
+</body>
+</html>

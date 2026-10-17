@@ -219,6 +219,16 @@
     <label for="geminiApiKey">Gemini API Key</label>
     <input type="password" id="geminiApiKey" autocomplete="off" />
 
+    <h3>Payment receipts</h3>
+    <p class="hint">
+      Token of the message-analysis worker. When set, every customer photo or PDF that the
+      worker read as a payment receipt gets a bar underneath: amount, bank, paid time, payee,
+      reference and warnings (duplicate slip, not paid to DD, not successful). Only for
+      customers linked in the panel. Empty = off.
+    </p>
+    <label for="analysisApiToken">Analysis API Token</label>
+    <input type="password" id="analysisApiToken" autocomplete="off" />
+
     <button id="save">Save</button>
     <span id="status"></span>
     <script src="options.js"></script>

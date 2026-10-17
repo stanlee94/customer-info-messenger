@@ -548,6 +548,34 @@ function fetchBankTransactions(bank) {
     .catch((err) => ({ ok: false, error: err.message }));
 }
 
+// Receipt bars (inbox-receipts.js): what the messenger-gatekeeper worker read
+// from this customer's photos / PDFs in the last 60 days — { ts_ms, att_index,
+// kind, file_key, receipt|null }. Bearer = options `analysisApiToken` (the
+// worker's EXT_TOKEN); empty = off. Errors are codes only, never the URL.
+const RECEIPTS_API_BASE = 'https://messenger-gatekeeper.stanlee19941218.workers.dev';
+const RECEIPTS_TIMEOUT_MS = 10000;
+async function fetchReceipts(psid) {
+  if (!/^\d{5,25}$/.test(String(psid || ''))) return { ok: false, error: 'bad_psid' };
+  const { analysisApiToken } = await chrome.storage.local.get('analysisApiToken');
+  if (!analysisApiToken) return { ok: false, error: 'off' };
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), RECEIPTS_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${RECEIPTS_API_BASE}/receipts?psid=${psid}`, {
+      headers: { Authorization: `Bearer ${analysisApiToken}` },
+      signal: ctl.signal,
+    });
+    if (res.status === 401) return { ok: false, error: 'unauthorized' };
+    if (!res.ok) return { ok: false, error: 'server_' + res.status };
+    const json = await res.json();
+    return json && json.ok && Array.isArray(json.items) ? { ok: true, items: json.items } : { ok: false, error: 'bad_reply' };
+  } catch (err) {
+    return { ok: false, error: err.name === 'AbortError' ? 'timeout' : 'network' };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function throwBaserowError(res) {
   return res.text().then((text) => {
     let detail = text;
@@ -1442,6 +1470,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.type === 'GET_BANK_TRANSACTIONS') {
     fetchBankTransactions(message.bank).then(sendResponse);
+    return true;
+  }
+
+  if (message?.type === 'GET_RECEIPTS') {
+    fetchReceipts(message.psid).then(sendResponse, () => sendResponse({ ok: false, error: 'internal' }));
     return true;
   }
 

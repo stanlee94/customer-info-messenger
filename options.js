@@ -7,11 +7,12 @@ const baserowNoteLogTableIdInput = document.getElementById('baserowNoteLogTableI
 const aiApiUrlInput = document.getElementById('aiApiUrl');
 const geminiApiKeyInput = document.getElementById('geminiApiKey');
 const aiApiTokenInput = document.getElementById('aiApiToken');
+const analysisApiTokenInput = document.getElementById('analysisApiToken');
 const status = document.getElementById('status');
 
 chrome.storage.local.get(
-  ['manychatToken', 'baserowBaseUrl', 'baserowToken', 'baserowUsersTableId', 'baserowOrdersTableId', 'baserowNoteLogTableId', 'aiApiUrl', 'aiApiToken', 'geminiApiKey'],
-  ({ manychatToken, baserowBaseUrl, baserowToken, baserowUsersTableId, baserowOrdersTableId, baserowNoteLogTableId, aiApiUrl, aiApiToken, geminiApiKey }) => {
+  ['manychatToken', 'baserowBaseUrl', 'baserowToken', 'baserowUsersTableId', 'baserowOrdersTableId', 'baserowNoteLogTableId', 'aiApiUrl', 'aiApiToken', 'geminiApiKey', 'analysisApiToken'],
+  ({ manychatToken, baserowBaseUrl, baserowToken, baserowUsersTableId, baserowOrdersTableId, baserowNoteLogTableId, aiApiUrl, aiApiToken, geminiApiKey, analysisApiToken }) => {
     if (manychatToken) tokenInput.value = manychatToken;
     if (baserowBaseUrl) baserowBaseUrlInput.value = baserowBaseUrl;
     if (baserowToken) baserowTokenInput.value = baserowToken;
@@ -21,6 +22,7 @@ chrome.storage.local.get(
     if (aiApiUrl) aiApiUrlInput.value = aiApiUrl;
     if (geminiApiKey) geminiApiKeyInput.value = geminiApiKey;
     if (aiApiToken) aiApiTokenInput.value = aiApiToken;
+    if (analysisApiToken) analysisApiTokenInput.value = analysisApiToken;
   }
 );
 
@@ -115,6 +117,7 @@ document.getElementById('save').addEventListener('click', () => {
       aiApiUrl: aiApiUrlInput.value.trim().replace(/\/+$/, ''),
       aiApiToken: aiApiTokenInput.value.trim(),
       geminiApiKey: geminiApiKeyInput.value.trim(),
+      analysisApiToken: analysisApiTokenInput.value.trim(),
     },
     () => {
       status.textContent = 'Saved.';

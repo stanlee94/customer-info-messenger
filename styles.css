@@ -6024,3 +6024,151 @@ html.cim-compact-meta [style*="--cim-hug-edge"] {
   font-size: 11px;
   color: #65676b;
 }
+
+/* ── Receipt bars under customer photos / PDFs (inbox-receipts.js) ──────────
+   Panel's design language (system font, #0a7cff family for what can be
+   clicked), joined to the bubble as one card: inbox-receipts.js gives the group
+   the bubble's width / left edge and its bottom radius (--cim-rcpt-r) and
+   flattens the bubble's bottom corners through an inline --cim-rcpt-join.
+   The panel's blue #0a7cff when nothing is wrong (host's choice) — never green: green reads as "approved"
+   and nobody has checked the slip yet (host, 2026-10-17); red with a warning.
+   A 3px seam where bar and bubble meet; text pairs ≥ 4.5:1 on their tint. */
+[style*="--cim-rcpt-join"],
+[style*="--cim-rcpt-join"]::before,
+[style*="--cim-rcpt-join"]::after {
+  border-bottom-left-radius: 0 !important;
+  border-bottom-right-radius: 0 !important;
+}
+.cim-rcpt-group {
+  box-sizing: border-box;
+  flex: none;
+  align-self: flex-start;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  width: 300px;
+  margin: 0 0 8px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", sans-serif;
+  text-align: left;
+  cursor: default;
+}
+.cim-rcpt {
+  box-sizing: border-box;
+  padding: 8px 12px 8px 14px;
+  border: 1px solid #b3d1ff;
+  border-top: 3px solid #0a7cff;
+  border-radius: 0;
+  background: #ebf3ff;
+  color: #0b2a5c;
+  font-size: 13px;
+  line-height: 1.35;
+  user-select: text;
+}
+.cim-rcpt + .cim-rcpt { border-top-width: 1px; }
+.cim-rcpt:last-child {
+  border-bottom-left-radius: var(--cim-rcpt-r, 8px);
+  border-bottom-right-radius: var(--cim-rcpt-r, 8px);
+}
+.cim-rcpt--warn {
+  border-color: #fca5a5;
+  border-top-color: #dc2626;
+  background: #fef2f2;
+  color: #7f1d1d;
+}
+.cim-rcpt-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+.cim-rcpt-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.cim-rcpt-status {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #0a7cff;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 700;
+}
+.cim-rcpt-status--bad { background: #b91c1c; }
+.cim-rcpt button {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: copy;
+  border-radius: 4px;
+}
+.cim-rcpt button:hover,
+.cim-rcpt button:focus-visible {
+  color: #0050c8;
+  text-decoration: underline dotted;
+  outline: none;
+}
+.cim-rcpt .cim-rcpt-amount {
+  display: block;
+  font-size: 22px;
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+.cim-rcpt div.cim-rcpt-amount { font-size: 15px; font-weight: 600; }
+.cim-rcpt-line {
+  margin-top: 1px;
+  overflow-wrap: anywhere;
+}
+.cim-rcpt-payee { font-weight: 700; }
+.cim-rcpt-noteline {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.cim-rcpt-notelabel {
+  flex: none;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.8;
+}
+.cim-rcpt .cim-rcpt-note {
+  min-width: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.cim-rcpt-muted { opacity: 0.75; font-style: italic; }
+.cim-rcpt .cim-rcpt-copied,
+.cim-rcpt .cim-rcpt-copied:hover {
+  color: #0050c8;
+  text-decoration: none;
+}
+.cim-rcpt-warns {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.cim-rcpt-warns li {
+  margin-top: 3px;
+  padding: 3px 7px;
+  border-radius: 6px;
+  background: #b91c1c;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 700;
+}
+.cim-rcpt-foot {
+  margin-top: 5px;
+  font-size: 10.5px;
+  opacity: 0.7;
+}

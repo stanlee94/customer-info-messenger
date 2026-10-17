@@ -14,7 +14,8 @@
       ],
       "js": [
         "content.js",
-        "inbox-voice.js"
+        "inbox-voice.js",
+        "inbox-receipts.js"
       ],
       "css": [
         "styles.css"
@@ -27,7 +28,8 @@
       ],
       "js": [
         "inbox-voice-main.js",
-        "inbox-unread-main.js"
+        "inbox-unread-main.js",
+        "inbox-receipts-main.js"
       ],
       "world": "MAIN",
       "run_at": "document_idle"
@@ -47,6 +49,7 @@
     "https://www.facebook.com/plugins/*",
     "https://*.fbcdn.net/*",
     "https://cdn.fbsbx.com/*",
-    "https://generativelanguage.googleapis.com/*"
+    "https://generativelanguage.googleapis.com/*",
+    "https://messenger-gatekeeper.stanlee19941218.workers.dev/*"
   ]
 }
