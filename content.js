@@ -8070,62 +8070,75 @@
     }
   }
 
-  // Meta's "We're updating our terms, effective as of …" notice across the top
-  // of the page — hidden at the host's request (it doesn't accept or decline
-  // anything; Meta's own Preview terms link is never touched). Looked for only
-  // while the page loads (TERMS_LOOK_MS); once hidden, no more scanning unless
-  // Meta replaces that node with a new one (one more look). Hidden with an
-  // inline display:none, which React's className rewrites don't undo.
-  const TERMS_LOOK_MS = 30000;
-  const TERMS_TITLE = /^We[’']re updating our terms\b/i;
-  let termsBanner = null;
-  let termsLookUntil = Date.now() + TERMS_LOOK_MS;
+  // Meta notices hidden at the host's request — nothing is accepted, declined
+  // or dismissed (Meta's own buttons are never touched), they are only not shown:
+  //  - terms: "We're updating our terms, effective as of …" strip across the top;
+  //  - instagram: the "Connect to Instagram" card at the top of the conversation
+  //    list (host's request 2026-10-19), title + text + Not now / Connect.
+  // Looked for only while the page loads (NOTICE_LOOK_MS) — one TreeWalker pass
+  // for all of them; once a notice is hidden it is not looked for again unless
+  // Meta replaces that node (then one more look). Hidden with an inline
+  // display:none, which React's className rewrites don't undo.
+  const NOTICE_LOOK_MS = 30000;
+  const META_NOTICES = [
+    // title text · own = text the notice's own block holds (stops the first climb) · maxH = its height cap
+    { id: 'terms', title: /^We[’']re updating our terms\b/i, own: null, maxH: 120, notIn: '[data-pagelet="GenericThreadListView"]' },
+    // no \b around "Not now": textContent runs the words together ("…Learn moreNot nowConnect")
+    { id: 'instagram', title: /^Connect to Instagram$/i, own: /Not now/, maxH: 360, notIn: null },
+  ].map((n) => Object.assign(n, { el: null, lookUntil: Date.now() + NOTICE_LOOK_MS }));
 
-  function hideTermsNotice() {
-    if (termsBanner) {
-      if (termsBanner.isConnected) return;
-      termsBanner = null;
-      termsLookUntil = Date.now() + TERMS_LOOK_MS;
+  function hideMetaNotices() {
+    if (!document.body) return;
+    const now = Date.now();
+    const want = META_NOTICES.filter((n) => {
+      if (n.el) {
+        if (n.el.isConnected) return false;
+        n.el = null;
+        n.lookUntil = now + NOTICE_LOOK_MS;
+      }
+      return now <= n.lookUntil;
+    });
+    if (!want.length) return;
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    for (let t = walker.nextNode(); t && want.length; t = walker.nextNode()) {
+      const text = t.data.trim();
+      const i = want.findIndex((n) => n.title.test(text));
+      if (i < 0) continue;
+      const box = findNoticeBox(t.parentElement, want[i]);
+      if (!box) continue;
+      box.style.setProperty('display', 'none', 'important');
+      box.setAttribute('data-cim-hidden', want[i].id);
+      want[i].el = box;
+      want.splice(i, 1);
     }
-    if (Date.now() > termsLookUntil || !document.body) return;
-    const box = findTermsNotice();
-    if (!box) return;
-    box.style.setProperty('display', 'none', 'important');
-    box.setAttribute('data-cim-hidden', 'terms');
-    termsBanner = box;
   }
 
-  // The notice's whole row, from its title text: (1) climb until the block
-  // holds the notice's own button (Preview terms) — that is the row; (2) then
-  // only through wrappers that hold nothing else (or are exactly its height),
-  // so a Meta bar sharing a wrapper is never taken along. Every step stays a short strip (≤ 120 px,
-  // ≤ 600 chars) with none of the app's parts inside.
-  function findTermsNotice() {
-    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-    for (let t = walker.nextNode(); t; t = walker.nextNode()) {
-      if (!TERMS_TITLE.test(t.data.trim())) continue;
-      const leaf = t.parentElement;
-      if (!leaf || leaf.closest('#' + NOTE_BAR_ID + ', #' + PANEL_ID + ', [data-pagelet="GenericThreadListView"], [contenteditable]')) continue;
-      const app = '[data-pagelet], [role="toolbar"], [role="main"], [role="navigation"], [contenteditable], #' + NOTE_BAR_ID + ', #' + PANEL_ID;
-      const fits = (p) => p && p !== document.body && p !== document.documentElement &&
-        p.textContent.length <= 600 && p.getBoundingClientRect().height <= 120 && !p.querySelector(app);
-      let box = leaf;
-      for (let i = 0; i < 8 && !box.querySelector('[role="button"], [role="link"], a, button') && fits(box.parentElement); i++) {
-        box = box.parentElement;
-      }
-      // A wrapper holding nothing but the notice is part of it — Meta's grey
-      // background and padding sit on such a box around the row.
-      for (let i = 0; i < 6 && fits(box.parentElement) && (box.parentElement.children.length === 1 ||
-        box.parentElement.getBoundingClientRect().height <= box.getBoundingClientRect().height + 2); i++) {
-        box = box.parentElement;
-      }
-      return box;
+  // The notice's whole block, from its title text: (1) climb until the block
+  // holds the notice's own part (any button for terms — Preview terms; the text
+  // "Not now" for the Instagram card); (2) then only through wrappers that hold
+  // nothing else (or are exactly its height), so a Meta bar sharing a wrapper is
+  // never taken along. Every step stays small (≤ maxH px, ≤ 600 chars) with none
+  // of the app's parts inside.
+  function findNoticeBox(leaf, n) {
+    if (!leaf || leaf.closest('#' + NOTE_BAR_ID + ', #' + PANEL_ID + ', [contenteditable]' + (n.notIn ? ', ' + n.notIn : ''))) return null;
+    const app = '[data-pagelet], [role="toolbar"], [role="main"], [role="navigation"], [role="grid"], [role="presentation"][style], [contenteditable], #' + NOTE_BAR_ID + ', #' + PANEL_ID;
+    const fits = (p) => p && p !== document.body && p !== document.documentElement &&
+      p.textContent.length <= 600 && p.getBoundingClientRect().height <= n.maxH && !p.querySelector(app);
+    const holdsOwn = (b) => (n.own ? n.own.test(b.textContent) : !!b.querySelector('[role="button"], [role="link"], a, button'));
+    let box = leaf;
+    for (let i = 0; i < 10 && !holdsOwn(box) && fits(box.parentElement); i++) box = box.parentElement;
+    if (!holdsOwn(box)) return null;
+    // A wrapper holding nothing but the notice is part of it — Meta's background,
+    // border and padding sit on such a box around it.
+    for (let i = 0; i < 6 && fits(box.parentElement) && (box.parentElement.children.length === 1 ||
+      box.parentElement.getBoundingClientRect().height <= box.getBoundingClientRect().height + 2); i++) {
+      box = box.parentElement;
     }
-    return null;
+    return box;
   }
 
   function check() {
-    hideTermsNotice();
+    hideMetaNotices();
     checkPanel();
     ensureBankCard();
     tightenSidebar();

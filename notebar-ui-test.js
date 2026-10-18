@@ -141,6 +141,10 @@ function check(name, cond, extra) {
   check('terms notice: whole row hidden, the app is not', await page.evaluate(() => { const hidden = document.querySelector('[data-cim-hidden="terms"]'); return !!hidden && hidden.contains(document.getElementById('termsBanner')) && !hidden.contains(document.querySelector('.app')) && getComputedStyle(document.querySelector('.app')).display !== 'none'; }));
   check('terms notice: inbox moves up into the space', await page.evaluate(() => Math.round(document.querySelector('.app').getBoundingClientRect().top) === Math.round(document.getElementById('metaStrip').getBoundingClientRect().bottom) && document.getElementById('metaStrip').getBoundingClientRect().top === 0));
   check("terms notice: Meta's Preview terms never clicked", await page.evaluate(() => !window.__termsClicked));
+  // Meta's "Connect to Instagram" card at the top of the conversation list: hidden whole, list stays
+  check('Instagram card hidden, with its padded wrapper', await page.evaluate(() => !document.getElementById('igCard').offsetParent && !document.getElementById('igOuter').offsetParent && document.querySelector('[data-cim-hidden="instagram"]')?.id === 'igOuter'));
+  check('Instagram card: conversation list, search and rows stay', await page.evaluate(() => !!document.querySelector('.srch').offsetParent && !!document.querySelector('a.row').offsetParent && !!document.getElementById('filtersBtn').offsetParent));
+  check("Instagram card: Not now / Connect never clicked", await page.evaluate(() => !window.__igClicked));
   const walks1 = await page.evaluate(() => window.__walks);
   await page.evaluate(() => { for (let i = 0; i < 20; i++) document.querySelector('.msgs').append(document.createElement('span')); });
   await page.waitForTimeout(800);
@@ -149,6 +153,9 @@ function check(name, cond, extra) {
   await page.evaluate(() => { const old = document.querySelector('[data-cim-hidden="terms"]'); const fresh = old.cloneNode(true); fresh.removeAttribute('data-cim-hidden'); fresh.style.removeProperty('display'); old.replaceWith(fresh); });
   await page.waitForTimeout(800);
   check('terms notice: re-rendered by Meta → hidden again', await page.evaluate(() => !document.getElementById('termsOuter').offsetParent && !!document.getElementById('metaStrip').offsetParent));
+  await page.evaluate(() => { const old = document.querySelector('[data-cim-hidden="instagram"]'); const fresh = old.cloneNode(true); fresh.removeAttribute('data-cim-hidden'); fresh.style.removeProperty('display'); old.replaceWith(fresh); });
+  await page.waitForTimeout(800);
+  check('Instagram card: re-rendered by Meta → hidden again', await page.evaluate(() => !document.getElementById('igCard').offsetParent && !!document.querySelector('a.row').offsetParent));
   check('bar placed in header', await page.evaluate(() => document.querySelector('#cim-note-bar').nextElementSibling?.textContent.includes('Respond to messages')));
   check('header hidden', await page.evaluate(() => getComputedStyle(document.querySelector('#cim-note-bar').nextElementSibling).display === 'none'));
   check('closed: only the profile button shows', await page.locator('[data-k="avatar"]').isVisible() && !(await page.locator('[data-k="automations"]').isVisible()) && !(await page.locator('#avail').isVisible()));
