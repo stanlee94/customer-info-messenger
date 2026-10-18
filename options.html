@@ -137,15 +137,6 @@
       live tab to apply.
     </p>
     <div id="liveStatus"></div>
-    <h3>Your name</h3>
-    <p class="hint">
-      Signs your Balance / Note changes. Used only when your Facebook name
-      can't be read from the Business Suite page. Saved immediately.
-    </p>
-    <label for="staffName">Name</label>
-    <input type="text" id="staffName" autocomplete="off" maxlength="60" placeholder="e.g. Angel Chok" />
-    <div id="staffStatus" class="inline-status"></div>
-
     <h3>Balance / Note bar and inbox layout</h3>
     <p class="hint">
       Balances and notes are saved on the customer's Baserow row, so every
@@ -201,6 +192,12 @@
     <input type="text" id="baserowNoteLogTableId" autocomplete="off" value="794" />
 
     <h3>AI Reply API</h3>
+    <div class="toggle-row">
+      <label for="aiReplyEnabled">Show the AI Rewrite bar in Messenger</label>
+      <span class="switch"><input type="checkbox" id="aiReplyEnabled" role="switch" /><span></span></span>
+    </div>
+    <p class="hint">Off by default. The ↩ / ✨ AI Rewrite / 华语 · English bar above the reply box. Saved immediately; open inbox tabs update by themselves.</p>
+    <div id="aiStatus" class="inline-status"></div>
     <p class="hint">
       Backend that calls Gemini or ChatGPT to generate suggested replies.
       Exposes <code>POST /ai/reply</code> and returns <code>{ ok, text }</code>.

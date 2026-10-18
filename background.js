@@ -1327,8 +1327,10 @@ async function getFbVideoStats(url, wantElapsed) {
 const DEFAULT_NOTE_LOG_TABLE_ID = '794';
 
 // The preview build kept test balances/notes in this browser only; they are
-// not real data and nothing reads them any more.
+// not real data and nothing reads them any more. `staffName` was the typed
+// fallback name, removed from the options page (2026-10-18).
 chrome.runtime.onInstalled.addListener(() => {
+  chrome.storage.local.remove('staffName');
   chrome.storage.local.get(null, (all) => {
     const keys = Object.keys(all || {}).filter((k) => k.startsWith('noteMock:') || k === 'noteMockLog' || k === 'notesMockFail');
     if (keys.length) chrome.storage.local.remove(keys);

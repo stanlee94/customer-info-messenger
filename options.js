@@ -44,24 +44,6 @@ ec2LiveInput.addEventListener('change', () => {
   });
 });
 
-// Staff name — signs Balance / Note saves when the Facebook name can't be
-// read from the page. Saves on every edit (debounced), like the live toggle.
-const staffNameInput = document.getElementById('staffName');
-const staffStatus = document.getElementById('staffStatus');
-let staffTimer;
-chrome.storage.local.get('staffName', ({ staffName }) => {
-  if (staffName) staffNameInput.value = staffName;
-});
-staffNameInput.addEventListener('input', () => {
-  clearTimeout(staffTimer);
-  staffTimer = setTimeout(() => {
-    chrome.storage.local.set({ staffName: staffNameInput.value.trim() }, () => {
-      staffStatus.textContent = staffNameInput.value.trim() ? 'Name saved.' : 'Name cleared.';
-      setTimeout(() => { staffStatus.textContent = ''; }, 1500);
-    });
-  }, 400);
-});
-
 // Balance / Note bar + inbox layout controls.
 const notesStatus = document.getElementById('notesStatus');
 function flashNotesStatus(text) {
@@ -84,6 +66,20 @@ chrome.storage.local.get('compactMetaHeaders', ({ compactMetaHeaders }) => {
 compactMetaInput.addEventListener('change', () => {
   chrome.storage.local.set({ compactMetaHeaders: compactMetaInput.checked }, () => {
     flashNotesStatus(compactMetaInput.checked ? 'Compact headers on.' : 'Compact headers off.');
+  });
+});
+// AI Rewrite bar in Messenger's composer — off unless switched on here.
+const aiReplyInput = document.getElementById('aiReplyEnabled');
+const aiStatus = document.getElementById('aiStatus');
+let aiStatusTimer;
+chrome.storage.local.get('aiReplyEnabled', ({ aiReplyEnabled }) => {
+  aiReplyInput.checked = aiReplyEnabled === true;
+});
+aiReplyInput.addEventListener('change', () => {
+  chrome.storage.local.set({ aiReplyEnabled: aiReplyInput.checked }, () => {
+    aiStatus.textContent = aiReplyInput.checked ? 'AI Rewrite bar on — open inbox tabs show it by themselves.' : 'AI Rewrite bar off.';
+    clearTimeout(aiStatusTimer);
+    aiStatusTimer = setTimeout(() => { aiStatus.textContent = ''; }, 4000);
   });
 });
 const keepUnreadInput = document.getElementById('keepUnread');

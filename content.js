@@ -18,6 +18,7 @@
   let debounceTimer = null;
   let cartSessionValid = false;
   let aiHealthy = null;        // null = unchecked, true/false = result
+  let aiReplyEnabled = false;  // options toggle `aiReplyEnabled`, off by default
   let aiHealthPending = false;
   let aiPreviousText = '';
   let aiLanguage = 'chinese';
@@ -423,6 +424,11 @@
   }
 
   function ensureAiButtons() {
+    // Off in the options (the default): no bar and no health check.
+    if (!aiReplyEnabled) {
+      document.getElementById(AI_BUTTONS_ID)?.remove();
+      return;
+    }
     // Health check on first call — buttons hidden until backend confirms ok.
     if (aiHealthy === null) {
       if (!aiHealthPending) {
@@ -805,7 +811,6 @@
   let noteHeaderMissingSince = 0;
   let noteHeaderLastScan = 0;
   let noteBarPlacement = 'header'; // 'header' | 'panel' (options page)
-  let staffOptionName = '';
   let fbIdentity;                  // undefined = not read yet, null = not found
   let fbIdentityReadAt = 0;
   let customerSwitching = true;
@@ -818,10 +823,10 @@
 
   // Keep unanswered chats unread (inbox-unread-main.js, page world, reads this attribute).
   const applyKeepUnread = (v) => document.documentElement.setAttribute('data-cim-keep-unread', v === false ? '0' : '1');
-  chrome.storage.local.get(['staffName', 'noteBarPlacement', 'threadListSize', 'compactMetaHeaders', 'keepUnread'], (r) => {
+  chrome.storage.local.get(['aiReplyEnabled', 'noteBarPlacement', 'threadListSize', 'compactMetaHeaders', 'keepUnread'], (r) => {
     applyKeepUnread(r.keepUnread);
+    aiReplyEnabled = r.aiReplyEnabled === true;
     document.documentElement.classList.toggle('cim-compact-meta', r.compactMetaHeaders !== false);
-    staffOptionName = String(r.staffName || '').trim();
     noteBarPlacement = r.noteBarPlacement === 'panel' ? 'panel' : 'header';
     applyThreadListSize(r.threadListSize);
     renderNoteBar();
@@ -829,9 +834,9 @@
   });
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local') return;
-    if (changes.staffName) {
-      staffOptionName = String(changes.staffName.newValue || '').trim();
-      renderNoteBar();
+    if (changes.aiReplyEnabled) {
+      aiReplyEnabled = changes.aiReplyEnabled.newValue === true;
+      if (aiReplyEnabled) { ensureAiButtons(); updateAiButtonState(); } else document.getElementById(AI_BUTTONS_ID)?.remove();
     }
     if (changes.threadListSize) applyThreadListSize(changes.threadListSize.newValue);
     if (changes.keepUnread) applyKeepUnread(changes.keepUnread.newValue);
@@ -898,7 +903,6 @@
       fbIdentity = readFacebookIdentity();
     }
     if (fbIdentity) return fbIdentity;
-    if (staffOptionName) return { name: staffOptionName, userId: '', source: 'options' };
     return null;
   }
 
@@ -1886,8 +1890,7 @@
     }
     if (!identity) {
       return {
-        kind: 'muted', text: 'Set your name in extension options to edit',
-        actions: [{ label: 'Open options', run: () => chrome.runtime.sendMessage({ type: 'OPEN_OPTIONS_PAGE' }) }],
+        kind: 'muted', text: "Can't read your Facebook name — reload the page to edit",
       };
     }
     if (n.saving) return { kind: 'muted', text: 'Saving…', spin: true };
@@ -2155,8 +2158,7 @@
     renderNoteStatus(b, noteStatusSpec(n, identity));
 
     const me = b.querySelector('.cim-nb-me');
-    setText(me, identity ? `You: ${identity.name}${identity.source === 'options' ? ' (typed)' : ''}` : '');
-    me.classList.toggle('cim-nb-me--typed', identity?.source === 'options');
+    setText(me, identity ? `You: ${identity.name}` : '');
   }
 
   // Goal 4 of the spec: never show one customer's data against another
@@ -7817,7 +7819,7 @@
         items: res.items,
         outro: `If this chat was linked to the wrong customer, choose Move: ${who} gets back the values from before, ` +
           'and the text goes to the customer you link next as an unsaved draft — you check it and press Save.',
-        note: identity ? '' : 'Set your name in the extension options to use Move.',
+        note: identity ? '' : "Can't read your Facebook name — reload the page to use Move.",
         buttons: [
           { label: 'Move to the correct customer', primary: true, disabled: !identity, run: move },
           { label: `Keep on ${who}`, run: () => { closeUnlinkModal(); doUnlink(uid, psid, panel, typing, ''); } },

@@ -68,7 +68,7 @@ const stub = `
   const summary = { totalSpending: 1234.5, totalPurchase: 9, rawRecency: 12, lastOrderDate: '2026-09-20', yearsActive: 2, rank: 'Loyal', address: '12 Jalan Bukit, 50450 KL', recentOrders: [], allOrders: [] };
   const handlers = {
     CHECK_SESSION: async () => ({ ok: true, valid: false }),
-    GET_AI_HEALTH: async () => ({ ok: false }),
+    GET_AI_HEALTH: async () => ({ ok: !!window.__aiHealthy }),
     SEARCH_BASEROW_BY_UID: async () => ({ ok: true, psid: null }),
     SEARCH_MANYCHAT_BY_NAME: async (m) => ({ ok: true, candidates: m.name === 'Chong Wei' ? [{ psid: '25888888888888', name: 'Chong Wei', profilePic: '', lastMessage: 'hi', lastInteraction: '' }] : [] }),
     GET_ORDERS_BY_PSID: async (m) => { await new Promise((r) => setTimeout(r, window.__ordersDelay || 300)); return { ok: true, data: { ...summary, baserowName: NAMES[m.psid] || '' } }; },
@@ -636,16 +636,35 @@ function check(name, cond, extra) {
   await p2.goto(url);
   await p2.addStyleTag({ path: path.join(EXT, 'styles.css') });
   await p2.addScriptTag({ path: path.join(EXT, 'content.js') });
-  try { await p2.waitForFunction(() => document.querySelector('#cim-note-bar .cim-nb-status')?.textContent.startsWith('Set your name'), null, { timeout: 8000 }); }
+  try { await p2.waitForFunction(() => document.querySelector('#cim-note-bar .cim-nb-status')?.textContent.startsWith("Can't read your Facebook name"), null, { timeout: 8000 }); }
   catch (e) { results.push('DEBUG status=' + await p2.evaluate(() => document.querySelector('#cim-note-bar .cim-nb-status')?.innerText + ' | bar=' + !!document.getElementById('cim-note-bar') + ' | scripts=' + document.querySelectorAll('script[type="application/json"]').length)); throw e; }
   check('no identity → read-only', await p2.locator('.cim-nb-balance').isDisabled());
   await p2.click('.cim-nb-compact');
   await p2.screenshot({ path: path.join(OUT, '15-no-identity.png') });
   await p2.keyboard.press('Escape');
   await p2.evaluate(() => chrome.storage.local.set({ staffName: 'Angel' }));
-  await p2.waitForFunction(() => document.querySelector('.cim-nb-me')?.textContent === 'You: Angel (typed)');
-  check('typed name fallback', !(await p2.locator('.cim-nb-balance').isDisabled()));
-  await p2.screenshot({ path: path.join(OUT, '16-typed-name.png') });
+  await p2.waitForTimeout(600);
+  check('a leftover typed name is ignored (option removed)', await p2.locator('.cim-nb-balance').isDisabled());
+
+  // AI Rewrite bar: off unless the options toggle `aiReplyEnabled` is on (2026-10-18).
+  await p2.evaluate(() => {
+    window.__aiHealthy = true;
+    const box = document.createElement('div');
+    box.id = 'test-composer';
+    box.style.cssText = 'position:fixed;left:380px;bottom:10px;width:600px;background:#fff';
+    box.innerHTML = '<div style="height:40px"><div contenteditable="true" data-lexical-editor="true" aria-placeholder="Reply in Messenger…" style="height:36px"></div></div><div style="height:30px">toolbar</div>';
+    document.body.appendChild(box);
+  });
+  await p2.waitForTimeout(900);
+  check('AI bar: off by default — no bar, no health check', await p2.evaluate(() => !document.getElementById('cim-ai-buttons') && !(window.__msgs || []).includes('GET_AI_HEALTH')));
+  await p2.evaluate(() => chrome.storage.local.set({ aiReplyEnabled: true }));
+  let aiShown = true;
+  try { await p2.waitForSelector('#cim-ai-buttons', { timeout: 3000 }); } catch { aiShown = false; }
+  check('AI bar: switched on → shown without reload', aiShown);
+  await p2.evaluate(() => chrome.storage.local.set({ aiReplyEnabled: false }));
+  await p2.waitForTimeout(500);
+  check('AI bar: switched off → removed', await p2.evaluate(() => !document.getElementById('cim-ai-buttons')));
+  await p2.evaluate(() => document.getElementById('test-composer').remove());
 
   // Narrow window
   await p2.setViewportSize({ width: 1180, height: 760 });

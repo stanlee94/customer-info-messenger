@@ -4873,10 +4873,6 @@
   white-space: nowrap;
 }
 
-#cim-note-bar .cim-nb-me--typed {
-  color: #b45309;
-}
-
 #cim-note-bar .cim-nb-save,
 #cim-note-bar .cim-nb-history-btn {
   flex: none;
