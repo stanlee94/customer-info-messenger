@@ -576,6 +576,30 @@ async function fetchReceipts(psid) {
   }
 }
 
+// Customers with a payment slip and no staff reply since (worker GET
+// /pending-slips) — for the "Slip" tag in the conversation list. Items carry the
+// chat's last-message time (the row's own timestamp), never a PSID.
+async function fetchPendingSlips() {
+  const { analysisApiToken } = await chrome.storage.local.get('analysisApiToken');
+  if (!analysisApiToken) return { ok: false, error: 'off' };
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), RECEIPTS_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${RECEIPTS_API_BASE}/pending-slips`, {
+      headers: { Authorization: `Bearer ${analysisApiToken}` },
+      signal: ctl.signal,
+    });
+    if (res.status === 401) return { ok: false, error: 'unauthorized' };
+    if (!res.ok) return { ok: false, error: 'server_' + res.status };
+    const json = await res.json();
+    return json && json.ok && Array.isArray(json.items) ? { ok: true, items: json.items } : { ok: false, error: 'bad_reply' };
+  } catch (err) {
+    return { ok: false, error: err.name === 'AbortError' ? 'timeout' : 'network' };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function throwBaserowError(res) {
   return res.text().then((text) => {
     let detail = text;
@@ -1477,6 +1501,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.type === 'GET_RECEIPTS') {
     fetchReceipts(message.psid).then(sendResponse, () => sendResponse({ ok: false, error: 'internal' }));
+    return true;
+  }
+
+  if (message?.type === 'GET_PENDING_SLIPS') {
+    fetchPendingSlips().then(sendResponse, () => sendResponse({ ok: false, error: 'internal' }));
     return true;
   }
 

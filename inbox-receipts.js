@@ -21,7 +21,7 @@
   if (window.__cimRcpt) return;
   window.__cimRcpt = true;
 
-  const cfg = Object.assign({ cacheMs: 60000, recheckMs: 10000, freshMs: 3 * 60000, replyTimeoutMs: 20000 }, window.__cimRcptCfg || {});
+  const cfg = Object.assign({ cacheMs: 60000, recheckMs: 10000, freshMs: 3 * 60000, replyTimeoutMs: 20000, slipPollMs: 30000 }, window.__cimRcptCfg || {});
   const TAGGED = '[data-cim-rcpt-keys]';
   const TZ = 'Asia/Kuala_Lumpur';
   const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -444,7 +444,54 @@
     enabled = on;
     if (!on) cache.clear();
     schedule();
+    pollSlips();
   }
+
+  // ── "Slip" tag in the conversation list ──
+  // Customers who sent a payment slip with no staff reply since (worker GET
+  // /pending-slips, every slipPollMs while the tab is visible). The rows carry
+  // no PSID, so each item is keyed by the time of the chat's last message —
+  // equal to the row's own timestamp to the ms (16/16 real rows, 2026-10-19).
+  // Written to html[data-cim-slips] as {"<ms>": [label, flagged]};
+  // inbox-receipts-main.js (page world, reads Meta's row data) tags the rows.
+  // A staff reply changes the row's timestamp, so its tag goes at once; the
+  // worker drops the customer on the next poll. Failure keeps the last map.
+  let slipTimer = 0;
+  let slipBusy = false;
+  const slipMoney = (n) => Number(n).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  function slipLabel(it) {
+    const sym = it.currency === 'SGD' ? 'S$' : it.currency === 'MYR' ? 'RM' : '';
+    if (it.n > 1) return `🧾 ${it.n} slips`;
+    return !it.flagged && sym && it.amount != null ? `🧾 Slip ${sym}${slipMoney(it.amount)}` : '🧾 Slip';
+  }
+  function writeSlips(items) {
+    const h = document.documentElement;
+    if (!items) { h.removeAttribute('data-cim-slips'); return; }
+    const map = {};
+    for (const it of items) if (it && it.last_ts) map[String(it.last_ts)] = [slipLabel(it), it.flagged ? 1 : 0];
+    const v = JSON.stringify(map);
+    if (h.getAttribute('data-cim-slips') !== v) h.setAttribute('data-cim-slips', v);
+  }
+  function pollSlips() {
+    clearTimeout(slipTimer);
+    if (!enabled) { writeSlips(null); return; }
+    slipTimer = setTimeout(pollSlips, cfg.slipPollMs);
+    if (document.hidden || slipBusy) return;
+    slipBusy = true;
+    const backstop = setTimeout(() => { slipBusy = false; }, cfg.replyTimeoutMs);
+    try {
+      chrome.runtime.sendMessage({ type: 'GET_PENDING_SLIPS' }, (res) => {
+        void chrome.runtime.lastError;
+        clearTimeout(backstop);
+        slipBusy = false;
+        if (enabled && res && res.ok && Array.isArray(res.items)) writeSlips(res.items);
+      });
+    } catch (e) {
+      clearTimeout(backstop);
+      slipBusy = false;   // extension reloaded while the tab stayed open
+    }
+  }
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) pollSlips(); });
 
   chrome.storage.local.get('analysisApiToken', (r) => setEnabled(!!(r && r.analysisApiToken)));
   chrome.storage.onChanged.addListener((changes, area) => {

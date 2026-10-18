@@ -5772,6 +5772,49 @@ html.cim-compact-meta [style*="--cim-hug-edge"] {
   z-index: 1;
 }
 
+/* "Slip" tag on a conversation-list row: the customer sent a payment slip and
+   no staff has replied since (inbox-receipts-main.js; label from the worker's
+   /pending-slips). Drawn FIRST in Meta's label line with Meta's exact chip
+   shape (probe of real rows 2026-10-19: 21px tall, padding 4px 8px, radius
+   4px, 12px/14px text, 7px between chips) as the ::before of the first chip's
+   row-flex box ([data-cim-slip-chip]) — a pseudo-element, never a node in
+   Meta's row. A row with no labels draws it itself where the chip line would
+   be ([data-cim-slip-pos="abs"], left = its first text, --cim-slip-left).
+   The panel's blue when the slip is clean (never green — not "approved"), red
+   with any warning. White 12px semibold on #0a7cff = 3.9:1 (accepted for the
+   receipt pill), on #dc2626 = 4.8:1. */
+[data-pagelet="GenericThreadListView"] [data-cim-slip-chip]::before,
+[data-pagelet="GenericThreadListView"] [role="presentation"][data-cim-slip-pos="abs"]::before {
+  content: attr(data-cim-slip-chip);
+  display: flex;
+  align-items: center;
+  flex: none;
+  box-sizing: border-box;
+  height: 21px;
+  padding: 4px 8px;
+  margin-right: 7px;
+  border-radius: 4px;
+  background: #0a7cff;
+  color: #fff;
+  font: 600 12px/14px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  white-space: nowrap;
+  pointer-events: none;
+  position: relative;
+  z-index: 2;   /* above the pending tint (the row's ::after, z 1) */
+}
+[data-pagelet="GenericThreadListView"] [role="presentation"][data-cim-slip-pos="abs"]::before {
+  content: attr(data-cim-slip);
+  position: absolute;
+  left: var(--cim-slip-left, 61px);
+  bottom: 12px;
+  z-index: 2;
+  margin-right: 0;
+}
+[data-pagelet="GenericThreadListView"] [data-cim-slip-chip][data-cim-slip-flag="1"]::before,
+[data-pagelet="GenericThreadListView"] [role="presentation"][data-cim-slip-pos="abs"][data-cim-slip-flag="1"]::before {
+  background: #dc2626;
+}
+
 /* ── Bank transactions card (#cim-bank-card, ensureBankCard) ──────────────
    A second card right under the panel: PBB | OCBC toggle (each with its
    statement's last update), a search box, matching rows (exact amount

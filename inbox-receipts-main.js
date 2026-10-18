@@ -129,6 +129,105 @@
     debug.maxMs = Math.max(debug.maxMs, performance.now() - t0);
   }
 
+  // ── "Slip" tag on conversation-list rows ──
+  // html[data-cim-slips] (inbox-receipts.js) = {"<last message ms>": [label, flagged]}.
+  // A row's own component carries `thread` (BizInboxThreadListRowV2) whose
+  // timestamp is the chat's last message time; a match → data-cim-slip (label,
+  // drawn by styles.css) + data-cim-slip-flag. The virtual list reuses rows, so
+  // every pass re-reads each row's thread; writes only on change.
+  let slipSrc = null;
+  let slipMap = {};
+  // Where the pill goes (structure probe of real rows, 2026-10-19): Meta's label
+  // chips (Ordered, Purchase, ad_id…) are 21px boxes with a 4px radius and a
+  // background, each inside a row-flex box; the first chip's nearest row-flex
+  // ancestor gets data-cim-slip-chip and CSS draws our pill as its ::before —
+  // first in the line, Meta's exact chip shape. No chips → the row itself
+  // carries data-cim-slip-pos="abs" and the pill sits where the chip line would
+  // be, its left edge measured from the row's first text (--cim-slip-left).
+  // Measured only when the row shows another chat or every 5 s, never per frame.
+  const chipCache = new WeakMap();   // row → { key, at, anchor, left }
+  const CHIP_RECHECK_MS = 5000;
+  function isChip(el) {
+    const h = el.offsetHeight;
+    if (h < 14 || h > 30) return false;
+    const cs = getComputedStyle(el);
+    return cs.borderTopLeftRadius === '4px' && cs.backgroundColor !== 'rgba(0, 0, 0, 0)' && cs.backgroundColor !== 'transparent';
+  }
+  function measureRow(row) {
+    let anchor = null;
+    for (const el of row.querySelectorAll('div')) {
+      if (!isChip(el)) continue;
+      for (let a = el.parentElement; a && a !== row; a = a.parentElement) {
+        const cs = getComputedStyle(a);
+        if ((cs.display === 'flex' || cs.display === 'inline-flex') && cs.flexDirection === 'row') { anchor = a; break; }
+      }
+      break;
+    }
+    let left = 0;
+    if (!anchor) {
+      const rr = row.getBoundingClientRect();
+      const ratio = row.offsetWidth ? rr.width / row.offsetWidth : 1;
+      for (const el of row.querySelectorAll('div, span, abbr')) {
+        if ([...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim())) {
+          left = Math.round((el.getBoundingClientRect().left - rr.left) / (ratio || 1));
+          break;
+        }
+      }
+    }
+    return { anchor, left };
+  }
+  function syncSlipRows() {
+    const src = document.documentElement.getAttribute('data-cim-slips') || '';
+    if (src !== slipSrc) {
+      slipSrc = src;
+      try { slipMap = src ? JSON.parse(src) || {} : {}; } catch (e) { slipMap = {}; }
+    }
+    const list = document.querySelector('[data-pagelet="GenericThreadListView"]');
+    if (!list) return;
+    const anchors = new Set();
+    const now = Date.now();
+    for (const row of list.querySelectorAll('[role="presentation"]')) {
+      let hit = null, key = '';
+      if (src) {
+        for (let f = currentFiber(row), i = 0; f && i < 2; f = f.return, i++) {
+          const t = f.memoizedProps && f.memoizedProps.thread;
+          if (t && t.threadFBID) { key = t.threadFBID + ':' + toMs(t.timestamp); hit = slipMap[String(toMs(t.timestamp))] || null; break; }
+        }
+      }
+      if (!hit) {
+        if (row.hasAttribute('data-cim-slip')) {
+          row.removeAttribute('data-cim-slip');
+          row.removeAttribute('data-cim-slip-flag');
+          row.removeAttribute('data-cim-slip-pos');
+        }
+        continue;
+      }
+      let c = chipCache.get(row);
+      if (!c || c.key !== key || now - c.at > CHIP_RECHECK_MS || (c.anchor && !(c.anchor.isConnected && row.contains(c.anchor)))) {
+        c = Object.assign({ key, at: now }, measureRow(row));
+        chipCache.set(row, c);
+      }
+      const label = String(hit[0]);
+      const flag = hit[1] ? '1' : '0';
+      setAttr(row, 'data-cim-slip', label);
+      setAttr(row, 'data-cim-slip-flag', flag);
+      if (c.anchor) {
+        anchors.add(c.anchor);
+        setAttr(row, 'data-cim-slip-pos', 'chip');
+        setAttr(c.anchor, 'data-cim-slip-chip', label);
+        setAttr(c.anchor, 'data-cim-slip-flag', flag);
+      } else {
+        setAttr(row, 'data-cim-slip-pos', 'abs');
+        if (row.style.getPropertyValue('--cim-slip-left') !== c.left + 'px') row.style.setProperty('--cim-slip-left', c.left + 'px');
+      }
+    }
+    // A chip box that no longer belongs to a tagged chat loses the pill.
+    for (const el of list.querySelectorAll('[data-cim-slip-chip]')) {
+      if (!anchors.has(el)) { el.removeAttribute('data-cim-slip-chip'); el.removeAttribute('data-cim-slip-flag'); }
+    }
+  }
+  window.__cimSlipDebug = () => ({ map: slipMap, tagged: document.querySelectorAll('[data-cim-slip]').length });
+
   let queued = false;
   function schedule() {
     if (queued) return;
@@ -136,11 +235,24 @@
     requestAnimationFrame(() => {
       queued = false;
       try { tagAll(); } catch (e) { /* never throw into Meta's page */ }
+      try { syncSlipRows(); } catch (e) { /* never throw into Meta's page */ }
     });
   }
 
-  // childList + src changes (an <img> reused for another photo); our own
-  // data-cim-rcpt-* writes never re-trigger it.
-  new MutationObserver(schedule).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['src', 'href'] });
+  // childList + src changes (an <img> reused for another photo) + a new slip
+  // map; our own data-cim-rcpt-* / data-cim-slip* writes never re-trigger it.
+  new MutationObserver(schedule).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['src', 'href', 'data-cim-slips'] });
   schedule();
+  // A row whose time changes through a text-only update fires no childList
+  // mutation: re-check the ~20 visible rows every second (cheap, no layout reads),
+  // and on every scroll frame — the virtual list may re-use a row element for
+  // another chat while scrolling, and the tag must follow at once.
+  let slipQueued = false;
+  const scheduleSlips = () => {
+    if (slipQueued) return;
+    slipQueued = true;
+    requestAnimationFrame(() => { slipQueued = false; try { syncSlipRows(); } catch (e) { /* never throw into Meta's page */ } });
+  };
+  document.addEventListener('scroll', scheduleSlips, { capture: true, passive: true });
+  setInterval(scheduleSlips, 1000);
 })();
