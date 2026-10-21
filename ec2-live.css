@@ -3190,3 +3190,154 @@ body:has(.ddr-col-left) { background: var(--ddr-page) !important; }
   .ddr-chat-close { width: 34px; padding: 0; }
   .ddr-chat-body { padding: 8px 10px 12px; }
 }
+
+/* ===========================================================================
+   💬 private reply (2026-10-21): a button at the end of the card's line 2 and
+   a popup on <body> with the host's messages (Options) in 中文 / English.
+   Click = send to the customer's Messenger as a reply to their comment.
+   =========================================================================== */
+
+.ddr-pr {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 20px;
+  /* Line 2 is 19.8px (the 18px LTV); the negative margin keeps the button
+     from adding height to it - the 62px row is the host's accepted budget. */
+  margin: -1px 0;
+  padding: 0;
+  border: 1px solid #BFDBFE;
+  border-radius: 6px;
+  background: #EFF6FF;
+  color: #1D4ED8;
+  cursor: pointer;
+  transition: background var(--ddr-motion), border-color var(--ddr-motion);
+}
+.ddr-pr .ddr-ico { width: 14px; height: 14px; stroke-width: 2.3; }
+.ddr-pr:hover { background: #DBEAFE; border-color: #60A5FA; }
+.ddr-pr:focus-visible { outline: 2px solid #2563EB; outline-offset: 1px; }
+.ddr-pr.ddr-pr-sent { background: #ECFDF5; border-color: #6EE7B7; color: #047857; }
+.ddr-pr.ddr-pr-sent:hover { background: #D1FAE5; border-color: #34D399; }
+
+.ddr-pr-pop {
+  position: fixed;
+  z-index: 2147482700;
+  width: 360px;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  box-sizing: border-box;
+  padding: 12px;
+  border-radius: 12px;
+  background: #FFFFFF;
+  color: var(--ddr-ink);
+  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.22), 0 0 0 1px #E2E8F0;
+  text-align: left;
+  animation: ddr-who-in 120ms ease-out;
+}
+.ddr-pr-pop[hidden] { display: none !important; }
+/* EC2 forces 微软雅黑 on every div. */
+.ddr-pr-pop,
+.ddr-pr-pop * { font-family: var(--ddr-font) !important; box-sizing: border-box; }
+
+.ddr-pr-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.ddr-pr-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 14px;
+  color: var(--ddr-ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ddr-pr-title b { color: var(--ddr-ink); font-size: 16px; font-weight: 800; }
+.ddr-pr-x {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 50%;
+  background: #F1F5F9;
+  color: var(--ddr-ink-2);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+.ddr-pr-x:hover { background: #E2E8F0; color: var(--ddr-ink); }
+
+.ddr-pr-lang {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+  padding: 2px;
+  margin-bottom: 10px;
+  border-radius: 8px;
+  background: #F1F5F9;
+}
+.ddr-pr-lang button {
+  height: 30px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ddr-ink-3);
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.ddr-pr-lang button[aria-pressed="true"] {
+  background: #FFFFFF;
+  color: #1D4ED8;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12);
+}
+
+.ddr-pr-list { display: flex; flex-direction: column; gap: 6px; }
+.ddr-pr-item {
+  display: block;
+  width: 100%;
+  padding: 9px 11px;
+  border: 1px solid #BFDBFE;
+  border-radius: 8px;
+  background: #EFF6FF;
+  color: var(--ddr-ink);
+  font-size: 14px;
+  line-height: 1.4;
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.ddr-pr-item:hover { background: #DBEAFE; border-color: #60A5FA; }
+.ddr-pr-item:focus-visible { outline: 2px solid #2563EB; outline-offset: 1px; }
+.ddr-pr-item:disabled { opacity: 0.55; cursor: progress; }
+.ddr-pr-empty { font-size: 13px; color: var(--ddr-ink-3); line-height: 1.4; }
+
+.ddr-pr-status { font-size: 13px; font-weight: 700; line-height: 1.4; margin-top: 8px; }
+.ddr-pr-status:empty { display: none; }
+.ddr-pr-status-busy { color: #1D4ED8; }
+.ddr-pr-status-ok { color: #047857; }
+.ddr-pr-status-err { color: #B91C1C; }
+
+.ddr-pr-sent-list:empty { display: none; }
+.ddr-pr-sent-list { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--ddr-line); }
+.ddr-pr-sent-h { font-size: 12px; font-weight: 700; color: #047857; margin-bottom: 4px; }
+.ddr-pr-sent-row {
+  display: flex;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--ddr-ink-2);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.ddr-pr-sent-row span:last-child { overflow: hidden; text-overflow: ellipsis; }
+.ddr-pr-sent-t { flex: none; color: var(--ddr-ink-3); font-variant-numeric: tabular-nums; }
+
+.ddr-pr-foot { margin-top: 10px; font-size: 11.5px; color: var(--ddr-ink-3); line-height: 1.35; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ddr-pr-pop { animation: none; }
+}

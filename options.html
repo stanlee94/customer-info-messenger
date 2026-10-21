@@ -114,6 +114,38 @@
         min-height: 16px;
         margin: 4px 0 16px;
       }
+      .lr-item {
+        border: 1px solid #dadde1;
+        border-radius: 6px;
+        padding: 8px;
+        margin-bottom: 8px;
+      }
+      .lr-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-size: 12px;
+        font-weight: 600;
+        color: #65676b;
+        margin-bottom: 6px;
+      }
+      .lr-item label {
+        font-size: 12px;
+        margin-bottom: 3px;
+      }
+      .lr-item textarea {
+        width: 100%;
+        box-sizing: border-box;
+        min-height: 54px;
+        padding: 6px 8px;
+        font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        margin-bottom: 6px;
+        resize: vertical;
+      }
+      .lr-item button {
+        padding: 2px 8px;
+        font-size: 12px;
+      }
       #liveStatus {
         font-size: 12px;
         color: #2e7d32;
@@ -137,6 +169,19 @@
       live tab to apply.
     </p>
     <div id="liveStatus"></div>
+    <h3>Live 💬 messages</h3>
+    <p class="hint">
+      The 💬 button on each customer in the live's comment list sends one of these
+      straight to the customer's Messenger as a reply to their comment (Meta allows
+      one per comment). <code>{name}</code> = the customer's Facebook name,
+      <code>{psid}</code> = their PSID (e.g. <code>https://ddherbs.com.my/cart/{psid}</code>
+      opens their cart). Order comments like A2+3 are never used. Saved as
+      you type; open live tabs update by themselves. Needs the Analysis API Token
+      (Payment receipts, below).
+    </p>
+    <div id="liveReplies"></div>
+    <button type="button" id="liveReplyAdd">+ Add message</button>
+    <div id="liveReplyStatus" class="inline-status"></div>
     <h3>Balance / Note bar and inbox layout</h3>
     <p class="hint">
       Balances and notes are saved on the customer's Baserow row, so every

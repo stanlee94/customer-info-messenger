@@ -102,6 +102,16 @@
   let codeNames = new Map();
   /** false until the first feed (the whole live) is in - its wins are covered by the full records load */
   let feedPrimed = false;
+  /**
+   * Tonight's comments for the 💬 private reply: fb_comment_id -> { psid, t,
+   * ec2 }. `ec2` = EC2 already sent its own Messenger reply on that comment
+   * (feed `reply_mid`), which may have used Meta's one reply per comment.
+   */
+  const commentInfo = new Map();
+  /** psid -> Set of tonight's comment ids */
+  const psidComments = new Map();
+  /** psid -> { han, en }: what the customer wrote tonight, for the 中文 / English default */
+  const psidScript = new Map();
 
   /**
    * The parser state for one live. Tonight's lives in these maps; an earlier
@@ -466,6 +476,7 @@
         if (winKey && String(winKey) !== '0') commentPsid.set(String(winKey), psid);
       }
       if (row.fb_user_name) psidName.set(psid, row.fb_user_name);
+      noteComment(commentId, psid, row);
       const codes = Object.keys(qtyByCode(row.message));
       if (codes.length) rowCodes.set(String(row.fb_comment_id), codes);
 
@@ -683,7 +694,8 @@
 
     // Batch chip: filled in place by fillBatchChip, hidden until a ticked live has this customer.
     const r2 = metrics + '<span class="ddr-grow"></span>' +
-      `<span class="ddr-batch ddr-hide" data-psid="${psid}"></span>`;
+      `<span class="ddr-batch ddr-hide" data-psid="${psid}"></span>` +
+      replyButtonHtml(psid);
 
     return (
       `<div class="ddr-card ddr-${tier}">` +
@@ -2969,6 +2981,348 @@
     });
   }
 
+  // ------------------------------------------------- 💬 private reply
+  //
+  // Host's request 2026-10-21: customers often don't know how to message us, so
+  // during the live staff send one a message straight into their Messenger as a
+  // reply to their comment (Meta's Private Replies, `recipient: {comment_id}` -
+  // works on live comments, tested on the host's own that day). Sent by the
+  // messenger-gatekeeper worker with the Messenger Filter page token
+  // (background.js LIVE_PRIVATE_REPLY → POST /private-reply).
+  //   - Meta allows ONE reply per comment (`#10900 Activity already replied
+  //     to`). **Order comments (`A2+3`, ORDER_CODE) are never used** (host,
+  //     2026-10-21): EC2 sends its win message as the reply to that comment,
+  //     and using it first would block EC2's. So only the customer's other
+  //     comments are sent, best first - the clicked row's, then newest first,
+  //     ones EC2 already replied on last - and the worker sends to the first one
+  //     Meta accepts.
+  //   - The wording is the host's, edited in Options (`liveReplyTemplates`,
+  //     [{zh, en}], `{name}` = the Facebook name, `{psid}` = the PSID, e.g. a
+  //     cart link https://ddherbs.com.my/cart/{psid}); open tabs follow changes.
+  //   - What was sent is kept per live in chrome.storage.local
+  //     (`liveReply:<live_id>`, synced across tabs), so the ✓ survives ⌘R.
+  //   - Send directly on click, no confirm (host's choice).
+
+  const PR_MAX_COMMENTS = 10;
+  const PR_KEY = `liveReply:${LIVE_ID}`;
+  const HAN = /\p{Script=Han}/u;
+  /** A live order in a comment: code + quantity anywhere (A2+3, J10 + 2, A27+1 pls) - same shape as qtyByCode. */
+  const ORDER_CODE = /[A-Za-z]+\d+\s*[+＋]\s*\d+/;
+  const ICO_MSG = ico('<path d="M20.5 11.6a8.4 8.4 0 0 1-12.4 7.4L3.5 20.5l1.5-4.4a8.4 8.4 0 1 1 15.5-4.5Z"/>');
+  const ICO_MSG_OK = ico('<path d="M20.5 11.6a8.4 8.4 0 0 1-12.4 7.4L3.5 20.5l1.5-4.4a8.4 8.4 0 1 1 15.5-4.5Z"/><path d="m8.6 11.8 2.4 2.4 4.4-4.6"/>');
+  /** [{zh, en}] from Options */
+  let replyTemplates = [];
+  /** psid -> [{ at, c (comment id), lang, text }] sent tonight */
+  let sentLog = {};
+  /** psid -> 'zh' | 'en' picked in the popup this page load */
+  const langPick = new Map();
+  const pr = { el: null, btn: null, psid: '', commentId: '', name: '', busy: false, seq: 0, closeTimer: 0 };
+
+  function noteComment(commentId, psid, row) {
+    const raw = stripTags(row.message);
+    commentInfo.set(commentId, { psid, t: String(row.comment_created_time || ''), ec2: !!row.reply_mid, order: ORDER_CODE.test(raw) });
+    let set = psidComments.get(psid);
+    if (!set) psidComments.set(psid, (set = new Set()));
+    set.add(commentId);
+    // Live codes (J1+2, A12+1) say nothing about the language - drop them first.
+    const text = raw.replace(new RegExp(ORDER_CODE.source, 'g'), ' ');
+    const s = psidScript.get(psid) || { han: false, en: false };
+    if (HAN.test(text)) s.han = true;
+    if (/[A-Za-z]{2,}/.test(text)) s.en = true;
+    psidScript.set(psid, s);
+  }
+
+  /** Any Chinese tonight → 中文; only Latin words → English; nothing to go by → 中文. */
+  function guessLang(psid) {
+    const s = psidScript.get(psid);
+    return s && s.en && !s.han ? 'en' : 'zh';
+  }
+
+  const sentTo = (psid) => sentLog[psid] || [];
+
+  function replyTip(psid) {
+    const sent = sentTo(psid);
+    if (!sent.length) return { h: 'Send a Messenger message', s: 'Pick a message - it goes straight to their Messenger as a reply to their comment.' };
+    return {
+      h: `Messenger message sent${sent.length > 1 ? ` ×${sent.length}` : ''}`,
+      rows: sent.slice(-3).map((x) => [new Date(x.at).toTimeString().slice(0, 5), x.text.length > 60 ? x.text.slice(0, 59) + '…' : x.text]),
+      foot: 'Click to send another',
+    };
+  }
+
+  function replyButtonHtml(psid) {
+    const sent = sentTo(psid).length > 0;
+    return `<button type="button" class="ddr-pr${sent ? ' ddr-pr-sent' : ''}" data-psid="${psid}" ` +
+      `aria-label="${sent ? 'Messenger message sent - send another' : 'Send a Messenger message'}" ` +
+      `${tipAttr(replyTip(psid))}>${sent ? ICO_MSG_OK : ICO_MSG}</button>`;
+  }
+
+  /** Every 💬 of this customer (one per comment row) follows what was sent. */
+  function refreshReplyButtons(psid) {
+    const sent = sentTo(psid).length > 0;
+    const tip = JSON.stringify(replyTip(psid));
+    document.querySelectorAll(`.ddr-pr[data-psid="${psid}"]`).forEach((b) => {
+      if (b.classList.contains('ddr-pr-sent') !== sent) {
+        b.classList.toggle('ddr-pr-sent', sent);
+        b.innerHTML = sent ? ICO_MSG_OK : ICO_MSG;
+        b.setAttribute('aria-label', sent ? 'Messenger message sent - send another' : 'Send a Messenger message');
+      }
+      if (b.dataset.ddrTip !== tip) b.dataset.ddrTip = tip;
+    });
+    refreshTip();
+  }
+
+  /**
+   * Comments to try, best first: the clicked row's (unless EC2 already
+   * replied on it), then the rest newest first with EC2-replied ones last.
+   * Order comments and comments we already used are left out.
+   */
+  function replyCandidates(psid, firstId) {
+    const used = new Set(sentTo(psid).map((x) => x.c));
+    const info = (id) => commentInfo.get(id) || { t: '', ec2: false, order: true };
+    const ids = [...(psidComments.get(psid) || [])].filter((id) => !used.has(id) && !info(id).order && /^\d+_\d+$/.test(id));
+    ids.sort((a, b) => (info(a).ec2 - info(b).ec2) || info(b).t.localeCompare(info(a).t));
+    const i = ids.indexOf(firstId);
+    if (i > 0 && !info(firstId).ec2) ids.unshift(...ids.splice(i, 1));
+    return ids.slice(0, PR_MAX_COMMENTS);
+  }
+
+  /** Why replyCandidates is empty: no comment but orders, or every other one used. */
+  const noCandidateReason = (psid) =>
+    [...(psidComments.get(psid) || [])].some((id) => !(commentInfo.get(id) || { order: true }).order) ? 'already_replied' : 'only_orders';
+
+  /** The message's variables: {name} = Facebook name, {psid} = the customer's PSID (e.g. https://ddherbs.com.my/cart/{psid}). */
+  const fillVars = (text, v) => String(text)
+    .replace(/\{name\}/g, v.name || '')
+    .replace(/\{psid\}/g, v.psid || '')
+    .replace(/[ \t]{2,}/g, ' ').trim();
+
+  const PR_ERRORS = {
+    off: 'Not sent - add the Analysis API Token in the extension Options (Payment receipts) first.',
+    unauthorized: 'Not sent - the worker refused the token. Check the Analysis API Token in Options.',
+    already_replied: 'Not sent - every comment of this customer already has a reply (Meta allows one per comment). Ask them to comment again.',
+    only_orders: 'Can\'t send - this customer has only order comments (like A2+3), and those are kept for EC2\'s win message. Ask them to write something else in the comments.',
+    timeout: 'No answer in 30 s - it may still have been sent. Check their chat before sending again.',
+    network: 'Not sent - network error. Try again.',
+    no_token: 'Not sent - the worker has no page token.',
+    graph_551: 'Not sent - Meta says this person can\'t receive messages right now.',
+    graph_10: 'Not sent - Meta refused: permission (code 10).',
+    graph_200: 'Not sent - Meta refused: permission (code 200).',
+    graph_190: 'Not sent - the page token has expired (code 190).',
+  };
+  const prError = (code) => PR_ERRORS[code] || `Not sent - ${String(code || 'unknown error').replace(/^graph_/, 'Meta error ')}.`;
+
+  function buildReplyPop() {
+    const el = mk('div', 'ddr-pr-pop');
+    el.hidden = true;
+    el.setAttribute('role', 'dialog');
+    el.setAttribute('aria-label', 'Send a Messenger message');
+    el.innerHTML =
+      '<div class="ddr-pr-head"><span class="ddr-pr-title"></span>' +
+      '<button type="button" class="ddr-pr-x" aria-label="Close">×</button></div>' +
+      '<div class="ddr-pr-lang" role="group" aria-label="Language">' +
+      '<button type="button" data-lang="zh">中文</button><button type="button" data-lang="en">English</button></div>' +
+      '<div class="ddr-pr-list"></div>' +
+      '<div class="ddr-pr-status" role="status" aria-live="polite"></div>' +
+      '<div class="ddr-pr-sent-list"></div>' +
+      '<div class="ddr-pr-foot">Goes to their Messenger as a reply to their comment · Meta allows one per comment</div>';
+    el.addEventListener('click', (e) => {
+      const lang = e.target.closest('[data-lang]');
+      if (lang && !pr.busy) {
+        langPick.set(pr.psid, lang.dataset.lang);
+        renderReplyPop();
+        return;
+      }
+      if (e.target.closest('.ddr-pr-x')) { closeReplyPop(); return; }
+      const item = e.target.closest('.ddr-pr-item');
+      if (item && !item.disabled) sendReply(item.dataset.text);
+    });
+    // EC2's page binds keys of its own; nothing typed here should reach it.
+    el.addEventListener('keydown', (e) => e.stopPropagation());
+    document.body.appendChild(el);
+    return el;
+  }
+
+  function setReplyStatus(text, kind) {
+    const st = pr.el.querySelector('.ddr-pr-status');
+    st.textContent = text || '';
+    st.className = `ddr-pr-status${kind ? ' ddr-pr-status-' + kind : ''}`;
+    pr.statusKind = text ? kind || '' : '';
+  }
+
+  function renderReplyPop() {
+    const el = pr.el;
+    const lang = langPick.get(pr.psid) || guessLang(pr.psid);
+    const title = el.querySelector('.ddr-pr-title');
+    title.textContent = 'Message ';
+    title.appendChild(mk('b', null, pr.name || pr.psid));
+    el.querySelectorAll('[data-lang]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.lang === lang)));
+    const list = el.querySelector('.ddr-pr-list');
+    list.replaceChildren();
+    const usable = replyTemplates.map((t) => fillVars(t[lang] || '', { name: pr.name, psid: pr.psid })).filter(Boolean);
+    if (!usable.length) {
+      list.appendChild(mk('div', 'ddr-pr-empty', replyTemplates.length
+        ? `No ${lang === 'zh' ? '中文' : 'English'} messages yet - write them in the extension Options (Live 💬 messages).`
+        : 'No messages yet - write them in the extension Options (Live 💬 messages).'));
+    }
+    const none = !pr.busy && !replyCandidates(pr.psid, pr.commentId).length;
+    usable.forEach((text) => {
+      const b = mk('button', 'ddr-pr-item', text);
+      b.type = 'button';
+      b.dataset.text = text;
+      b.disabled = pr.busy || none;
+      list.appendChild(b);
+    });
+    // Say up front why nothing can be sent - but never over a "✓ Sent".
+    if (none && pr.statusKind !== 'ok') setReplyStatus(prError(noCandidateReason(pr.psid)), 'err');
+    else if (!none && pr.noteShown && pr.statusKind === 'err') setReplyStatus('');
+    pr.noteShown = none && pr.statusKind !== 'ok';
+    const sent = sentTo(pr.psid);
+    const box = el.querySelector('.ddr-pr-sent-list');
+    box.replaceChildren();
+    if (sent.length) {
+      box.appendChild(mk('div', 'ddr-pr-sent-h', `Sent tonight (${sent.length})`));
+      sent.slice(-3).forEach((x) => {
+        const row = mk('div', 'ddr-pr-sent-row');
+        row.appendChild(mk('span', 'ddr-pr-sent-t', new Date(x.at).toTimeString().slice(0, 5)));
+        row.appendChild(mk('span', null, x.text));
+        box.appendChild(row);
+      });
+    }
+  }
+
+  function placeReplyPop() {
+    if (!pr.el || pr.el.hidden || !pr.btn || !pr.btn.isConnected) return;
+    const r = pr.btn.getBoundingClientRect();
+    const w = pr.el.offsetWidth;
+    const h = pr.el.offsetHeight;
+    const left = Math.max(8, Math.min(r.right - w, window.innerWidth - w - 8));
+    const below = r.bottom + 6;
+    const top = below + h <= window.innerHeight - 8 ? below : Math.max(8, r.top - 6 - h);
+    pr.el.style.left = `${left}px`;
+    pr.el.style.top = `${top}px`;
+  }
+
+  function openReplyPop(btn) {
+    const tr = btn.closest('tr');
+    const psid = btn.dataset.psid;
+    if (!psid) return;
+    if (pr.el && !pr.el.hidden && pr.btn === btn) { closeReplyPop(); return; }
+    if (pr.busy && pr.psid !== psid) return; // a send is still on its way - keep its answer on screen
+    if (!pr.el) pr.el = buildReplyPop();
+    clearTimeout(pr.closeTimer);
+    hideTip();
+    pr.btn = btn;
+    if (!pr.busy) setReplyStatus('');
+    pr.psid = psid;
+    pr.commentId = tr ? tr.dataset.index || tr.id.replace(/^win_s?tr_/, '') : '';
+    pr.name = (tr && tr.querySelector('.ddr-name') && tr.querySelector('.ddr-name').textContent.trim()) || psidName.get(psid) || '';
+    renderReplyPop();
+    pr.el.hidden = false;
+    placeReplyPop();
+    const first = pr.el.querySelector('.ddr-pr-item:not([disabled])');
+    if (first) first.focus({ preventScroll: true });
+  }
+
+  function closeReplyPop() {
+    clearTimeout(pr.closeTimer);
+    if (!pr.el || pr.el.hidden) return;
+    pr.el.hidden = true;
+    const btn = pr.btn;
+    pr.btn = null;
+    if (btn && btn.isConnected && pr.el.contains(document.activeElement)) btn.focus({ preventScroll: true });
+  }
+
+  function saveSentLog() {
+    try { chrome.storage.local.set({ [PR_KEY]: sentLog }); } catch (_) { /* extension reloaded - the ✓ still shows until ⌘R */ }
+  }
+
+  function sendReply(text) {
+    if (pr.busy || !text) return;
+    const psid = pr.psid;
+    const lang = langPick.get(psid) || guessLang(psid);
+    const ids = replyCandidates(psid, pr.commentId);
+    if (!ids.length) { setReplyStatus(prError(noCandidateReason(psid)), 'err'); return; }
+    const seq = ++pr.seq;
+    pr.busy = true;
+    renderReplyPop();
+    setReplyStatus('Sending…', 'busy');
+    const done = (resp) => {
+      pr.busy = false;
+      if (seq !== pr.seq) return;
+      if (resp && resp.ok) {
+        const log = sentLog[psid] || (sentLog[psid] = []);
+        log.push({ at: Date.now(), c: String(resp.comment_id || ids[0]), lang, text });
+        saveSentLog();
+        refreshReplyButtons(psid);
+      }
+      if (pr.psid !== psid || !pr.el) return;
+      renderReplyPop();
+      if (resp && resp.ok) {
+        setReplyStatus('✓ Sent to their Messenger', 'ok');
+        pr.closeTimer = setTimeout(() => { if (pr.psid === psid) closeReplyPop(); }, 1500);
+      } else {
+        setReplyStatus(prError(resp && resp.error), 'err');
+      }
+    };
+    try {
+      chrome.runtime.sendMessage({ type: 'LIVE_PRIVATE_REPLY', commentIds: ids, text }, (resp) => {
+        done(chrome.runtime.lastError ? { ok: false, error: 'network' } : resp);
+      });
+    } catch (_) {
+      done({ ok: false, error: 'Extension was reloaded - press ⌘R on this page' });
+    }
+  }
+
+  function installPrivateReply() {
+    const load = (v) => (Array.isArray(v) ? v.filter((t) => t && (t.zh || t.en)).map((t) => ({ zh: String(t.zh || ''), en: String(t.en || '') })) : []);
+    chrome.storage.local.get(['liveReplyTemplates', PR_KEY], (v) => {
+      if (chrome.runtime.lastError) return;
+      replyTemplates = load(v && v.liveReplyTemplates);
+      sentLog = (v && v[PR_KEY]) || {};
+      Object.keys(sentLog).forEach(refreshReplyButtons);
+    });
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area !== 'local') return;
+      if (changes.liveReplyTemplates) {
+        replyTemplates = load(changes.liveReplyTemplates.newValue);
+        if (pr.el && !pr.el.hidden) { renderReplyPop(); placeReplyPop(); }
+      }
+      if (changes[PR_KEY]) {
+        // Another tab of this live sent one.
+        const next = changes[PR_KEY].newValue || {};
+        if (JSON.stringify(next) === JSON.stringify(sentLog)) return; // this tab's own save
+        const touched = new Set([...Object.keys(sentLog), ...Object.keys(next)]);
+        sentLog = next;
+        touched.forEach(refreshReplyButtons);
+        if (pr.el && !pr.el.hidden && !pr.busy) renderReplyPop();
+      }
+    });
+    document.addEventListener('click', (e) => {
+      const btn = e.target.closest && e.target.closest('.ddr-pr');
+      if (!btn) return;
+      e.preventDefault();
+      e.stopPropagation();
+      openReplyPop(btn);
+    }, true);
+    document.addEventListener('mousedown', (e) => {
+      if (!pr.el || pr.el.hidden || pr.el.contains(e.target)) return;
+      if (e.target.closest && e.target.closest('.ddr-pr') === pr.btn) return; // its own button toggles it
+      closeReplyPop();
+    }, true);
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape' || !pr.el || pr.el.hidden) return;
+      e.stopPropagation();
+      closeReplyPop();
+    }, true);
+    // living.js prepends comments, which scrolls the list under the popup:
+    // follow the button rather than closing (a live scrolls all the time).
+    let raf = 0;
+    const follow = () => { if (!raf) raf = requestAnimationFrame(() => { raf = 0; placeReplyPop(); }); };
+    document.addEventListener('scroll', follow, true);
+    window.addEventListener('resize', follow);
+  }
+
   // -------------------------------------------------------- EC2 win records
   //
   // What a customer won is what EC2 stored, never a count of comments (see
@@ -4051,7 +4405,7 @@
    * controls card (title + Facebook description).
    * Not enterable, no close grace, no fade.
    */
-  const PASSIVE_TIP_SEL = '#allGroup, .ddr-vstats, .ddr-ltv, .ddr-aov, .ddr-since, .ddr-live-count, .ddr-psid, .l-group-btn > p[data-ddr-live]';
+  const PASSIVE_TIP_SEL = '#allGroup, .ddr-vstats, .ddr-ltv, .ddr-aov, .ddr-since, .ddr-live-count, .ddr-psid, .ddr-pr, .l-group-btn > p[data-ddr-live]';
   const isPassiveTip = (target) => !!(target && target.closest && target.closest(PASSIVE_TIP_SEL));
 
   function hideTip() {
@@ -4212,6 +4566,7 @@
     installTips();
     buildPanel();
     installChatClicks();
+    installPrivateReply();
 
     const layout = () => {
       if (!(tagTables() && reclaimSpace())) return false;

@@ -44,6 +44,68 @@ ec2LiveInput.addEventListener('change', () => {
   });
 });
 
+// Live 💬 messages: [{zh, en}], saved 400 ms after typing stops; the live page
+// listens to storage changes. Blank pairs are kept while editing, skipped there.
+const liveRepliesBox = document.getElementById('liveReplies');
+const liveReplyStatus = document.getElementById('liveReplyStatus');
+let liveReplies = [];
+let liveReplyTimer;
+let liveReplyFlash;
+function saveLiveReplies() {
+  clearTimeout(liveReplyTimer);
+  liveReplyTimer = setTimeout(() => {
+    chrome.storage.local.set({ liveReplyTemplates: liveReplies }, () => {
+      liveReplyStatus.textContent = 'Saved — open live tabs update by themselves.';
+      clearTimeout(liveReplyFlash);
+      liveReplyFlash = setTimeout(() => { liveReplyStatus.textContent = ''; }, 2000);
+    });
+  }, 400);
+}
+function renderLiveReplies() {
+  liveRepliesBox.textContent = '';
+  liveReplies.forEach((item, i) => {
+    const box = document.createElement('div');
+    box.className = 'lr-item';
+    const head = document.createElement('div');
+    head.className = 'lr-head';
+    head.append(`Message ${i + 1}`);
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'secondary';
+    del.textContent = 'Delete';
+    del.addEventListener('click', () => {
+      if (!confirm(`Delete message ${i + 1}?`)) return;
+      liveReplies.splice(i, 1);
+      renderLiveReplies();
+      saveLiveReplies();
+    });
+    head.append(del);
+    box.append(head);
+    [['zh', '中文'], ['en', 'English']].forEach(([lang, label]) => {
+      const id = `lr-${i}-${lang}`;
+      const l = document.createElement('label');
+      l.htmlFor = id;
+      l.textContent = label;
+      const ta = document.createElement('textarea');
+      ta.id = id;
+      ta.value = item[lang] || '';
+      ta.addEventListener('input', () => { item[lang] = ta.value; saveLiveReplies(); });
+      box.append(l, ta);
+    });
+    liveRepliesBox.append(box);
+  });
+}
+chrome.storage.local.get('liveReplyTemplates', ({ liveReplyTemplates }) => {
+  liveReplies = Array.isArray(liveReplyTemplates) ? liveReplyTemplates.map((t) => ({ zh: t.zh || '', en: t.en || '' })) : [];
+  renderLiveReplies();
+});
+document.getElementById('liveReplyAdd').addEventListener('click', () => {
+  liveReplies.push({ zh: '', en: '' });
+  renderLiveReplies();
+  const boxes = liveRepliesBox.querySelectorAll('textarea');
+  boxes[boxes.length - 2]?.focus();
+});
+
 // Balance / Note bar + inbox layout controls.
 const notesStatus = document.getElementById('notesStatus');
 function flashNotesStatus(text) {

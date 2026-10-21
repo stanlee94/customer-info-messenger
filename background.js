@@ -600,6 +600,36 @@ async function fetchPendingSlips() {
   }
 }
 
+// Private reply to a live comment, from the EC2 live page's 💬 button (worker
+// POST /private-reply → Meta's Private Replies with the Messenger Filter token).
+// `commentIds` in order of preference: Meta allows one reply per comment, so the
+// worker sends to the first one it accepts. A timeout here may still have been
+// delivered — the page says so instead of retrying.
+const PRIVATE_REPLY_TIMEOUT_MS = 30000;
+
+async function sendLivePrivateReply(commentIds, text) {
+  const { analysisApiToken } = await chrome.storage.local.get('analysisApiToken');
+  if (!analysisApiToken) return { ok: false, error: 'off' };
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), PRIVATE_REPLY_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${RECEIPTS_API_BASE}/private-reply`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${analysisApiToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ comment_ids: commentIds, text }),
+      signal: ctl.signal,
+    });
+    if (res.status === 401) return { ok: false, error: 'unauthorized' };
+    const json = await res.json().catch(() => null);
+    if (json && typeof json.ok === 'boolean') return json;
+    return { ok: false, error: 'server_' + res.status };
+  } catch (err) {
+    return { ok: false, error: err.name === 'AbortError' ? 'timeout' : 'network' };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function throwBaserowError(res) {
   return res.text().then((text) => {
     let detail = text;
@@ -1353,7 +1383,17 @@ const DEFAULT_NOTE_LOG_TABLE_ID = '794';
 // The preview build kept test balances/notes in this browser only; they are
 // not real data and nothing reads them any more. `staffName` was the typed
 // fallback name, removed from the options page (2026-10-18).
+// Live page 💬 messages (ec2-live.js, edited in Options). One test message
+// until the host writes real ones; never overwrites what they saved.
+const DEFAULT_LIVE_REPLIES = [{
+  zh: '【测试】您好 {name}！我们看到您在直播的留言了～ 有任何问题可以直接在这里回复我们哦 ❤️🙏',
+  en: '[Test] Hi {name}! We saw your comment on our live 😊 You can reply here anytime if you have any questions ❤️🙏',
+}];
+
 chrome.runtime.onInstalled.addListener(() => {
+  chrome.storage.local.get('liveReplyTemplates', ({ liveReplyTemplates }) => {
+    if (!Array.isArray(liveReplyTemplates)) chrome.storage.local.set({ liveReplyTemplates: DEFAULT_LIVE_REPLIES });
+  });
   chrome.storage.local.remove('staffName');
   chrome.storage.local.get(null, (all) => {
     const keys = Object.keys(all || {}).filter((k) => k.startsWith('noteMock:') || k === 'noteMockLog' || k === 'notesMockFail');
@@ -1501,6 +1541,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.type === 'GET_RECEIPTS') {
     fetchReceipts(message.psid).then(sendResponse, () => sendResponse({ ok: false, error: 'internal' }));
+    return true;
+  }
+
+  if (message?.type === 'LIVE_PRIVATE_REPLY') {
+    sendLivePrivateReply(message.commentIds || [], String(message.text || '')).then(sendResponse, () => sendResponse({ ok: false, error: 'internal' }));
     return true;
   }
 
