@@ -3192,7 +3192,8 @@ body:has(.ddr-col-left) { background: var(--ddr-page) !important; }
 }
 
 /* ===========================================================================
-   💬 private reply (2026-10-21): a button at the end of the card's line 2 and
+   💬 private reply (2026-10-21): a button at the end of the card's line 1
+   (right of the 🛒 pill - the right edge on every row) and
    a popup on <body> with the host's messages (Options) in 中文 / English.
    Click = send to the customer's Messenger as a reply to their comment.
    =========================================================================== */
@@ -3204,8 +3205,8 @@ body:has(.ddr-col-left) { background: var(--ddr-page) !important; }
   justify-content: center;
   width: 28px;
   height: 20px;
-  /* Line 2 is 19.8px (the 18px LTV); the negative margin keeps the button
-     from adding height to it - the 62px row is the host's accepted budget. */
+  /* Line 1 is set by the 🛒 pill; the negative margin keeps the button from
+     ever adding height - the 62px row is the host's accepted budget. */
   margin: -1px 0;
   padding: 0;
   border: 1px solid #BFDBFE;
@@ -3340,4 +3341,20 @@ body:has(.ddr-col-left) { background: var(--ddr-page) !important; }
 
 @media (prefers-reduced-motion: reduce) {
   .ddr-pr-pop { animation: none; }
+}
+
+/* Line 1 never wraps where the column has room: the name gives way ("…")
+   instead, so the 💬 stays at the right edge on every row. Without this, ~11
+   of 384 rows (long name + segment chip + hint + 🛒) pushed the 💬 onto a new
+   line and grew the row by 21px. Desktop layout only, and only when the card
+   is ≥ 380px - a column dragged narrow, or the medium/small layouts, keep the
+   old wrap so nothing is clipped. Inline-size containment is safe here: the
+   comment tables are table-layout: fixed, so no cell is sized by its card. */
+@media (min-width: 1024px) {
+  .ddr-msg-body .ddr-card { container-type: inline-size; }
+  @container (min-width: 380px) {
+    .ddr-msg-body .ddr-r1 { flex-wrap: nowrap; }
+    .ddr-msg-body .ddr-r1 > .ddr-name { flex-shrink: 1; min-width: 2em; }
+    .ddr-msg-body .ddr-r1 > :not(.ddr-name):not(.ddr-grow) { flex-shrink: 0; }
+  }
 }

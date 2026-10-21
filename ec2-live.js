@@ -661,7 +661,11 @@
       // spare width on hover, so it never costs the name any space.
       `<span class="ddr-psid-slot"><button type="button" class="ddr-psid" data-psid="${psid}" ` +
       `${tipAttr({ h: 'PSID', mono: psid, foot: 'Click to copy' })}>${escapeHtml(shortPsid(psid))}</button></span>` +
-      tonightHtml(psid);
+      tonightHtml(psid) +
+      // Last item of line 1, so it is at the card's right edge on every row.
+      // Line 2 had no room for it when the batch chip shows (it wrapped to a
+      // third line on the left).
+      replyButtonHtml(psid);
 
     let metrics;
     if (!rfm || rfm.orderCount === 0) {
@@ -694,8 +698,7 @@
 
     // Batch chip: filled in place by fillBatchChip, hidden until a ticked live has this customer.
     const r2 = metrics + '<span class="ddr-grow"></span>' +
-      `<span class="ddr-batch ddr-hide" data-psid="${psid}"></span>` +
-      replyButtonHtml(psid);
+      `<span class="ddr-batch ddr-hide" data-psid="${psid}"></span>`;
 
     return (
       `<div class="ddr-card ddr-${tier}">` +

@@ -25,6 +25,9 @@ const VW = +(process.env.VW || 1440);
 const VH = +(process.env.VH || 900);
 const LIVE = process.env.TONIGHT || '562594';
 const WHO = process.env.WHO || '';
+// Earlier lives ticked for batch compare, so the blue batch chip fills line 2
+// on many rows (the 💬 once wrapped to a third line there). BATCH='' = none.
+const BATCH = (process.env.BATCH ?? '561954,561795').split(',').filter(Boolean);
 const WORKER = 'https://messenger-gatekeeper.stanlee19941218.workers.dev';
 const TEMPLATES = [
   { zh: '【测试】您好 {name}！这是第一条', en: '[Test] Hi {name}! This is the first one' },
@@ -64,8 +67,9 @@ const check = (ok, label, detail) => {
   if (!sw) sw = await ctx.waitForEvent('serviceworker', { timeout: 20000 });
   const opt = await ctx.newPage();
   await opt.goto(`chrome-extension://${new URL(sw.url()).host}/options.html`);
-  await opt.evaluate((t) => new Promise((res) => chrome.storage.local.set({ ...t.cfg, ec2LiveEnabled: true, analysisApiToken: 'playwright-fake-token', liveReplyTemplates: t.templates }, res)),
-    { templates: TEMPLATES, cfg: { baserowBaseUrl: process.env.BASEROW_URL.replace(/\/+$/, ''), baserowToken: process.env.BASEROW_TOKEN, baserowUsersTableId: '749', baserowOrdersTableId: '750' } });
+  await opt.evaluate((t) => new Promise((res) => chrome.storage.local.set({ ...t.cfg, ec2LiveEnabled: true, analysisApiToken: 'playwright-fake-token', liveReplyTemplates: t.templates,
+    ...(t.batch.length ? { 'batch:sel': { ids: t.batch, names: {}, used: Date.now() } } : {}) }, res)),
+    { templates: TEMPLATES, batch: BATCH, cfg: { baserowBaseUrl: process.env.BASEROW_URL.replace(/\/+$/, ''), baserowToken: process.env.BASEROW_TOKEN, baserowUsersTableId: '749', baserowOrdersTableId: '750' } });
   await opt.evaluate(async () => { for (let i = 0; i < 100 && !(await chrome.scripting.getRegisteredContentScripts({ ids: ['ec2-live'] })).length; i++) await new Promise((r) => setTimeout(r, 100)); });
 
   await ctx.addCookies(cookieStr.split(';').map((p) => { const i = p.indexOf('='); return { name: p.slice(0, i).trim(), value: p.slice(i + 1).trim(), domain: 'ec2.full2house.com', path: '/' }; }).filter((c) => c.name));
@@ -81,6 +85,10 @@ const check = (ok, label, detail) => {
     throw e;
   }
   await page.waitForTimeout(6000);
+  if (BATCH.length) {
+    try { await page.waitForSelector('.ddr-batch:not(.ddr-hide)', { timeout: 90000 }); } catch (_) { /* checked below */ }
+    await page.waitForTimeout(1500);
+  }
 
   console.log(`\n== rows (${VW}×${VH}, live ${LIVE}) ==`);
   const rows = await page.evaluate(() => {
@@ -98,6 +106,13 @@ const check = (ok, label, detail) => {
     st.remove();
     document.documentElement.classList.remove('ddr-test-no-pr');
     const grew = withH.filter((v, i) => v > noH[i] + 0.5).length;
+    // The 💬 is line 1's last item and sits at the card's right edge on every row.
+    const edge = cust.map((tr) => {
+      const b = tr.querySelector('.ddr-pr'), r1 = tr.querySelector('.ddr-r1');
+      const vis = [...r1.children].filter((k) => k.getBoundingClientRect().width > 0);
+      return { last: vis[vis.length - 1] === b, gap: Math.round(r1.getBoundingClientRect().right - b.getBoundingClientRect().right) };
+    });
+    const rights = cust.map((tr) => Math.round(tr.querySelector('.ddr-pr').getBoundingClientRect().right));
     const r2grew = withR2.filter((v, i) => v > noR2[i] + 0.5).length;
     return {
       cust: cust.length,
@@ -106,11 +121,18 @@ const check = (ok, label, detail) => {
       own: own.length, grew, r2grew,
       maxGrow: Math.max(0, ...withH.map((v, i) => Math.round((v - noH[i]) * 10) / 10)),
       at62: noH.filter((v) => Math.round(v) === 62).length,
+      notLast: edge.filter((e) => !e.last).length,
+      offEdge: edge.filter((e) => Math.abs(e.gap) > 1).length,
+      rightSpread: Math.max(...rights) - Math.min(...rights),
+      batchShown: document.querySelectorAll('.ddr-batch:not(.ddr-hide)').length,
     };
   });
   check(rows.cust > 0 && rows.withOne === rows.cust, 'every customer row has one 💬', `${rows.withOne}/${rows.cust}`);
   check(rows.ownWith === 0, 'our own posts have none', `${rows.own} own rows`);
   check(rows.r2grew === 0, 'line 2 is no taller with the 💬', `${rows.r2grew} grew`);
+  if (BATCH.length) check(rows.batchShown > 0, 'batch chips showing (lives ' + BATCH.join(', ') + ')', `${rows.batchShown} rows`);
+  check(rows.notLast === 0 && rows.offEdge === 0, '💬 is the last item of line 1, at the card\'s right edge', `${rows.notLast} not last, ${rows.offEdge} off the edge`);
+  check(rows.rightSpread <= 1, 'same right edge on every row', `spread ${rows.rightSpread}px`);
   check(rows.grew === 0, 'no row is taller with the 💬', `${rows.grew} of ${rows.cust} grew, max +${rows.maxGrow}px (${rows.at62} rows are 62px without it)`);
 
   // The customer to click: WHO by name, else the first customer row.
