@@ -27,10 +27,10 @@ const threads = (isRead = true) => [
   const browser = await chromium.launch({ headless: true });
   const errors = [];
 
-  async function open({ list = threads(), uid = '111', msgs, header = 'wide', menuHasItem = true, disabled = false }) {
+  async function open({ list = threads(), uid = '111', msgs, header = 'wide', menuHasItem = true, disabled = false, deep = false }) {
     const page = await browser.newPage();
     page.on('pageerror', (e) => errors.push(e.message));
-    await page.goto(FIXTURE);
+    await page.goto(FIXTURE + (deep ? '&rows=deep' : ''));
     await page.evaluate(([l, u, m, h, mi, d, cfg]) => {
       window.__fake.header = h; window.__fake.menuHasItem = mi;
       window.setThreads(l); window.setChat(u, m);
@@ -276,6 +276,25 @@ const threads = (isRead = true) => [
     await wait(p, 1000);
     const t = await p.evaluate(() => document.querySelector('[role="presentation"]').getAttribute('data-cim-pending'));
     check(t === '1', 'open chat still waiting (Meta still says read) → tinted', String(t));
+    await p.close();
+  }
+
+  {
+    // Meta's row shape since ~2026-11 (probe 2026-11-12): thread 6 fibers up,
+    // small [role="presentation"] icons and a hover action unit inside the row.
+    const list = [
+      { threadFBID: '111', isRead: true }, { threadFBID: '222', isRead: false },
+      { threadFBID: '333', isRead: true }, { threadFBID: '444', isRead: false },
+    ];
+    const p = await open({ list, uid: '111', msgs: [c('m1', 100), s('m2', 200)], deep: true });
+    await wait(p, 900);
+    const r = await p.evaluate(() => [...document.querySelectorAll('#rows > [role="presentation"]')].map((row) => {
+      const tint = getComputedStyle(row, '::after').backgroundColor;
+      return (row.getAttribute('data-cim-pending') === '1' ? 'P' : '-') + (tint === 'rgba(239, 68, 68, 0.14)' ? 'red' : '');
+    }));
+    check(JSON.stringify(r) === JSON.stringify(['-', 'Pred', '-', 'Pred']), 'new row shape (thread 6 levels up) → unread rows tinted', JSON.stringify(r));
+    const inner = await p.evaluate(() => document.querySelectorAll('#rows [role="presentation"] [data-cim-pending], #rows [role="row"][data-cim-pending]').length);
+    check(inner === 0, 'new row shape → icons / action unit inside a row never tinted', String(inner));
     await p.close();
   }
 

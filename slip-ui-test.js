@@ -163,6 +163,38 @@ const check = (name, cond, extra) => results.push(`${cond ? 'PASS' : 'FAIL'}  ${
   await page.waitForTimeout(900);
   check('token off → tags and map removed, polling stops', t.every((x) => x.label === null) && !attr && (await page.evaluate(() => window.__sl.calls)) === calls);
 
+  // Meta's row shape since ~2026-11 (probe 2026-11-12): thread 6 fibers above
+  // the row element, small [role="presentation"] icons + a hover action unit
+  // ([role="row"], its own component also carries thread) inside the row.
+  {
+    const dp = await browser.newPage({ viewport: { width: 900, height: 400 } });
+    dp.on('pageerror', (e) => results.push('PAGEERROR ' + e.message));
+    await dp.addInitScript((s) => { window.__seed = s; window.__cimRcptCfg = { slipPollMs: 300 }; }, { analysisApiToken: 'tok' });
+    await dp.addInitScript(stub);
+    await dp.goto('file://' + path.join(EXT, 'unread-ui-fixture.html') + '?selected_item_id=999&rows=deep');
+    await dp.evaluate(([t1, t2, t3, t4]) => {
+      window.setThreads([
+        { threadFBID: '111', isRead: false, title: 'A', timestamp: t1 },
+        { threadFBID: '222', isRead: false, title: 'B', timestamp: t2 },
+        { threadFBID: '333', isRead: false, title: 'C', timestamp: t3 },
+        { threadFBID: '444', isRead: true, title: 'D', timestamp: t4 },
+      ]);
+      window.__sl.items = [
+        { last_ts: t1, n: 1, amount: 979.8, currency: 'MYR', flagged: false },
+        { last_ts: t3, n: 1, amount: 50, currency: 'MYR', flagged: true },
+      ];
+    }, [T1, T2, T3, T4]);
+    await dp.addStyleTag({ path: path.join(EXT, 'styles.css') });
+    await dp.addScriptTag({ path: path.join(EXT, 'inbox-receipts-main.js') });
+    await dp.addScriptTag({ path: path.join(EXT, 'inbox-receipts.js') });
+    await dp.waitForTimeout(700);
+    const dt = await dp.evaluate(() => [...document.querySelectorAll('#rows > [role="presentation"]')].map((r) => r.getAttribute('data-cim-slip')));
+    check('new row shape (thread 6 levels up): rows tagged', JSON.stringify(dt) === JSON.stringify(['🧾 Slip RM979.80', null, '🧾 Slip', null]), JSON.stringify(dt));
+    const inner = await dp.evaluate(() => document.querySelectorAll('#rows > [role="presentation"] [data-cim-slip]').length);
+    check('new row shape: icons / action unit inside a row never tagged', inner === 0, String(inner));
+    await dp.close();
+  }
+
   await browser.close();
   console.log(results.join('\n'));
   const failed = results.filter((r) => !r.startsWith('PASS')).length;

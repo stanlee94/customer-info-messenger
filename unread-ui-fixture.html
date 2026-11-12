@@ -33,16 +33,49 @@
   window.__actions = [];
   window.__fake = { header: 'wide', menuHasItem: true };
   const layout = { tag: 0, type: { name: 'h' }, memoizedProps: { threadList: window.__threads }, return: null };
+  // ?rows=deep = Meta's row shape since ~2026-11 (probe 2026-11-12): the row
+  // component (BizInboxThreadListRowV2 { thread }) sits 6 fibers above the row's
+  // [role="presentation"] element (memo / forwardRef / context wrappers, no DOM
+  // in between), and the row holds small [role="presentation"] icons plus a
+  // hover action unit ([role="row"] whose own component also carries thread).
+  const DEEP = new URLSearchParams(location.search).get('rows') === 'deep';
+  // Inner pieces of a deep row; re-added by window.__addDeepInner() after a
+  // test rewrites the row's innerHTML.
+  function addDeepInner(row) {
+    const rowHost = row[FK];
+    const t = rowHost.__thread;
+    const icon = document.createElement('div');
+    icon.setAttribute('role', 'presentation'); icon.className = 'cim-fx-icon';
+    icon.style.cssText = 'position:absolute;right:8px;top:8px;width:16px;height:16px';
+    const iconHost = { tag: 5, type: 'div', memoizedProps: { role: 'presentation' }, return: { tag: 0, type: { name: 'Icon' }, memoizedProps: { size: 16 }, return: rowHost } };
+    icon[FK] = iconHost; icon[PK] = iconHost.memoizedProps;
+    const unit = document.createElement('div');
+    unit.setAttribute('role', 'row'); unit.className = 'cim-fx-unit';
+    unit.style.cssText = 'position:absolute;right:8px;bottom:8px;width:40px;height:40px';
+    const unitHost = { tag: 5, type: 'div', memoizedProps: { role: 'row' }, return: { tag: 0, type: { name: 'BizInboxThreadActionUnitWithDataAdapator' }, memoizedProps: { thread: t }, return: rowHost } };
+    unit[FK] = unitHost; unit[PK] = unitHost.memoizedProps;
+    const unitIcon = document.createElement('div');
+    unitIcon.setAttribute('role', 'presentation'); unitIcon.style.cssText = 'width:16px;height:16px';
+    const uiHost = { tag: 5, type: 'div', memoizedProps: { role: 'presentation' }, return: unitHost };
+    unitIcon[FK] = uiHost; unitIcon[PK] = uiHost.memoizedProps;
+    unit.appendChild(unitIcon);
+    row.appendChild(icon); row.appendChild(unit);
+  }
+  window.__addDeepInner = () => { if (DEEP) document.querySelectorAll('#rows > [role="presentation"]').forEach(addDeepInner); };
   function renderRows() {
     const box = document.getElementById('rows');
     box.innerHTML = '';
     for (let i = 0; i < 4; i++) {
       const row = document.createElement('div');
       row.setAttribute('role', 'presentation'); row.className = 'row';
-      const comp = { tag: 0, type: { name: 'T' }, memoizedProps: { thread: window.__threads[i] || {} }, return: { tag: 0, type: { name: 'c' }, memoizedProps: { rowKey: String(i) }, return: layout } };
-      const host = { tag: 5, type: 'div', memoizedProps: { role: 'presentation' }, return: comp };
+      const t = window.__threads[i] || {};
+      const comp = { tag: 0, type: { name: DEEP ? 'BizInboxThreadListRowV2' : 'T' }, memoizedProps: { thread: t }, return: { tag: 0, type: { name: 'c' }, memoizedProps: { rowKey: String(i) }, return: layout } };
+      let up = comp;
+      if (DEEP) for (let w = 0; w < 5; w++) up = { tag: 11, type: { render: { name: 'W' + w } }, memoizedProps: { children: null }, return: up };
+      const host = { tag: 5, type: 'div', memoizedProps: { role: 'presentation' }, return: up, __thread: t };
       row[FK] = host; row[PK] = host.memoizedProps;
       box.appendChild(row);
+      if (DEEP) addDeepInner(row);
     }
   }
   window.setThreads = (list) => { window.__threads.splice(0, window.__threads.length, ...list); renderRows(); };

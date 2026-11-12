@@ -267,13 +267,33 @@
   // Meta's virtual list, so every pass re-reads each row's thread and only
   // writes when the value changes. Off → removed.
   const ROW_ATTR = 'data-cim-pending';
+  // A list row = the OUTERMOST [role="presentation"] whose fibers reach a
+  // component holding `thread` (Meta's BizInboxThreadListRowV2). Meta wraps
+  // that component in memo / forwardRef / context layers: 1 fiber up until
+  // ~2026-11, 6 since (probe 2026-11-12) — hence ROW_DEPTH. Since then rows
+  // also hold small [role="presentation"] icons and a hover action unit
+  // carrying the same thread; they sit INSIDE a row, so "outermost" skips them
+  // (querySelectorAll is document order: a row comes before its contents).
+  const ROW_DEPTH = 12;
+  function listRows(list) {
+    const out = [];
+    let last = null;
+    for (const el of list.querySelectorAll('[role="presentation"]')) {
+      if (last && last.contains(el)) { out.push([el, null]); continue; }
+      const p = propsUp(el, (x) => x.thread && typeof x.thread === 'object' && x.thread.threadFBID, ROW_DEPTH);
+      if (p) last = el;
+      out.push([el, p]);
+    }
+    return out;
+  }
+  dbg.listRows = listRows;
   function syncRows() {
     const list = document.querySelector('[data-pagelet="GenericThreadListView"]');
     if (!list) return;
     const off = document.documentElement.getAttribute('data-cim-keep-unread') === '0';
     const open = uidNow();
-    for (const row of list.querySelectorAll('[role="presentation"]')) {
-      const p = off ? null : propsUp(row, (x) => x.thread && x.thread.threadFBID, 2); // the row's own element only
+    for (const [row, rp] of listRows(list)) {
+      const p = off ? null : rp;
       let pending = false;
       if (p) {
         pending = p.thread.isRead === false;

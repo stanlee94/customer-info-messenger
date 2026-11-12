@@ -145,6 +145,7 @@
   // carries data-cim-slip-pos="abs" and the pill sits where the chip line would
   // be, its left edge measured from the row's first text (--cim-slip-left).
   // Measured only when the row shows another chat or every 5 s, never per frame.
+  const ROW_DEPTH = 12;
   const chipCache = new WeakMap();   // row → { key, at, anchor, left }
   const CHIP_RECHECK_MS = 5000;
   function isChip(el) {
@@ -186,12 +187,19 @@
     if (!list) return;
     const anchors = new Set();
     const now = Date.now();
+    let lastRow = null;
     for (const row of list.querySelectorAll('[role="presentation"]')) {
       let hit = null, key = '';
-      if (src) {
-        for (let f = currentFiber(row), i = 0; f && i < 2; f = f.return, i++) {
+      // A row = the OUTERMOST [role="presentation"] whose fibers reach Meta's
+      // row component (BizInboxThreadListRowV2 { thread }): 1 fiber up until
+      // ~2026-11, 6 since (probe 2026-11-12), hence ROW_DEPTH. Icons and the
+      // hover action unit inside a row (same thread) are skipped — document
+      // order puts a row before its contents.
+      const inner = !!(lastRow && lastRow.contains(row));
+      if (src && !inner) {
+        for (let f = currentFiber(row), i = 0; f && i < ROW_DEPTH; f = f.return, i++) {
           const t = f.memoizedProps && f.memoizedProps.thread;
-          if (t && t.threadFBID) { key = t.threadFBID + ':' + toMs(t.timestamp); hit = slipMap[String(toMs(t.timestamp))] || null; break; }
+          if (t && typeof t === 'object' && t.threadFBID) { lastRow = row; key = t.threadFBID + ':' + toMs(t.timestamp); hit = slipMap[String(toMs(t.timestamp))] || null; break; }
         }
       }
       if (!hit) {
