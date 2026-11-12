@@ -1,0 +1,465 @@
+{
+  "id": "cim-feature-upgrade-2026-07-28",
+  "type": "feature-announcement",
+  "product": "Customer Info Messenger",
+  "publisher": "DD Group",
+  "date": "2026-07-28",
+  "languages": ["en", "zh"],
+  "notes_for_integrator": "Structure-first bilingual content. Every text node is {en, zh}. All strings are plain text — render markup/styling on the website side. 'control' values are the literal UI labels; they are intentionally identical in zh for real button labels (the extension UI is English), and translated only for descriptive rows that are not literal buttons. Section ids are stable anchors.",
+
+  "eyebrow": {
+    "en": "Announcement · Customer Info Messenger",
+    "zh": "公告 · Customer Info Messenger"
+  },
+  "title": {
+    "en": "Feature Upgrade: the full order workflow, now inside Messenger",
+    "zh": "功能升级：整个订单流程，现在都在 Messenger 里完成"
+  },
+  "intro": [
+    {
+      "en": "Until now, the extension helped you look up a customer. Anything you had to do — check a cart, add products, create an order, confirm, pay, ship, answer “where's my parcel?” — meant switching to the EC2 admin in another tab and finding the customer all over again.",
+      "zh": "以前，这个插件只能帮你查客户资料。真正要做事情——看购物车、加产品、开单、确认、收款、发货、回答“我的包裹到哪里了”——都要切去 EC2 后台，重新搜索一次客户，做完再切回来聊天。"
+    },
+    {
+      "en": "With this upgrade, the whole order workflow lives inside the chat. Click the customer's name and everything is one tap away.",
+      "zh": "这次升级之后，整个订单流程都在聊天窗口里完成。点一下客户的名字，所有功能一键到位。"
+    }
+  ],
+
+  "highlights": [
+    {
+      "title": { "en": "Full cart control", "zh": "购物车全功能" },
+      "description": {
+        "en": "view, edit, split, merge, group, import — in place",
+        "zh": "查看、改数量、拆分、合并、分组、导入——都在原地完成"
+      }
+    },
+    {
+      "title": { "en": "Orders end-to-end", "zh": "订单一条龙" },
+      "description": {
+        "en": "create, adjust, confirm, pay, ship — one click each",
+        "zh": "开单、改价、确认、收款、发货——每一步都是一键"
+      }
+    },
+    {
+      "title": { "en": "Live-code 补单 & parcel proof", "zh": "直播补单 & 包裹照片" },
+      "description": {
+        "en": "paste customer codes as typed; show packing photos instantly",
+        "zh": "客户打什么代码就贴什么；打包照片随时给客户看"
+      }
+    }
+  ],
+
+  "sections": [
+    {
+      "id": "cart",
+      "title": { "en": "Cart management", "zh": "购物车管理" },
+      "subtitle": {
+        "en": "Click the customer's name → their full EC2 cart, editable in place.",
+        "zh": "点客户名字 → 完整的 EC2 购物车直接打开，当场就能改。"
+      },
+      "features": [
+        {
+          "title": { "en": "Cart modal", "zh": "购物车弹窗" },
+          "body": [
+            {
+              "en": "The customer's complete cart opens right in the chat: every item with thumbnail, quantity, price, expiry state, and live totals. No more EC2 tab, no more fb_user_id searches.",
+              "zh": "客户的完整购物车直接在聊天里打开：每样产品都有图片、数量、价格、有没有过期，总额实时显示。不用再开 EC2，不用再搜 fb_user_id。"
+            }
+          ]
+        },
+        {
+          "title": { "en": "Quantity editing", "zh": "改数量" },
+          "body": [
+            {
+              "en": "Click +/− or type the number directly — Enter commits. If EC2 rejects the change, the row rolls back automatically so the cart never lies.",
+              "zh": "点 +/− 或直接打数字，按 Enter 就保存。如果 EC2 不接受，数字会自动跳回原样，购物车永远显示真实数据。"
+            }
+          ]
+        },
+        {
+          "title": { "en": "Delete with Undo", "zh": "删除可以后悔" },
+          "body": [
+            {
+              "en": "Deleting an item is instant, and an Undo toast gives you five seconds to take it back — speed without the danger.",
+              "zh": "删除是立刻的，但会出现一个 Undo 按钮，5 秒内可以按回去。又快又安全。"
+            }
+          ]
+        },
+        {
+          "title": { "en": "Expired items surfaced", "zh": "过期产品会提醒你" },
+          "body": [
+            {
+              "en": "If anything in the cart has expired, an amber “⚠️ N expired — Renew all” banner appears with a one-click fix — before checkout fails, not after.",
+              "zh": "购物车里有过期产品的话，会出现黄色提示 “⚠️ N expired — Renew all”，一键全部更新。问题在开单之前就发现，不是开单失败才知道。"
+            }
+          ]
+        },
+        {
+          "title": { "en": "Split, Merge & Group", "zh": "Split、Merge、Group" },
+          "body": [
+            {
+              "en": "Split divides one row into two (“3 now, 2 later”). ⇤ Merge combines duplicate rows into one — ⧉ ×N badges show you the duplicates at a glance. ⊞ Group colour-codes rows into clusters that survive refresh, so “order just this batch” is two clicks.",
+              "zh": "Split：把一行拆成两行（“先发 3 个，剩 2 个之后发”）。⇤ Merge：把重复的产品合成一行——⧉ ×N 标记一眼就看到哪些重复了。⊞ Group：把几行组成一个颜色分组，刷新也不会散——“只下这一批的单”两下就搞定。"
+            }
+          ]
+        },
+        {
+          "title": { "en": "⇩ Import a cart from another account", "zh": "⇩ Import：搬别的账号的购物车" },
+          "body": [
+            {
+              "en": "Customer switched Facebook profiles? Import their old cart by account ID: you see a preview first, then commit, with a clear green/amber/red result report and an optional merge-duplicates toggle.",
+              "zh": "客户换了 Facebook 账号？输入旧账号的 ID，就能把整个购物车搬过来。先给你预览，确认了才执行，结果用绿/黄/红清楚列出来，还可以选择要不要合并重复产品。"
+            }
+          ]
+        },
+        {
+          "title": { "en": "Simple | Adv mode", "zh": "Simple | Adv 模式" },
+          "body": [
+            {
+              "en": "The power tools (Split, Merge, Group, dup badges) stay hidden in Simple mode for a clean everyday cart. Flip to Adv once and the choice sticks — across customers, tabs, and reloads.",
+              "zh": "高级工具（Split、Merge、Group、重复标记）平时藏起来，界面干净好上手。需要的人切去 Adv 一次就好，选择会一直记住。"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "picker",
+      "title": { "en": "Adding products", "zh": "加产品" },
+      "subtitle": {
+        "en": "The + Add picker now has three modes: Normal | ✦ Smart | 🔴 Live.",
+        "zh": "按 + Add 打开产品选择器，有三种模式：Normal | ✦ Smart | 🔴 Live。"
+      },
+      "features": [
+        {
+          "title": { "en": "✦ Smart search", "zh": "✦ Smart 搜索" },
+          "body": [
+            {
+              "en": "Paste a customer's whole list — “花胶, 燕窝, 杏仁, …” — and every keyword is searched at once, with results grouped per item. One paste replaces ten separate product searches.",
+              "zh": "客户给你一整串 “花胶, 燕窝, 杏仁, …”？整串贴进去，一次全部搜出来，结果按每个关键词分组。一次贴上，抵过十次搜索。"
+            }
+          ]
+        },
+        {
+          "title": { "en": "🔴 Live tab — add by live-comment code", "zh": "🔴 Live：用直播代码补单" },
+          "body": [
+            {
+              "en": "补单 the way customers actually order: pick the live (only 进行中 lives are listed — scroll to load more), paste the codes exactly as typed in the comments — “A2+3, A3+1”, commas or new lines, 中文标点 all fine — and press Add by Code.",
+              "zh": "客户在直播怎么留言，你就怎么补单：先选场次（只显示进行中的直播，往下滑自动加载更多），然后把代码照抄进去——“A2+3, A3+1”，逗号、中文逗号、换行都可以——按 Add by Code。"
+            },
+            {
+              "en": "Every line gets its own honest answer: ✓ added · ℹ already in cart — edit qty instead · ⚠ skipped, with the reason. A code carrying two prices auto-picks the one customers actually bought (shown as “auto-picked”). Re-adding can never create a double line, and only the failed codes stay in the box for you to fix and resend.",
+              "zh": "每一行代码都有清楚的交代：✓ added 加进去了 · ℹ already in cart 已经在购物车，改数量就好 · ⚠ skipped 没加，原因写给你看。一个代码有两个价格时，系统自动选客户真正在买的那个（会标 “auto-picked”）。重复补单绝对不会加成两行，失败的代码会留在框里等你改好再送一次。"
+            }
+          ]
+        },
+        {
+          "title": { "en": "Out-of-stock protection", "zh": "缺货保护" },
+          "body": [
+            {
+              "en": "Off-sale and out-of-stock products show dimmed with a red 缺货/OFF badge and simply cannot be added — the embarrassing checkout surprise is gone.",
+              "zh": "下架和缺货的产品会变灰，挂红色 缺货/OFF 标签，根本选不到——不会再发生开单时才发现没货的尴尬。"
+            }
+          ]
+        },
+        {
+          "title": { "en": "Tell twins apart", "zh": "同名产品分得清" },
+          "body": [
+            {
+              "en": "Same-name products (different grades or sizes) now show their #goodsId as the tell-apart, and every thumbnail zooms to full screen for visual confirmation before you add.",
+              "zh": "名字一样、规格不同的产品，现在显示 #goodsId 作区分，图片还能点开放大看清楚才加。发错款的问题从此消失。"
+            }
+          ]
+        },
+        {
+          "title": { "en": "Quote in one click", "zh": "一键报价" },
+          "body": [
+            {
+              "en": "Select products → Quote copies clean “{name} - RM {price}” lines, or 📩 drops them straight into the message box. No typing, no price typos.",
+              "zh": "勾选产品 → Quote 复制整齐的 “产品名 - RM 价格” 清单，或按 📩 直接放进输入框。不用打字，不会打错价格。"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "orders",
+      "title": { "en": "Creating orders & taking payment", "zh": "开单 & 收款" },
+      "subtitle": { "en": "", "zh": "" },
+      "features": [
+        {
+          "title": { "en": "+ Order → two-step checkout", "zh": "+ Order → 两步开单" },
+          "body": [
+            {
+              "en": "Order the whole cart or just the selected rows. The form comes prefilled — choosing a State reloads the Areas and fills the postcode — and the success panel appears right in place.",
+              "zh": "整个购物车或只勾选几行都可以下单。表格自动填好客户资料——选了 State 会自动载入 Area 和邮编——开单成功的画面直接显示在原地。"
+            }
+          ]
+        },
+        {
+          "title": { "en": "Order note at creation", "zh": "开单时就能写备注" },
+          "body": [
+            {
+              "en": "A new Note 备注 box on the checkout form writes the order note into EC2 the moment the order is created — no more create-first-edit-later. It stays editable afterwards via the recipient Edit dialog.",
+              "zh": "开单表格新增 Note 备注 栏，开单的同时备注就直接写进 EC2，不用开完单再去改。之后要改，在订单的 Edit 里照样可以。"
+            }
+          ]
+        },
+        {
+          "title": { "en": "Confirm / Confirm+Paid / Pay / Ship", "zh": "Confirm / Confirm+Paid / Pay / Ship" },
+          "body": [
+            {
+              "en": "Each order shows exactly the buttons its status calls for — on the order detail and as quick-actions (确认 / 确认+付款 / 付款 / 出货) right on the list cards. Ship asks for confirmation, since it's the one you can't take back.",
+              "zh": "每张订单只显示它当下需要的按钮——订单详情里有，订单列表的卡片上也有快捷键（确认 / 确认+付款 / 付款 / 出货）。出货会先问你确认一次，因为发出去就收不回了。"
+            }
+          ]
+        },
+        {
+          "title": { "en": "Adjustments after creation", "zh": "开单后改价" },
+          "body": [
+            {
+              "en": "Discounts and add-amounts are one “＋ Add adjustment” away on the order detail — and the option hides itself once the order has shipped, when it would no longer be valid.",
+              "zh": "折扣、加钱，在订单详情按 “＋ Add adjustment” 就行。订单发货之后这个选项会自动隐藏（因为那时改也没用了）。"
+            }
+          ]
+        },
+        {
+          "title": { "en": "📩 Payment message", "zh": "📩 收款信息一键发" },
+          "body": [
+            {
+              "en": "After marking an order paid, one button builds the payment-received message — automatically in English or 中文 based on the customer's language tag — complete with the tracking link and feedback link, and places it in the message box ready to send.",
+              "zh": "标记收款之后，按一个键就生成收款确认信息——根据客户的语言标签自动用英文或中文——附上包裹查询链接和反馈表链接，直接放进输入框，看一眼就能发。"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "wheres",
+      "title": { "en": "Answering “where's my order?”", "zh": "回答“我的包裹到哪里了？”" },
+      "subtitle": {
+        "en": "The #1 customer question, answered without leaving the chat.",
+        "zh": "客户问最多的问题，现在不用离开聊天就能回答。"
+      },
+      "features": [
+        {
+          "title": { "en": "Order list with real ship-status", "zh": "订单列表 + 真实发货状态" },
+          "body": [
+            {
+              "en": "“Recent Orders ↗” opens the customer's history instantly, with filter chips — ALL / SHIPPED / PENDING / PARTIAL / NO DATA — showing genuine warehouse status, plus search by name, phone, or order number.",
+              "zh": "按 “Recent Orders ↗” 立刻打开客户的订单记录，上面有筛选标签——ALL / SHIPPED / PENDING / PARTIAL / NO DATA——显示的是仓库的真实状态，还能按名字、电话、单号搜索。"
+            }
+          ]
+        },
+        {
+          "title": { "en": "Split orders can't mislead you", "zh": "拆单不会再报错状态" },
+          "body": [
+            {
+              "en": "A split order that only partially shipped shows purple PARTIAL — distinct from PENDING and SHIPPED — so nobody tells a customer “shipped” while half the parcel is still in the warehouse. Orders with no recent warehouse record show NO DATA instead of a false answer.",
+              "zh": "拆开发货、只发了一半的订单，显示紫色 PARTIAL——跟 PENDING 和 SHIPPED 分开——不会再有人跟客户说“发了”，其实一半还在仓库。仓库没有记录的旧订单显示 NO DATA，不会给你错误答案。"
+            }
+          ]
+        },
+        {
+          "title": { "en": "Full order detail", "zh": "完整订单详情" },
+          "body": [
+            {
+              "en": "A lifecycle timeline (下单 → 付款 → 出货), items with unit prices and zoomable photos, the fee breakdown, notes, and a recipient block with ⧉ Copy — name, phone, and address as one paste-ready block — plus Edit.",
+              "zh": "订单进度一条线看完（下单 → 付款 → 出货），产品有单价和可放大的图片，费用明细、备注都在，收件人资料还有 ⧉ Copy——名字、电话、地址一次复制成一段，随贴随用——旁边就是 Edit。"
+            }
+          ]
+        },
+        {
+          "title": { "en": "Parcel photos & tracking", "zh": "包裹照片 & 快递单号" },
+          "body": [
+            {
+              "en": "Orders with warehouse packing photos show a 📷 icon. Open it to see the photos, copy the tracking number, or 📩 Send the standard shipped-message with tracking straight into the chat. Multi-parcel shipments are listed separately with their own tracking numbers — photographic proof for any “what did you ship me?” question, in seconds.",
+              "zh": "有打包照片的订单会显示 📷 图标。点开就能看到打包照片、复制快递单号，或按 📩 Send 把标准的已出货+单号信息直接放进聊天。一单分几个包裹的，会分开列出各自的单号。客户问“你们到底寄了什么给我？”——几秒钟就有照片为证。"
+            }
+          ]
+        },
+        {
+          "title": { "en": "EC2 ↗ when you really need it", "zh": "EC2 ↗ 随时能跳过去" },
+          "body": [
+            {
+              "en": "Every view keeps an escape hatch: one click opens the exact matching EC2 page — this customer's cart, their order list, or this specific order.",
+              "zh": "真的需要开 EC2 后台的时候，每个画面都有一个 EC2 ↗ 按钮，一键直达对应的页面——这个客户的购物车、订单列表，或这张订单的详情。"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+
+  "underTheHood": {
+    "title": { "en": "Under the hood", "zh": "幕后保护" },
+    "subtitle": {
+      "en": "Invisible upgrades that keep the speed safe.",
+      "zh": "看不到的升级，保证快也快得安全。"
+    },
+    "columns": [
+      { "en": "Protection", "zh": "保护" },
+      { "en": "What it means for you", "zh": "对你的意义" }
+    ],
+    "rows": [
+      {
+        "protection": { "en": "Customer isolation", "zh": "客户隔离" },
+        "meaning": {
+          "en": "Switch chats as fast as you like — the wrong customer's cart can never appear, and an order can never be created against the wrong person.",
+          "zh": "再快地切换聊天也不怕——绝对不会显示到别的客户的购物车，更不可能开错人的单。"
+        }
+      },
+      {
+        "protection": { "en": "Double-add protection", "zh": "防止重复添加" },
+        "meaning": {
+          "en": "Double-clicking Add can't add twice; fast typing can't show stale search results.",
+          "zh": "手快连点两下 Add 也不会加两次；打字快也不会显示过时的搜索结果。"
+        }
+      },
+      {
+        "protection": { "en": "Honest live-code adds", "zh": "直播补单逐条核实" },
+        "meaning": {
+          "en": "Live-code batches are verified item by item against the actual cart — nothing can half-land silently, and retrying is always safe.",
+          "zh": "每个代码都逐条对着购物车核实过才算成功——不会有一半加进去了却没人知道，重发永远是安全的。"
+        }
+      },
+      {
+        "protection": { "en": "Clean message sends", "zh": "发信息前先清空" },
+        "meaning": {
+          "en": "Every 📩 button replaces the draft entirely — an auto-message can never go out glued to something half-typed.",
+          "zh": "每个 📩 按钮都会先清空输入框——自动信息绝不会跟你打到一半的字黏在一起发出去。"
+        }
+      },
+      {
+        "protection": { "en": "No lost work", "zh": "不会弄丢你的操作" },
+        "meaning": {
+          "en": "Cart refreshes keep your scroll position and selection; Escape closes only the top layer, never the whole modal mid-task.",
+          "zh": "购物车刷新时你滚动到哪里、勾了什么都保持原样；按 Esc 只关最上层的窗口，不会整个弹窗关掉害你重来。"
+        }
+      }
+    ]
+  },
+
+  "buttonGuide": {
+    "title": { "en": "Button guide", "zh": "按钮说明" },
+    "subtitle": {
+      "en": "Quick reference for every control, grouped by where it lives.",
+      "zh": "每个按钮的作用，按位置分组。按钮名照插件上显示的英文。"
+    },
+    "columns": [
+      { "en": "Control", "zh": "按钮" },
+      { "en": "What it does", "zh": "作用" }
+    ],
+    "groups": [
+      {
+        "id": "sidebar-panel",
+        "title": { "en": "Sidebar panel (in the Messenger inbox)", "zh": "右侧客户面板（Messenger 收件箱内）" },
+        "rows": [
+          { "control": { "en": "Customer name", "zh": "Customer name" }, "description": { "en": "Opens the cart modal for this customer.", "zh": "点客户名字 → 打开这个客户的购物车。" } },
+          { "control": { "en": "PSID row", "zh": "PSID row" }, "description": { "en": "Click copies the PSID.", "zh": "点一下就复制 PSID。" } },
+          { "control": { "en": "华语 / English", "zh": "华语 / English" }, "description": { "en": "Toggles the customer's language tag — also decides which language auto-messages use.", "zh": "切换客户的语言标签——自动信息用哪种语言也是看这个。" } },
+          { "control": { "en": "Address ⧉", "zh": "Address ⧉" }, "description": { "en": "Copies the customer's address.", "zh": "复制客户地址。" } },
+          { "control": { "en": "Recent Orders ↗", "zh": "Recent Orders ↗" }, "description": { "en": "Opens the order-list modal.", "zh": "打开订单列表。" } },
+          { "control": { "en": "Order SN", "zh": "Order SN" }, "description": { "en": "Opens that order's detail; a red LEGACY tag = old-system order → opens the public tracking page.", "zh": "点单号打开订单详情；红色 LEGACY 标签 = 旧系统订单 → 打开公开的包裹查询页。" } },
+          { "control": { "en": "📷 icon", "zh": "📷" }, "description": { "en": "Opens the parcel-photos modal for that order.", "zh": "打开这张订单的包裹照片。" } },
+          { "control": { "en": "ALL / 🇲🇾 MYR / 🇸🇬 SGD", "zh": "ALL / 🇲🇾 MYR / 🇸🇬 SGD" }, "description": { "en": "Copies the cart summary — full cart, MYR-only, or SGD-only. An amber pill means the cart has expired items.", "zh": "复制购物车摘要——全部、只马币、只新币。黄色 = 购物车里有过期产品。" } },
+          { "control": { "en": "Prefix textarea", "zh": "Prefix textarea" }, "description": { "en": "Reminder text prepended to copied cart summaries.", "zh": "复制摘要时自动加在前面的提醒文字。" } },
+          { "control": { "en": "Drag handle / ✕", "zh": "Drag handle / ✕" }, "description": { "en": "Move the panel anywhere; close it (a restore button brings it back).", "zh": "拖动面板到任何位置；关掉面板（有恢复按钮可以叫回来）。" } }
+        ]
+      },
+      {
+        "id": "ai-bar",
+        "title": { "en": "Message box AI bar", "zh": "输入框 AI 工具条" },
+        "rows": [
+          { "control": { "en": "✨ AI Rewrite", "zh": "✨ AI Rewrite" }, "description": { "en": "Rewrites your current draft.", "zh": "帮你改写现在打的草稿。" } },
+          { "control": { "en": "↩ back", "zh": "↩" }, "description": { "en": "Restores the pre-rewrite draft.", "zh": "不满意？还原改写前的草稿。" } },
+          { "control": { "en": "华语 | English", "zh": "华语 | English" }, "description": { "en": "Chooses the rewrite language.", "zh": "选择改写用的语言。" } }
+        ]
+      },
+      {
+        "id": "cart-modal",
+        "title": { "en": "Cart modal", "zh": "购物车弹窗" },
+        "rows": [
+          { "control": { "en": "Simple | Adv", "zh": "Simple | Adv" }, "description": { "en": "Hides / shows the power tools. The choice sticks.", "zh": "藏起 / 显示高级工具。选一次就记住。" } },
+          { "control": { "en": "+ Add", "zh": "+ Add" }, "description": { "en": "Opens the product picker (Normal | Smart | Live).", "zh": "打开产品选择器（Normal | Smart | Live）。" } },
+          { "control": { "en": "⇩ Import", "zh": "⇩ Import" }, "description": { "en": "Copies another account's cart in, with preview first.", "zh": "把别的账号的购物车搬过来，先预览再执行。" } },
+          { "control": { "en": "↻", "zh": "↻" }, "description": { "en": "Refreshes the cart without losing your place.", "zh": "刷新购物车，位置和勾选都不会丢。" } },
+          { "control": { "en": "Checkbox", "zh": "Checkbox" }, "description": { "en": "Selects rows for bulk actions. Shift-click selects a range; the A key selects all.", "zh": "勾选做批量操作。按住 Shift 点选一整段；按 A 键全选。" } },
+          { "control": { "en": "− qty +", "zh": "− qty +" }, "description": { "en": "Change quantity; type directly, Enter commits.", "zh": "改数量；可以直接打数字，Enter 保存。" } },
+          { "control": { "en": "Split", "zh": "Split" }, "description": { "en": "(Adv) Moves part of a row's quantity to a new row.", "zh": "（Adv）把一行的数量拆一部分出去成新的一行。" } },
+          { "control": { "en": "⇤ Merge", "zh": "⇤ Merge" }, "description": { "en": "(Adv) Combines selected duplicate rows into one.", "zh": "（Adv）把勾选的重复行合成一行。" } },
+          { "control": { "en": "⊞ Group / Ungroup", "zh": "⊞ Group / Ungroup" }, "description": { "en": "(Adv) Colour-codes selected rows into a cluster with its own select-all.", "zh": "（Adv）把勾选的行组成颜色分组，分组有自己的全选。" } },
+          { "control": { "en": "Delete / Renew", "zh": "Delete / Renew" }, "description": { "en": "Deletes the selection (single-row delete has a 5 s Undo) / renews expired items.", "zh": "删除勾选的行（单行删除有 5 秒 Undo）/ 更新过期产品。" } },
+          { "control": { "en": "+ Order All / + Order (N)", "zh": "+ Order All / + Order (N)" }, "description": { "en": "Checkout for the whole cart, or just the selected rows.", "zh": "整个购物车下单，或只下勾选的 N 行。" } },
+          { "control": { "en": "Copy list / 📩 Send", "zh": "Copy list / 📩 Send" }, "description": { "en": "Copies the formatted cart list, or places it into the message box.", "zh": "复制整理好的购物车清单，或直接放进输入框。" } },
+          { "control": { "en": "EC2 ↗", "zh": "EC2 ↗" }, "description": { "en": "Opens the matching EC2 page in a new tab.", "zh": "新分页打开对应的 EC2 页面。" } }
+        ]
+      },
+      {
+        "id": "picker-normal-smart",
+        "title": { "en": "Product picker — Normal / ✦ Smart", "zh": "产品选择器 — Normal / ✦ Smart" },
+        "rows": [
+          { "control": { "en": "Normal", "zh": "Normal" }, "description": { "en": "Keyword search with pages.", "zh": "关键词搜索，有分页。" } },
+          { "control": { "en": "✦ Smart", "zh": "✦ Smart" }, "description": { "en": "Paste a comma-separated list → one search per item, results grouped per keyword.", "zh": "贴一整串逗号分开的清单 → 每一项同时搜索，结果分组显示。" } },
+          { "control": { "en": "All / Quote / 📩 / Add Selected", "zh": "All / Quote / 📩 / Add Selected" }, "description": { "en": "Select-all; copy price lines; place them in the message box; add every selected item.", "zh": "全选；复制报价清单；报价放进输入框；把勾选的全部加进购物车。" } },
+          { "control": { "en": "Add (per card)", "zh": "Add（每张卡片上）" }, "description": { "en": "Adds that product at the chosen quantity. Dimmed + 缺货/OFF = cannot be added.", "zh": "按选好的数量加这个产品。变灰 + 缺货/OFF = 加不了。" } },
+          { "control": { "en": "#goodsId / thumbnail", "zh": "#goodsId / 图片" }, "description": { "en": "Tell-apart for same-name twins; thumbnail zooms full screen.", "zh": "同名产品靠这个编号分辨；图片点开可放大。" } }
+        ]
+      },
+      {
+        "id": "picker-live",
+        "title": { "en": "Product picker — 🔴 Live", "zh": "产品选择器 — 🔴 Live" },
+        "rows": [
+          { "control": { "en": "Choose live…", "zh": "Choose live…" }, "description": { "en": "Lists 进行中 lives only, newest first; scroll to load more. The choice holds while the modal is open and resets when it closes.", "zh": "只列出进行中的直播，最新的在最上面，往下滑自动加载。弹窗开着期间选择会保持，关掉弹窗就重置。" } },
+          { "control": { "en": "Codes box", "zh": "Codes box" }, "description": { "en": "Paste codes as customers typed them — “A2+3, A3+1” — commas, 中文 commas, or new lines. A code without quantity is skipped, never guessed.", "zh": "客户怎么留言就怎么贴——“A2+3, A3+1”——逗号、中文逗号、换行都行。没写数量的代码会跳过，不会乱猜是 1。" } },
+          { "control": { "en": "Add by Code", "zh": "Add by Code" }, "description": { "en": "Adds everything addable and reports per line: added ✓ (with “auto-picked” when a code had two prices), already in cart ℹ, or skipped ⚠ with the reason. Only failed lines stay in the box.", "zh": "能加的全部加进去，每行都有交代：✓ 加了（一个代码两个价格时会标 “auto-picked”）、ℹ 已在购物车（改数量就好）、⚠ 跳过并写明原因。失败的代码留在框里等你修改重发。" } }
+        ]
+      },
+      {
+        "id": "checkout",
+        "title": { "en": "Checkout", "zh": "开单画面" },
+        "rows": [
+          { "control": { "en": "Form fields", "zh": "表格栏位" }, "description": { "en": "Prefilled from EC2; changing State reloads Areas and fills the postcode.", "zh": "自动填好 EC2 的资料；换 State 会自动重新载入 Area 和邮编。" } },
+          { "control": { "en": "Note 备注", "zh": "Note 备注" }, "description": { "en": "Optional order note written into EC2 at creation.", "zh": "选填的订单备注，开单时直接写进 EC2。" } },
+          { "control": { "en": "Create Order", "zh": "Create Order" }, "description": { "en": "Creates the order and shows the success panel.", "zh": "建立订单，显示成功画面。" } },
+          { "control": { "en": "＋ Add adjustment", "zh": "＋ Add adjustment" }, "description": { "en": "Discount / add-amount before confirming.", "zh": "确认前先加折扣 / 加钱。" } },
+          { "control": { "en": "Confirm / Confirm+Paid", "zh": "Confirm / Confirm+Paid" }, "description": { "en": "Confirms the order; Confirm+Paid also marks it paid — then offers 📩 Payment msg.", "zh": "确认订单；Confirm+Paid 顺便标记已收款——然后会出现 📩 收款信息按钮。" } },
+          { "control": { "en": "EC2 Details ↗", "zh": "EC2 Details ↗" }, "description": { "en": "Opens the created order in EC2.", "zh": "在 EC2 打开刚建立的订单。" } }
+        ]
+      },
+      {
+        "id": "order-list-detail",
+        "title": { "en": "Order list & detail", "zh": "订单列表 & 订单详情" },
+        "rows": [
+          { "control": { "en": "Filter chips", "zh": "筛选标签" }, "description": { "en": "ALL / SHIPPED / PENDING / PARTIAL / NO DATA with counts — real warehouse status, split-order aware.", "zh": "ALL / SHIPPED / PENDING / PARTIAL / NO DATA，带数量——仓库真实状态，拆单也分得清。" } },
+          { "control": { "en": "Search box", "zh": "搜索框" }, "description": { "en": "Filters by name, phone, or order number.", "zh": "按名字、电话或单号筛选。" } },
+          { "control": { "en": "确认 / 确认+付款 / 付款 / 出货", "zh": "确认 / 确认+付款 / 付款 / 出货" }, "description": { "en": "Quick actions on each card — only the ones that order needs; 出货 asks to confirm.", "zh": "每张卡片上的快捷键——只显示这张订单需要的；出货会先问你确认。" } },
+          { "control": { "en": "⧉ Copy (recipient)", "zh": "⧉ Copy（收件人）" }, "description": { "en": "Copies name + phone + address as one block.", "zh": "名字 + 电话 + 地址一次复制成一段。" } },
+          { "control": { "en": "Edit (recipient)", "zh": "Edit（收件人）" }, "description": { "en": "Edits recipient details, order note, and 客服备注.", "zh": "修改收件资料、订单备注和客服备注。" } },
+          { "control": { "en": "📩 Send payment msg", "zh": "📩 Send payment msg" }, "description": { "en": "After Pay: the payment-received message with tracking + feedback links, in the customer's language.", "zh": "收款之后：收款确认信息（附查询和反馈链接），自动用客户的语言。" } }
+        ]
+      },
+      {
+        "id": "parcel-gallery",
+        "title": { "en": "Parcel modal & photo viewer", "zh": "包裹弹窗 & 照片查看器" },
+        "rows": [
+          { "control": { "en": "Tracking ⧉ / 📩 Send", "zh": "Tracking ⧉ / 📩 Send" }, "description": { "en": "Copies the tracking number, or places the shipped-message with tracking into the message box.", "zh": "复制快递单号，或把已出货+单号的标准信息放进输入框。" } },
+          { "control": { "en": "Details ▾", "zh": "Details ▾" }, "description": { "en": "Tucks the technical IDs out of the way.", "zh": "把技术编号收起来，不碍眼。" } },
+          { "control": { "en": "Photo sections", "zh": "照片区" }, "description": { "en": "Packing photos grouped by type; customer-facing photos have a ⧉ copy-link overlay. Multi-parcel shipments are listed with their own tracking numbers.", "zh": "打包照片分类显示；给客户看的照片有 ⧉ 复制链接。一单多个包裹会分开列，各有各的单号。" } },
+          { "control": { "en": "Viewer ‹ ›", "zh": "‹ › 查看器" }, "description": { "en": "Full-screen photos; ← → navigate, Esc closes the viewer only.", "zh": "全屏看照片；← → 翻页，Esc 只关查看器。" } }
+        ]
+      }
+    ]
+  },
+
+  "availabilityNote": {
+    "en": "The order-note field becomes active once the backend update is deployed; everything else is live now — reload the extension to get it.",
+    "zh": "Note 备注栏要等后台更新部署后才生效；其余功能现在就能用——去 chrome://extensions 重新载入插件即可。"
+  },
+
+  "footer": {
+    "en": "Customer Info Messenger · DD Group",
+    "zh": "Customer Info Messenger · DD Group"
+  }
+}
