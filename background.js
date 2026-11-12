@@ -531,19 +531,30 @@ function fetchOrderStatuses(orderIds) {
 // /public-trans (the dashboard's Transactions tab) — `public` = Public Bank
 // (MYR), `ocbc` = OCBC (SGD); { updatedTime, data: [{date, reference, method,
 // amount, description}] }, newest first. 404 = that statement was never
-// uploaded (an ordinary state, not a fault).
+// uploaded (an ordinary state, not a fault). With `etag` (the card's 30 s
+// check) it asks If-None-Match: Express hashes the body, so an unchanged
+// statement answers 304 with no body (~0.2 s) → { unchanged: true }. The
+// explicit Cache-Control matters: without it fetch adds `no-cache` to any
+// If-None-Match request, and Express then always sends the full 200.
 const BANK_IDS = ['public', 'ocbc'];
-function fetchBankTransactions(bank) {
+function fetchBankTransactions(bank, etag) {
   if (!BANK_IDS.includes(bank)) return Promise.resolve({ ok: false, error: 'Unknown bank.' });
-  return fetch(`${ORDER_STATUS_API_BASE}/public-trans?bank=${bank}`)
+  let newEtag = null;
+  return fetch(`${ORDER_STATUS_API_BASE}/public-trans?bank=${bank}`, {
+    cache: 'no-store',
+    headers: etag ? { 'If-None-Match': etag, 'Cache-Control': 'max-age=0' } : {},
+  })
     .then((res) => {
+      if (res.status === 304) return { unchanged: true };
       if (res.status === 404) return { missing: true };
       if (!res.ok) throw new Error(`Bank statement API error: ${res.status}`);
+      newEtag = res.headers.get('etag');
       return res.json();
     })
     .then((json) => {
-      if (json.missing) return { ok: true, missing: true, updatedTime: null, rows: [] };
-      return { ok: true, updatedTime: json?.updatedTime || null, rows: Array.isArray(json?.data) ? json.data : [] };
+      if (json.unchanged) return { ok: true, unchanged: true, etag };
+      if (json.missing) return { ok: true, missing: true, updatedTime: null, rows: [], etag: null };
+      return { ok: true, updatedTime: json?.updatedTime || null, rows: Array.isArray(json?.data) ? json.data : [], etag: newEtag };
     })
     .catch((err) => ({ ok: false, error: err.message }));
 }
@@ -1535,7 +1546,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === 'GET_BANK_TRANSACTIONS') {
-    fetchBankTransactions(message.bank).then(sendResponse);
+    fetchBankTransactions(message.bank, typeof message.etag === 'string' ? message.etag : null).then(sendResponse);
     return true;
   }
 

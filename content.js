@@ -8231,17 +8231,20 @@
   // qianyi-api-query /public-trans — the dashboard's Transactions tab, newest
   // first. Not tied to the customer: one element (kept in `bankCard`, so a
   // sidebar re-render that drops it never reloads the data), bank and search
-  // text kept across chats. Loaded when first shown; ↻, or focusing the
-  // search after BANK_STALE_MS, reloads both banks.
+  // text kept across chats. Loaded when first shown; ↻ reloads both banks.
+  // A new upload shows up by itself: every BANK_CHECK_MS while the tab is
+  // visible (and at once when it becomes visible, or the search is focused
+  // after a gap) each bank is asked If-None-Match its ETag — 304 = unchanged,
+  // no body; only a changed statement is downloaded and redrawn.
   const BANK_CARD_ID = 'cim-bank-card';
   const BANKS = [
     { id: 'public', label: 'PBB', currency: 'RM', name: 'Public Bank' },
     { id: 'ocbc', label: 'OCBC', currency: 'S$', name: 'OCBC Singapore' },
   ];
-  const BANK_STALE_MS = 2 * 60 * 1000;
+  const BANK_CHECK_MS = 30 * 1000;
   const BANK_MAX_ROWS = 50;
-  const bankState = { bank: 'public', query: '', loadedAt: 0, data: {} };
-  BANKS.forEach((b) => { bankState.data[b.id] = { rows: [], updatedTime: null, loading: false, error: null, missing: false, seq: 0 }; });
+  const bankState = { bank: 'public', query: '', checkedAt: 0, data: {} };
+  BANKS.forEach((b) => { bankState.data[b.id] = { rows: [], updatedTime: null, etag: null, loading: false, checking: false, error: null, missing: false, seq: 0 }; });
   let bankCard = null;
   let bankRenderTimer = null;
 
@@ -8257,6 +8260,10 @@
       bankCard = buildBankCard();
       renderBankCard();
       loadBanks();
+      setInterval(() => { if (!document.hidden) loadBanks(true); }, BANK_CHECK_MS);
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden && Date.now() - bankState.checkedAt > BANK_CHECK_MS) loadBanks(true);
+      });
     }
     const docked = !panel.classList.contains('cim-floating') && !panel.classList.contains('cim-parked');
     if (docked) {
@@ -8314,7 +8321,7 @@
       bankRenderTimer = setTimeout(renderBankCard, 120);
     });
     input.addEventListener('focus', () => {
-      if (Date.now() - bankState.loadedAt > BANK_STALE_MS) loadBanks();
+      if (Date.now() - bankState.checkedAt > BANK_CHECK_MS) loadBanks(true);
     });
     // Meta's inbox has keyboard shortcuts; typing here is ours alone.
     input.addEventListener('keydown', (e) => {
@@ -8334,27 +8341,41 @@
     return card;
   }
 
-  function loadBanks() {
-    bankState.loadedAt = Date.now();
+  // quiet = the background check: sends the ETag, no spinner, skipped for a
+  // bank whose load or check is still running; redraws only on a change
+  // (keeping the results' scroll) or a failure (red tab, old rows kept).
+  function loadBanks(quiet) {
+    bankState.checkedAt = Date.now();
     BANKS.forEach((b) => {
       const d = bankState.data[b.id];
+      if (quiet && (d.loading || d.checking)) return;
       const seq = ++d.seq;
-      d.loading = true;
-      chrome.runtime.sendMessage({ type: 'GET_BANK_TRANSACTIONS', bank: b.id }, (res) => {
+      if (quiet) d.checking = true; else d.loading = true;
+      const msg = { type: 'GET_BANK_TRANSACTIONS', bank: b.id };
+      if (quiet && d.etag) msg.etag = d.etag;
+      chrome.runtime.sendMessage(msg, (res) => {
+        if (quiet) d.checking = false;
         if (seq !== d.seq) return; // a newer reload is on its way
         d.loading = false;
-        if (res && res.ok) {
+        if (res && res.ok && res.unchanged) {
+          if (!d.error) return;
+          d.error = null;
+        } else if (res && res.ok) {
           d.rows = res.rows || [];
           d.updatedTime = res.updatedTime || null;
+          d.etag = res.etag || null;
           d.missing = !!res.missing;
           d.error = null;
         } else {
           d.error = (res && res.error) || 'Could not reach the bank statement service.';
         }
+        const list = bankCard && bankCard.querySelector('.cim-bank-results');
+        const top = quiet && list ? list.scrollTop : 0;
         renderBankCard();
+        if (top) list.scrollTop = top;
       });
     });
-    renderBankCard();
+    if (!quiet) renderBankCard();
   }
 
   // "16/10/2026 05:06 pm" → "5:06 pm" today, "15 Oct · 5:06 pm" otherwise.

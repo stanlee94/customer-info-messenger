@@ -81,12 +81,19 @@ const stub = `
     UNLINK_BASEROW_UID: async () => ({ ok: true }),
     LINK_BASEROW_UID: async () => ({ ok: true }),
     OPEN_OPTIONS_PAGE: async () => { window.__optionsOpened = true; return { ok: true }; },
-    // Synthetic statements (never real bank data). PBB updated today 05:06 pm.
+    // Synthetic statements (never real bank data). PBB updated today 05:06 pm;
+    // window.__bankVer[bank] = the uploaded version (ETag), 2 = a new PBB upload.
     GET_BANK_TRANSACTIONS: async (m) => {
       await new Promise((r) => setTimeout(r, 80));
-      if (window.__bankFail === m.bank) return { ok: false, error: 'Bank statement API error: 500' };
+      const ver = (window.__bankVer = window.__bankVer || { public: 1, ocbc: 1 })[m.bank];
+      const etag = 'W/"' + m.bank + '-' + ver + '"';
+      window.__bankChecks = (window.__bankChecks || []).concat(m.etag || '');
+      const fail = window.__bankFail === m.bank;
+      if (m.etag === etag && !fail) return { ok: true, unchanged: true, etag };
+      window.__bankFull = (window.__bankFull || 0) + 1; // full read attempts
+      if (fail) return { ok: false, error: 'Bank statement API error: 500' };
       const d = new Date(); const today = String(d.getDate()).padStart(2, '0') + '/' + String(d.getMonth() + 1).padStart(2, '0') + '/' + d.getFullYear();
-      if (m.bank === 'ocbc') return { ok: true, updatedTime: '01/09/2026 11:40 am', rows: [
+      if (m.bank === 'ocbc') return { ok: true, etag, updatedTime: '01/09/2026 11:40 am', rows: [
         { date: '01/09/2026', reference: '7001', method: 'CASH DEPOSIT     CDM', amount: '37.00', description: 'SG BUYER | NOTE' },
         { date: '31/08/2026', reference: '7002', method: 'FAST TRANSFER', amount: '128.00', description: 'ANOTHER SG' },
       ] };
@@ -98,7 +105,8 @@ const stub = `
         { date: today, reference: '200128', method: 'DEP-CASH', amount: '55.00', description: 'CASH' },
       ];
       for (let i = 0; i < 60; i++) rows.push({ date: '01/10/2026', reference: 'F' + i, method: 'DEP-CASH', amount: '10.00', description: 'FILLER ' + i });
-      return { ok: true, updatedTime: today + ' 05:06 pm', rows };
+      if (ver > 1) rows.unshift({ date: today, reference: '100009', method: 'DUITNOW TRSF CR', amount: '979.80', description: 'NEW UPLOAD' });
+      return { ok: true, etag, updatedTime: today + (ver > 1 ? ' 05:40 pm' : ' 05:06 pm'), rows };
     },
   };
   chrome.runtime.sendMessage = (msg, cb) => {
@@ -722,7 +730,8 @@ function check(name, cond, extra) {
   check('row header ← panel: back in the row, tabs hidden again', await p3.evaluate(() => document.getElementById('cim-note-bar').nextElementSibling === document.querySelector('.tbwrap')) && !(await p3.locator('#tabLeads').isVisible()));
 
   // Bank transactions card under the panel (synthetic statements)
-  const bankReqs = () => p3.evaluate(() => (window.__msgs || []).filter((t) => t === 'GET_BANK_TRANSACTIONS').length);
+  // Full statement downloads (a 304-style "unchanged" check doesn't count).
+  const bankReqs = () => p3.evaluate(() => window.__bankFull || 0);
   const bankMeta = () => p3.evaluate(() => document.querySelector('#cim-bank-card .cim-bank-meta').textContent);
   const bankRows = () => p3.evaluate(() => Array.from(document.querySelectorAll('#cim-bank-card .cim-bank-row')).map((r) => (r.classList.contains('cim-bank-row--exact') ? '=' : '') + r.querySelector('.cim-bank-amt').textContent));
   const bankType = async (q) => { await p3.fill('#cim-bank-card .cim-bank-input', q); await p3.waitForTimeout(250); };
@@ -771,6 +780,30 @@ function check(name, cond, extra) {
   await p3.evaluate(() => document.querySelector('.msgs').append(document.createElement('span')));
   await p3.waitForTimeout(500);
   check('card dropped by a re-render: put back, no reload', await p3.evaluate(() => document.getElementById('cim-bank-card') === window.__bankEl && document.getElementById('cim-purchase-panel').nextElementSibling === window.__bankEl) && (await bankReqs()) === 4);
+
+  // A new upload shows up by itself: checks send the ETag, only a changed
+  // statement is downloaded. Tab back in view after >30 s = check at once
+  // (Date.now pushed 31 s further ahead each time, standing in for the wait).
+  const bankChecks = () => p3.evaluate(() => (window.__bankChecks || []).slice());
+  const tabBack = () => p3.evaluate(() => { const real = Date.now; const ahead = 31000 * (window.__tabBacks = (window.__tabBacks || 0) + 1); Date.now = () => real() + ahead; document.dispatchEvent(new Event('visibilitychange')); Date.now = real; });
+  await p3.evaluate(() => { window.__bankFail = null; window.__bankVer.public = 2; });
+  await p3.click('#cim-bank-card .cim-bank-tab[data-bank="public"]');
+  await bankType('979.80');
+  check('before the upload reaches the card: no 979.80 row', (await bankRows()).length === 0);
+  let nChecks = (await bankChecks()).length;
+  await tabBack();
+  await p3.waitForTimeout(400);
+  const sent = (await bankChecks()).slice(nChecks);
+  check('tab back in view: both banks checked with their ETag', sent.length === 2 && sent.includes('W/"public-1"') && sent.includes('W/"ocbc-1"'), JSON.stringify(sent));
+  check('new PBB upload: shown with no click, search kept', JSON.stringify(await bankRows()) === JSON.stringify(['=RM 979.80']) && (await tabTxt()).startsWith('*PBB 5:40 pm'), JSON.stringify(await bankRows()) + ' ' + await tabTxt());
+  check('only the changed statement downloaded; OCBC unchanged clears its red tab', (await bankReqs()) === 5 && await p3.evaluate(() => !document.querySelector('#cim-bank-card .cim-bank-tab--error')), String(await bankReqs()));
+  nChecks = (await bankChecks()).length;
+  await tabBack();
+  await p3.waitForTimeout(400);
+  check('nothing new: checked again, nothing downloaded', (await bankChecks()).length === nChecks + 2 && (await bankReqs()) === 5, `${(await bankChecks()).length - nChecks} checks, ${await bankReqs()} downloads`);
+  nChecks = (await bankChecks()).length;
+  await p3.waitForTimeout(31000);
+  check('every 30 s while the tab is visible: both banks checked', (await bankChecks()).length >= nChecks + 2 && (await bankReqs()) === 5, `${(await bankChecks()).length - nChecks} checks, ${await bankReqs()} downloads`);
 
   await browser.close();
   console.log(results.join('\n'));
