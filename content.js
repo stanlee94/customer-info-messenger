@@ -53,6 +53,17 @@
     notes: null,
   };
 
+  // Every customer lookup (open chat, Retry, Link) gets a number; a reply
+  // counts only while its lookup is still the current one for the customer in
+  // sessionState. This replaced checking the URL / the panel at reply time:
+  // Meta can blink the URL or remove the panel just as a reply lands, the
+  // reply was then thrown away, and the panel stayed on its loading bars for
+  // good (staff couldn't reach the cart for 人手结单). See panel-load-test.js.
+  let lookupCounter = 0;
+  // Backstop for a reply that never comes at all. background.js's own time
+  // limits (timed-fetch.js) end every lookup request within ~20 s.
+  const LOOKUP_WATCHDOG_MS = 30000;
+
   function getUserIdFromUrl() {
     try {
       const params = new URLSearchParams(window.location.search);
@@ -1880,6 +1891,7 @@
       if (['candidates', 'no-match', 'searching', 'linking'].includes(view)) {
         return { kind: 'muted', text: 'Link this customer first' };
       }
+      if (view === 'error') return { kind: 'error', text: 'Customer didn’t load — press Retry in the customer panel' };
       return { kind: 'muted', text: 'Loading customer…', spin: true };
     }
     if (!n || n.status === 'loading') return { kind: 'muted', text: 'Loading balance and note…', spin: true };
@@ -1956,6 +1968,7 @@
       if (['candidates', 'no-match', 'searching', 'linking'].includes(sessionState.view?.type)) {
         return { kind: 'muted', text: 'Link this customer first' };
       }
+      if (sessionState.view?.type === 'error') return { kind: 'error', text: 'Customer didn’t load' };
       return { kind: 'muted', text: 'Loading…', spin: true };
     }
     if (!n || n.status === 'loading') return { kind: 'muted', text: 'Loading…', spin: true };
@@ -2482,12 +2495,29 @@
     // In-flight guard: the probe is now fired early from proceedWithLookup
     // AND from loadOrders' callback — only one request should go out.
     if (!cartSessionValid || sessionState.cartHasItems !== null || sessionState.cartProbeInFlight) return;
-    sessionState.cartProbeInFlight = true;
+    // The customer this probe is for: checkPanel replaces sessionState on a
+    // chat switch, so identity (not the URL, which Meta can blink) says
+    // whether the reply still belongs on screen.
+    const state = sessionState;
+    state.cartProbeInFlight = true;
 
     chrome.runtime.sendMessage({ type: 'GET_CART_SUMMARY', psid, option: '1' }, (response) => {
-      sessionState.cartProbeInFlight = false;
-      if (getUserIdFromUrl() !== uid) return;
-      if (chrome.runtime.lastError || !response || !response.ok) return;
+      const failed = chrome.runtime.lastError || !response || !response.ok;
+      state.cartProbeInFlight = false;
+      if (sessionState !== state) return;
+      if (failed) {
+        // Without this the cart buttons (人手结单) just never appeared.
+        state.cartProbeFailed = true;
+        const livePanel = document.getElementById(PANEL_ID);
+        if (!livePanel || state.view?.type !== 'orders') return; // the orders view draws the row
+        const body = livePanel.querySelector('.cim-body');
+        const heading = body.querySelector('.cim-orders-heading');
+        if (!heading || body.querySelector('.cim-cart-buttons') || body.querySelector('.cim-cart-empty')) return;
+        body.querySelector('.cim-cart-retry')?.remove();
+        body.insertBefore(buildCartRetry(), heading);
+        return;
+      }
+      state.cartProbeFailed = false;
 
       const hasItems = !response.text.includes(EMPTY_CART_MARKER);
       sessionState.cartHasItems = hasItems;
@@ -2505,6 +2535,7 @@
       }
 
       const heading = body.querySelector('.cim-orders-heading');
+      body.querySelector('.cim-cart-retry')?.remove();
       if (!heading || body.querySelector('.cim-cart-buttons') || body.querySelector('.cim-cart-empty')) return;
 
       if (hasItems) {
@@ -2516,6 +2547,19 @@
         body.insertBefore(emptyEl, heading);
       }
     });
+  }
+
+  // Shown where the cart buttons go when the cart probe failed or stalled.
+  function buildCartRetry() {
+    const row = document.createElement('div');
+    row.className = 'cim-cart-retry';
+    const text = document.createElement('span');
+    text.textContent = '🛒 Cart didn’t load';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = 'Retry';
+    row.append(text, btn);
+    return row;
   }
 
   // ── Parcel photo icon ───────────────────────────────────────────────────────
@@ -7474,6 +7518,8 @@
           emptyEl.className = 'cim-cart-empty';
           emptyEl.textContent = '🛒 Empty Cart';
           body.appendChild(emptyEl);
+        } else if (cartSessionValid && sessionState.cartProbeFailed) {
+          body.appendChild(buildCartRetry());
         }
 
         const heading = document.createElement('div');
@@ -7528,33 +7574,69 @@
         break;
       }
       case 'error': {
-        body.textContent = view.message;
+        const msg = document.createElement('div');
+        msg.className = 'cim-error-msg';
+        msg.textContent = view.message;
+        body.appendChild(msg);
+        // Retry re-runs the whole lookup (see the click handler); it needs
+        // the name for the ManyChat fallback.
+        if (sessionState.name) {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'cim-retry-btn';
+          btn.textContent = 'Retry';
+          body.appendChild(btn);
+        }
         break;
       }
     }
   }
 
-  function loadOrders(uid, psid, panel, recreateAttempted) {
-    renderState(panel, { type: 'loading' });
+  // Starts a lookup for the customer on screen; returns its number.
+  function beginLookup(uid) {
+    const seq = ++lookupCounter;
+    sessionState.lookupSeq = seq;
+    sessionState.resolved = false;
+    setTimeout(() => {
+      if (isCurrentLookup(uid, seq) && !sessionState.resolved) {
+        showLookupView({ type: 'error', message: 'Customer info is taking too long to load.' }, true);
+      }
+    }, LOOKUP_WATCHDOG_MS);
+    return seq;
+  }
+
+  function isCurrentLookup(uid, seq) {
+    return sessionState.uid === uid && sessionState.lookupSeq === seq;
+  }
+
+  // Shows a lookup step even if Meta removed the panel meanwhile: the view is
+  // kept in sessionState and checkPanel → rehydrate draws it on the re-added
+  // panel. resolved = a final view (orders, error, candidates…).
+  function showLookupView(view, resolved) {
+    if (resolved) sessionState.resolved = true;
+    const panel = document.getElementById(PANEL_ID);
+    if (panel) renderState(panel, view);
+    else sessionState.view = view;
+  }
+
+  function loadOrders(uid, psid, seq, recreateAttempted) {
+    showLookupView({ type: 'loading' });
 
     chrome.runtime.sendMessage({ type: 'GET_ORDERS_BY_PSID', psid }, (response) => {
-      if (getUserIdFromUrl() !== uid) return;
-      const livePanel = document.getElementById(PANEL_ID);
-      if (!livePanel) return;
+      const lost = chrome.runtime.lastError;
+      if (!isCurrentLookup(uid, seq)) return;
 
-      if (chrome.runtime.lastError || !response || !response.ok) {
-        sessionState.resolved = true;
-        renderState(livePanel, {
+      if (lost || !response || !response.ok) {
+        showLookupView({
           type: 'error',
           message: response?.error || 'Failed to load orders.',
-        });
+        }, true);
         return;
       }
 
       if (response.notFound) {
         if (recreateAttempted) {
-          sessionState.resolved = true;
-          renderState(livePanel, { type: 'new-customer' });
+          showLookupView({ type: 'new-customer' }, true);
           return;
         }
 
@@ -7563,30 +7645,27 @@
         chrome.runtime.sendMessage(
           { type: 'LINK_BASEROW_UID', uid, psid, name: sessionState.name },
           (linkResponse) => {
-            if (getUserIdFromUrl() !== uid) return;
-            const linkPanel = document.getElementById(PANEL_ID);
-            if (!linkPanel) return;
+            const linkLost = chrome.runtime.lastError;
+            if (!isCurrentLookup(uid, seq)) return;
 
-            if (chrome.runtime.lastError || !linkResponse || !linkResponse.ok) {
-              sessionState.resolved = true;
-              renderState(linkPanel, {
+            if (linkLost || !linkResponse || !linkResponse.ok) {
+              showLookupView({
                 type: 'error',
                 message: linkResponse?.error || 'Failed to recreate Baserow record.',
-              });
+              }, true);
               return;
             }
 
             // The notes load saw the row missing; it exists now.
             if (sessionState.psid === psid && sessionState.notes?.status !== 'ready') startNotes(uid, psid, true);
-            loadOrders(uid, psid, linkPanel, true);
+            loadOrders(uid, psid, seq, true);
           }
         );
         return;
       }
 
-      sessionState.resolved = true;
-      renderState(livePanel, { type: 'orders', data: response.data, psid });
-      probeCartAndShowButtons(uid, psid, livePanel);
+      showLookupView({ type: 'orders', data: response.data, psid }, true);
+      probeCartAndShowButtons(uid, psid, document.getElementById(PANEL_ID));
       fetchAndRenderManyChatInfo(uid, psid);
     });
   }
@@ -7640,43 +7719,40 @@
     });
   }
 
-  function searchManyChat(uid, name, panel) {
-    renderState(panel, { type: 'searching' });
+  function searchManyChat(uid, name, seq) {
+    showLookupView({ type: 'searching' });
 
     chrome.runtime.sendMessage({ type: 'SEARCH_MANYCHAT_BY_NAME', name }, (response) => {
-      if (getUserIdFromUrl() !== uid) return;
-      // The name was corrected (correctCustomerName) while this search ran —
-      // a newer search with the right name owns the panel now.
-      if (sessionState.name !== name) return;
-      const livePanel = document.getElementById(PANEL_ID);
-      if (!livePanel) return;
+      const lost = chrome.runtime.lastError;
+      // A corrected name (correctCustomerName) starts a new lookup, so an
+      // old search's reply is no longer current.
+      if (!isCurrentLookup(uid, seq) || sessionState.name !== name) return;
 
-      sessionState.resolved = true;
-
-      if (chrome.runtime.lastError || !response || !response.ok) {
-        renderState(livePanel, {
+      if (lost || !response || !response.ok) {
+        showLookupView({
           type: 'error',
           message: response?.error || 'ManyChat search failed.',
-        });
+        }, true);
         return;
       }
 
       if (!response.candidates.length) {
-        renderState(livePanel, { type: 'no-match', name });
+        showLookupView({ type: 'no-match', name }, true);
       } else {
-        renderState(livePanel, {
+        showLookupView({
           type: 'candidates',
           candidates: response.candidates,
           candidatesType: 'manychat',
           manychatCandidates: response.candidates,
-        });
+        }, true);
       }
     });
   }
 
   function proceedWithLookup(uid, name, panel) {
+    const seq = beginLookup(uid);
     getUidPsidMap().then((map) => {
-      if (getUserIdFromUrl() !== uid) return;
+      if (!isCurrentLookup(uid, seq)) return;
       const livePanel = document.getElementById(PANEL_ID) || panel;
       const psid = map[uid];
       if (psid) {
@@ -7687,21 +7763,33 @@
         // the orders view exists, so ordering doesn't matter.
         probeCartAndShowButtons(uid, psid, livePanel);
         fetchAndRenderManyChatInfo(uid, psid);
-        loadOrders(uid, psid, livePanel);
+        loadOrders(uid, psid, seq);
       } else {
         chrome.runtime.sendMessage({ type: 'SEARCH_BASEROW_BY_UID', uid }, (response) => {
-          if (getUserIdFromUrl() !== uid) return;
+          const lost = chrome.runtime.lastError;
+          if (!isCurrentLookup(uid, seq)) return;
           const currentPanel = document.getElementById(PANEL_ID) || livePanel;
-          if (response?.ok && response.psid) {
+          if (lost || !response?.ok) {
+            // Baserow didn't answer — NOT "no PSID": a ManyChat search here
+            // would offer candidates to re-link a customer who is linked.
+            showLookupView({
+              type: 'error',
+              message: `Couldn’t check Baserow for this chat — ${response?.error || 'no response'}`,
+            }, true);
+            return;
+          }
+          if (response.psid) {
             setUidPsidLink(uid, response.psid).then(() => {
-              renderPsidRow(currentPanel, uid, response.psid);
-              probeCartAndShowButtons(uid, response.psid, currentPanel);
+              if (!isCurrentLookup(uid, seq)) return;
+              const p = document.getElementById(PANEL_ID) || currentPanel;
+              renderPsidRow(p, uid, response.psid);
+              probeCartAndShowButtons(uid, response.psid, p);
               fetchAndRenderManyChatInfo(uid, response.psid);
-              loadOrders(uid, response.psid, currentPanel);
+              loadOrders(uid, response.psid, seq);
             });
           } else {
             renderPsidRow(currentPanel, uid, null);
-            searchManyChat(uid, name, currentPanel);
+            searchManyChat(uid, name, seq);
           }
         });
       }
@@ -7709,27 +7797,27 @@
   }
 
   function handleCandidateLink(uid, psid, panel) {
-    renderState(panel, { type: 'linking' });
+    const seq = beginLookup(uid);
+    showLookupView({ type: 'linking' });
 
     chrome.runtime.sendMessage(
       { type: 'LINK_BASEROW_UID', uid, psid, name: sessionState.name },
       (response) => {
-        if (getUserIdFromUrl() !== uid) return;
-        const livePanel = document.getElementById(PANEL_ID);
-        if (!livePanel) return;
+        const lost = chrome.runtime.lastError;
+        if (!isCurrentLookup(uid, seq)) return;
 
-        if (chrome.runtime.lastError || !response || !response.ok) {
-          renderState(livePanel, {
+        if (lost || !response || !response.ok) {
+          showLookupView({
             type: 'error',
             message: response?.error || 'Failed to update Baserow record.',
-          });
+          }, true);
           return;
         }
 
         setUidPsidLink(uid, psid).then(() => {
-          if (getUserIdFromUrl() !== uid) return;
-          renderPsidRow(livePanel, uid, psid);
-          loadOrders(uid, psid, livePanel);
+          if (!isCurrentLookup(uid, seq)) return;
+          renderPsidRow(document.getElementById(PANEL_ID) || panel, uid, psid);
+          loadOrders(uid, psid, seq);
         });
       }
     );
@@ -7833,22 +7921,26 @@
   // fromName: whose row it came from ('' = only unsaved typing).
   function doUnlink(uid, psid, panel, carry, fromName) {
     renderState(panel, { type: 'linking' });
+    const state = sessionState;
 
     chrome.runtime.sendMessage({ type: 'UNLINK_BASEROW_UID', psid }, (response) => {
-      if (getUserIdFromUrl() !== uid) return;
-      const livePanel = document.getElementById(PANEL_ID);
-      if (!livePanel) return;
+      const lost = chrome.runtime.lastError;
+      // Same customer still in sessionState (not the URL / panel: see
+      // isCurrentLookup) — else the reply was dropped and "Updating
+      // Baserow..." stayed up.
+      if (sessionState !== state) return;
+      const livePanel = document.getElementById(PANEL_ID) || panel;
 
-      if (chrome.runtime.lastError || !response || !response.ok) {
-        renderState(livePanel, {
+      if (lost || !response || !response.ok) {
+        showLookupView({
           type: 'error',
           message: response?.error || 'Failed to update Baserow record.',
-        });
+        }, true);
         return;
       }
 
       removeUidPsidLink(uid).then(() => {
-        if (getUserIdFromUrl() !== uid) return;
+        if (sessionState !== state) return;
         sessionState.resolved = false;
         sessionState.cartHasItems = null;
         renderPsidRow(livePanel, uid, null);
@@ -8054,10 +8146,17 @@
     });
   }
 
+  // Redraws a re-added panel from sessionState — a final view, or the step a
+  // lookup still in flight is on (its reply then draws into this panel).
   function rehydrate(panel) {
-    panel.querySelector('.cim-name').textContent = `Name: ${sessionState.name}`;
+    panel.querySelector('.cim-name').textContent = sessionState.name ? `Name: ${sessionState.name}` : 'Name: detecting...';
+    const uid = sessionState.uid;
     getUidPsidMap().then((map) => {
-      renderPsidRow(panel, sessionState.uid, map[sessionState.uid] || null);
+      if (sessionState.uid !== uid || !panel.isConnected) return;
+      const psid = map[uid] || null;
+      // Mid-lookup with no link yet: "none" would be premature.
+      if (psid || sessionState.resolved) renderPsidRow(panel, uid, psid);
+      else panel.querySelector('.cim-psid').textContent = 'PSID: checking...';
     });
     if (sessionState.view) {
       renderState(panel, sessionState.view);
@@ -8199,12 +8298,15 @@
         ? `Name: ${sessionState.name}`
         : 'Name: detecting...';
 
-      if (sessionState.resolved) {
+      // Meta removed the panel and we re-added it: draw what the lookup has
+      // (a reply that landed while the panel was gone, or the step it is on).
+      // Before, an unresolved lookup left this new panel empty for good.
+      if (sessionState.resolved || sessionState.view) {
         rehydrate(panel);
-        return;
+        if (sessionState.resolved) return;
+      } else {
+        panel.querySelector('.cim-psid').textContent = 'PSID: checking...';
       }
-
-      panel.querySelector('.cim-psid').textContent = 'PSID: checking...';
     }
 
     if (sessionState.resolved) return;
@@ -8648,6 +8750,32 @@
   }
 
   document.addEventListener('click', (event) => {
+    // Panel error → run the whole lookup again (Baserow UID search, orders,
+    // cart probe, ManyChat info).
+    const retryBtn = event.target.closest(`#${PANEL_ID} .cim-retry-btn`);
+    if (retryBtn) {
+      const panel = document.getElementById(PANEL_ID);
+      if (!panel || !sessionState.uid || !sessionState.name) return;
+      retryBtn.disabled = true;
+      sessionState.cartHasItems = null;
+      sessionState.cartProbeFailed = false;
+      renderState(panel, { type: 'loading' });
+      proceedWithLookup(sessionState.uid, sessionState.name, panel);
+      return;
+    }
+
+    const cartRetryBtn = event.target.closest(`#${PANEL_ID} .cim-cart-retry button`);
+    if (cartRetryBtn) {
+      const panel = document.getElementById(PANEL_ID);
+      const psid = sessionState.view?.type === 'orders' ? sessionState.view.psid : null;
+      if (!panel || !sessionState.uid || !psid) return;
+      cartRetryBtn.disabled = true;
+      cartRetryBtn.textContent = 'Loading…';
+      sessionState.cartProbeFailed = false;
+      probeCartAndShowButtons(sessionState.uid, psid, panel);
+      return;
+    }
+
     const linkBtn = event.target.closest('.cim-candidate-link-btn');
     if (linkBtn) {
       const card = linkBtn.closest('.cim-candidate');

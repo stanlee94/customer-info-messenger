@@ -2,7 +2,7 @@ const MANYCHAT_API_BASE = 'https://api.manychat.com';
 const CART_API_BASE = 'https://yxch9n4n6e.execute-api.ap-southeast-1.amazonaws.com/latest';
 const ORDER_STATUS_API_BASE = 'https://7n881aguj8.execute-api.ap-southeast-1.amazonaws.com';
 
-importScripts('notes-baserow.js', 'voice-transcribe.js');
+importScripts('notes-baserow.js', 'voice-transcribe.js', 'timed-fetch.js');
 
 // Let content scripts read/write chrome.storage.session (default is
 // trusted-contexts only). Used for browser-session prefs like the cart's
@@ -212,8 +212,10 @@ function manyChatTagAction(action, psid, tagId) {
 }
 
 function checkSession() {
-  return fetch(`${CART_API_BASE}/checkSession`)
-    .then((res) => res.json().then((json) => ({ ok: true, valid: res.ok && json?.status === 'ok' })))
+  // Time-limited: a stalled check used to never fail, so the content script's
+  // backoff retry never ran and the cart buttons stayed hidden for the tab.
+  return timedFetch(`${CART_API_BASE}/checkSession`, {}, { label: 'EC2 session check', retries: 1 })
+    .then((r) => ({ ok: true, valid: r.ok && timedJson(r)?.status === 'ok' }))
     // ok:false = network failure — distinguishable from a genuinely dead
     // session so the content script can retry instead of hiding the cart
     // features for the whole tab session.
@@ -221,10 +223,14 @@ function checkSession() {
 }
 
 function getCartSummary(psid, option) {
-  return fetch(`${CART_API_BASE}/users/${encodeURIComponent(psid)}?option=${encodeURIComponent(option)}`)
-    .then((res) => {
-      if (!res.ok) throw new Error(`Cart API error: ${res.status}`);
-      return res.json();
+  // GET: also the panel's cart probe (option 1) that decides whether the
+  // 人手结单 cart buttons show — time-limited so a stall ends in the panel's
+  // "Cart didn't load · Retry" row.
+  return timedFetch(`${CART_API_BASE}/users/${encodeURIComponent(psid)}?option=${encodeURIComponent(option)}`, {},
+    { label: 'Cart', retries: 1 })
+    .then((r) => {
+      if (!r.ok) throw new Error(`Cart API error: ${r.status}`);
+      return timedJson(r);
     })
     .then((json) => {
       const text = json?.content?.messages?.[0]?.text;
@@ -386,8 +392,9 @@ function copyCart(fbUserId, sourceFbUserId, dryRun, includeExpired, mergeDuplica
 }
 
 function fetchOrderList(psid) {
-  return fetch(`${CART_API_BASE}/api/orders?fbUserId=${encodeURIComponent(psid)}&newStatus=0&noCancel=on`)
-    .then((res) => res.json())
+  return timedFetch(`${CART_API_BASE}/api/orders?fbUserId=${encodeURIComponent(psid)}&newStatus=0&noCancel=on`, {},
+    { label: 'EC2 order list', retries: 1 })
+    .then(timedJson)
     .then((json) => json.ok ? { ok: true, orders: json.orders } : { ok: false, error: json.msg || 'Failed to load orders.' })
     .catch((err) => ({ ok: false, error: err.message }));
 }
@@ -663,34 +670,42 @@ function getBaserowConfig() {
   });
 }
 
-function findBaserowUserRowByPsid(config, psid) {
-  const url =
-    `${config.baserowBaseUrl}/api/database/rows/table/${config.baserowUsersTableId}/` +
-    `?user_field_names=true&filter__PSID__equal=${encodeURIComponent(psid)}`;
+// The panel's lookups go through timedFetch (timed-fetch.js): a Baserow that
+// stalls instead of failing must end in an error the panel can offer Retry
+// on, never in loading bars that stay forever.
+function baserowTimedJson(r) {
+  if (!r.ok) {
+    let detail = r.text;
+    try {
+      const json = JSON.parse(r.text);
+      detail = json.detail || json.error || r.text;
+    } catch (err) {
+      // not JSON — a proxy's HTML error page says nothing useful to staff
+      if (/^\s*</.test(detail)) detail = '';
+    }
+    detail = String(detail || '').slice(0, 200);
+    throw new Error(`${r.label}: Baserow API error ${r.status}${detail ? ` - ${detail}` : ''}`);
+  }
+  return timedJson(r);
+}
 
-  return fetch(url, {
-    headers: { Authorization: `Token ${config.baserowToken}` },
-  })
-    .then((res) => {
-      if (!res.ok) return throwBaserowError(res);
-      return res.json();
-    })
+function baserowUserRowGet(config, url) {
+  return timedFetch(url, { headers: { Authorization: `Token ${config.baserowToken}` } },
+    { label: 'Baserow (customer record)', retries: 1 })
+    .then(baserowTimedJson)
     .then((json) => json?.results?.[0] || null);
 }
 
-function findBaserowUserRowByUid(config, uid) {
-  const url =
+function findBaserowUserRowByPsid(config, psid) {
+  return baserowUserRowGet(config,
     `${config.baserowBaseUrl}/api/database/rows/table/${config.baserowUsersTableId}/` +
-    `?user_field_names=true&filter__UID__equal=${encodeURIComponent(uid)}`;
+    `?user_field_names=true&filter__PSID__equal=${encodeURIComponent(psid)}`);
+}
 
-  return fetch(url, {
-    headers: { Authorization: `Token ${config.baserowToken}` },
-  })
-    .then((res) => {
-      if (!res.ok) return throwBaserowError(res);
-      return res.json();
-    })
-    .then((json) => json?.results?.[0] || null);
+function findBaserowUserRowByUid(config, uid) {
+  return baserowUserRowGet(config,
+    `${config.baserowBaseUrl}/api/database/rows/table/${config.baserowUsersTableId}/` +
+    `?user_field_names=true&filter__UID__equal=${encodeURIComponent(uid)}`);
 }
 
 function searchBaserowByUid(uid) {
@@ -705,33 +720,30 @@ function searchBaserowByUid(uid) {
 function updateBaserowRowUid(config, rowId, uid) {
   const url = `${config.baserowBaseUrl}/api/database/rows/table/${config.baserowUsersTableId}/${rowId}/?user_field_names=true`;
 
-  return fetch(url, {
+  // PATCH of one field to a fixed value: safe to send twice.
+  return timedFetch(url, {
     method: 'PATCH',
     headers: {
       Authorization: `Token ${config.baserowToken}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({ UID: uid }),
-  }).then((res) => {
-    if (!res.ok) return throwBaserowError(res);
-    return res.json();
-  });
+  }, { label: 'Baserow (save link)', retries: 1 }).then(baserowTimedJson);
 }
 
 function createBaserowUserRow(config, { psid, uid, name }) {
   const url = `${config.baserowBaseUrl}/api/database/rows/table/${config.baserowUsersTableId}/?user_field_names=true`;
 
-  return fetch(url, {
+  // No automatic retry: a POST that timed out may still have created the row.
+  // The panel's Retry starts over from the PSID search, which finds it then.
+  return timedFetch(url, {
     method: 'POST',
     headers: {
       Authorization: `Token ${config.baserowToken}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({ PSID: psid, UID: uid, Name: name }),
-  }).then((res) => {
-    if (!res.ok) return throwBaserowError(res);
-    return res.json();
-  });
+  }, { label: 'Baserow (new customer record)', retries: 0 }).then(baserowTimedJson);
 }
 
 function withBaserowConfig(handler) {
@@ -1145,8 +1157,11 @@ function fetchBaserowRecentOrders(config, psid) {
   const url =
     `${config.baserowBaseUrl}/api/database/rows/table/${config.baserowOrdersTableId}/` +
     `?user_field_names=true&filters=${encodeURIComponent(filters)}&order_by=-Date&size=5`;
-  return fetch(url, { headers: { Authorization: `Token ${config.baserowToken}` } })
-    .then((res) => (res.ok ? res.json() : { results: [] }))
+  // Only fills the "recent orders" list for customers with < 5 EC2 orders —
+  // short limit, no retry: if it stalls the panel shows without these.
+  return timedFetch(url, { headers: { Authorization: `Token ${config.baserowToken}` } },
+    { label: 'Baserow (recent orders)', ms: 4000, retries: 0 })
+    .then((r) => (r.ok ? timedJson(r) : { results: [] }))
     .then((json) =>
       (json?.results || []).map((row) => ({
         orderId: row.Order_ID,
